@@ -120,6 +120,12 @@ func (plan *diagPlan) ping(ctx context.Context, e *env, verbose bool) error {
 
 	out.line("профиль %s: сервер %s, хешей %d, DNS %s",
 		plan.profile.Name, cfg.Peer, len(cfg.Hashes), cfg.DNS)
+	if netguardForced() {
+		var err error
+		if cfg.DialControl, err = setupNetguard(out, verbose); err != nil {
+			return err
+		}
+	}
 	return core.RunPing(ctx, cfg, core.SinkFunc(out.event))
 }
 
@@ -208,6 +214,12 @@ func (plan *diagPlan) hashes(ctx context.Context, e *env, verbose bool) error {
 	cfg := plan.cfg
 
 	out.line("профиль %s: хешей %d, DNS %s", plan.profile.Name, len(cfg.Hashes), cfg.DNS)
+	if netguardForced() {
+		var err error
+		if cfg.DialControl, err = setupNetguard(out, verbose); err != nil {
+			return err
+		}
+	}
 
 	// Счётчик годных ведётся здесь, а не в принтере: принтер печатает, а
 	// решение о коде возврата — дело команды. Atomic — на всякий случай:

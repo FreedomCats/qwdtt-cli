@@ -75,7 +75,7 @@ func startSocks(t *testing.T, opts SocksOptions) (*Socks, *recorder) {
 }
 
 func TestSocksRequiresNothing(t *testing.T) {
-	if got := NewSocks(SocksOptions{}).Requires(); got.Admin || len(got.Files) != 0 || len(got.Programs) != 0 || got.Warning != "" {
+	if got := NewSocks(SocksOptions{}).Requires(); got.Admin || len(got.Files) != 0 || len(got.Programs) != 0 || got.Warning != "" || got.Netguard {
 		t.Errorf("Requires = %+v, а режим на то и socks, что ничего не требует", got)
 	}
 }

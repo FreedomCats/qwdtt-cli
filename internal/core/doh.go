@@ -140,6 +140,7 @@ func dohEndpointLabel(endpoint string) string {
 
 func newDoHBootstrapDialer() *net.Dialer {
 	return &net.Dialer{
+		Control:   guardedControl,
 		Timeout:   5 * time.Second,
 		KeepAlive: 30 * time.Second,
 		Resolver: &net.Resolver{

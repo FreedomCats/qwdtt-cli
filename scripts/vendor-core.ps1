@@ -352,6 +352,60 @@ $replacements = @(
         Pattern     = '(?m)^(\t+)log\.Printf\("\[СТАТИСТИКА\] Активных: %d \| Трафик: %\.2f МБ \| ↓%\.2f МБ / ↑%\.2f МБ", active, totalMB, downMB, upMB\)$'
         InsertAfter = 'emit(EventStats{ActiveWorkers: active, BytesUp: up, BytesDown: down})'
     }
+
+    # --- netguard: хук в собственных сокетах ядра (задача N3 Э2) ---
+    # Шесть точек, где ядро открывает сокеты наружу. В каждую попадает
+    # guardedControl — Config.DialControl текущего запуска; диалеры и таблица
+    # точек — в internal/core/netguard_hook.go. Новую точку, которую апстрим
+    # заведёт после обновления, ловит TestNetguardCoverage: правила здесь
+    # и список в тесте меняются вместе.
+    #
+    # Поле Control вставляется первым и выровнено под самое длинное имя
+    # поля (KeepAlive) — так, как его поставил бы gofmt.
+
+    # 1. TURN по UDP. У net.DialUDP нет Control, поэтому вызов меняется.
+    @{
+        File    = 'session.go'
+        Count   = 1
+        Pattern = '(?m)^(\t+)c, err := net\.DialUDP\("udp", nil, resolved\)$'
+        Replace = '${1}c, err := dialTURNUDP(resolved)'
+    }
+    # 2. TURN по TCP.
+    @{
+        File    = 'session.go'
+        Count   = 1
+        Pattern = '(?m)^(\t+)d := net\.Dialer\{Timeout: 10 \* time\.Second\}$'
+        Replace = '${1}d := net.Dialer{Timeout: 10 * time.Second, Control: guardedControl}'
+    }
+    # 3. Резолвер VK по UDP/TCP :53 (setupGlobalResolver).
+    @{
+        File        = 'creds.go'
+        Count       = 1
+        Pattern     = '(?m)^(\t+)dialer := &net\.Dialer\{$'
+        InsertAfter = "`tControl:   guardedControl,"
+    }
+    # 4. Загрузочные соединения DoH (newDoHBootstrapDialer).
+    @{
+        File        = 'doh.go'
+        Count       = 1
+        Pattern     = '(?m)^(\t+)return &net\.Dialer\{$'
+        InsertAfter = "`tControl:   guardedControl,"
+    }
+    # 5. HTTPS к VK с отпечатком Chrome (getTokenChain). Им же пользуется
+    #    решатель капчи v2.
+    @{
+        File        = 'creds.go'
+        Count       = 1
+        Pattern     = '(?m)^(\t+)tlsclient\.WithCookieJar\(jar\),$'
+        InsertAfter = 'tlsclient.WithDialer(guardedDialer()),'
+    }
+    # 6. HTTPS к VK по пути vkcalls.
+    @{
+        File        = 'creds_vkcalls.go'
+        Count       = 1
+        Pattern     = '(?m)^(\t+)tlsclient\.WithCookieJar\(tlsclient\.NewCookieJar\(\)\),$'
+        InsertAfter = 'tlsclient.WithDialer(guardedDialer()),'
+    }
 )
 
 # Логи ядра уходят в Sink (задача B3). Замена сплошная — вызовов больше сотни

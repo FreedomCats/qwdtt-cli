@@ -221,7 +221,7 @@ func TestPlanConnectExternal(t *testing.T) {
 		t.Errorf("описание datapath не про WireGuard: %q", plan.describe)
 	}
 	req := plan.datapath(nil).Requires()
-	if !req.Admin || req.Warning == "" || len(req.Programs) != 1 {
+	if !req.Admin || req.Warning == "" || len(req.Programs) != 1 || !req.Netguard {
 		t.Errorf("требования external не те: %+v", req)
 	}
 }

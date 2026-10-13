@@ -380,6 +380,7 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 		tlsclient.WithTimeoutSeconds(20),
 		tlsclient.WithClientProfile(profiles.Chrome_146),
 		tlsclient.WithCookieJar(jar),
+		tlsclient.WithDialer(guardedDialer()),
 	)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("failed to initialize tls_client: %w", err)
@@ -871,6 +872,7 @@ func setupGlobalResolver(arg string) {
 	}
 
 	dialer := &net.Dialer{
+		Control:   guardedControl,
 		Timeout:   3 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}

@@ -328,6 +328,9 @@ func TestExternalRequires(t *testing.T) {
 	if req.Warning == "" {
 		t.Error("Warning пуст")
 	}
+	if !req.Netguard {
+		t.Error("Netguard = false, а external забирает весь трафик")
+	}
 
 	// Без программы Requires называет голое имя, а Start отказывает.
 	missing := &External{opts: ExternalOptions{Name: "tt", Timeout: time.Second}, programErr: errors.New("нет"), done: make(chan struct{})}

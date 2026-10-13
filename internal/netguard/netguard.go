@@ -25,6 +25,12 @@ import (
 type Guard struct {
 	index4 atomic.Uint32
 	index6 atomic.Uint32
+
+	// Logf, если задан, получает строку на каждый привязанный сокет:
+	// «[NETGUARD] tcp4 203.0.113.80:443 → интерфейс 3». Главный инструмент
+	// отладки петли; CLI ставит его при -v. Задаётся до первого сокета.
+	// Имени хоста в строке нет: в Control адрес приходит уже разрешённым.
+	Logf func(format string, args ...any)
 }
 
 // SetInterfaces задаёт индексы физического интерфейса. 0 — для этого
@@ -98,7 +104,20 @@ func (g *Guard) apply(network, address string, c syscall.RawConn, set setter) er
 	if err != nil {
 		return err
 	}
-	return setErr
+	if setErr != nil {
+		return setErr
+	}
+	if g.Logf != nil {
+		switch {
+		case v4 && v6:
+			g.Logf("[NETGUARD] %s %s → интерфейс %d (IPv4), %d (IPv6)", network, address, index4, index6)
+		case v4:
+			g.Logf("[NETGUARD] %s %s → интерфейс %d", network, address, index4)
+		default:
+			g.Logf("[NETGUARD] %s %s → интерфейс %d", network, address, index6)
+		}
+	}
+	return nil
 }
 
 func noInterface(family, network, address string) error {

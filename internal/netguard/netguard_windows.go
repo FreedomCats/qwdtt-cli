@@ -2,12 +2,42 @@ package netguard
 
 import (
 	"encoding/binary"
+	"fmt"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/FreedomCats/qwdtt-cli/internal/winsys"
 )
 
 const supported = true
+
+// SelectInterfaces выбирает физический интерфейс маршрута по умолчанию для
+// IPv4 и IPv6 (winsys.DefaultInterface) и ставит их индексы. exclude — LUID
+// своего адаптера, 0 — исключать нечего. Возвращает выбор словами для вывода.
+//
+// Сети нет вовсе — не ошибка: индексы обнуляются, и сокеты ядра откажут
+// с понятным текстом, а не уйдут в туннель. Ошибка — только отказ системы
+// отдать таблицу маршрутов.
+func (g *Guard) SelectInterfaces(exclude uint64) (string, error) {
+	v4, ok4, err := winsys.DefaultInterface(false, exclude)
+	if err != nil {
+		return "", fmt.Errorf("netguard: выбор интерфейса IPv4: %w", err)
+	}
+	v6, ok6, err := winsys.DefaultInterface(true, exclude)
+	if err != nil {
+		return "", fmt.Errorf("netguard: выбор интерфейса IPv6: %w", err)
+	}
+	g.SetInterfaces(v4.Index, v6.Index)
+	return "IPv4 — " + describe(v4, ok4) + ", IPv6 — " + describe(v6, ok6), nil
+}
+
+func describe(iface winsys.Interface, ok bool) string {
+	if !ok {
+		return "нет маршрута"
+	}
+	return fmt.Sprintf("%s (индекс %d)", iface.Alias, iface.Index)
+}
 
 // setUnicastIf привязывает сокет к интерфейсу. Порядок байт — как в
 // wireguard-go, conn/bind_windows.go, bindSocketToInterface4/6: для IPv4

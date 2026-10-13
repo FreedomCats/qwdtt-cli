@@ -217,6 +217,9 @@ func RunHashCheck(ctx context.Context, cfg Config, sink Sink) error {
 // которое стоит держать в голове: в одном процессе может работать только один
 // Run одновременно.
 func applyGlobals(cfg *Config) error {
+	// Хук ставится первым: резолвер ниже и всё, что пойдёт после, создают
+	// сокеты уже с ним.
+	setDialControl(cfg.DialControl)
 	setCaptchaMode(cfg.CaptchaMode)
 	setVkAuthMode(cfg.VkAuthMode)
 	setVkAnonPath(cfg.VkAnonPath)
@@ -402,16 +405,22 @@ func captchaPlan(mode string) string {
 // login.vk.ru» — показывает совет сменить DNS (TunnelManager.kt, err_vk_dns).
 const dnsProbeHost = "login.vk.ru"
 
-// ProbeDNS настраивает резолвер по значению dns — тому же, что в Config.DNS, —
-// и проверяет, что он отвечает: резолвит хост VK. Шаг «dns» на схеме
-// подключения закрывает по ней супервизор (architecture.md §06).
+// ProbeDNS настраивает резолвер по cfg.DNS и проверяет, что он отвечает:
+// резолвит хост VK. Шаг «dns» на схеме подключения закрывает по ней
+// супервизор (architecture.md §06). Из остальных настроек нужен только
+// cfg.DialControl: запрос к резолверу — такой же сокет ядра, как прочие.
 //
 // Резолвер настраивается здесь, а не в Run, чтобы проверка была честной:
 // она идёт через тот же net.DefaultResolver, которым потом пользуется ядро,
 // а не через системный. Run настраивает его ещё раз — это безвредно.
 //
 // Срок ожидания задаёт ctx: сама функция ничего не ограничивает.
-func ProbeDNS(ctx context.Context, dns string) error {
+func ProbeDNS(ctx context.Context, cfg Config) error {
+	dns := strings.TrimSpace(cfg.DNS)
+	if dns == "" {
+		dns = DefaultConfig().DNS
+	}
+	setDialControl(cfg.DialControl)
 	setupGlobalResolver(dns)
 
 	addrs, err := net.DefaultResolver.LookupHost(ctx, dnsProbeHost)

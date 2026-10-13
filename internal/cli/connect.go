@@ -407,6 +407,13 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	defer dispatcher.Close()
 
 	cfg := plan.cfg
+	if req.Netguard || netguardForced() {
+		dialControl, err := setupNetguard(out, verbose)
+		if err != nil {
+			return err
+		}
+		cfg.DialControl = dialControl
+	}
 	tun, err := supervisor.NewTunnel(supervisor.Options{
 		Config: cfg,
 		Hashes: cfg.Hashes,
@@ -418,7 +425,7 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 		ProbeDNS: func(ctx context.Context) error {
 			ctx, cancel := context.WithTimeout(ctx, dnsProbeTimeout)
 			defer cancel()
-			return core.ProbeDNS(ctx, cfg.DNS)
+			return core.ProbeDNS(ctx, cfg)
 		},
 		// Диспетчер капчи подключается в тот же поток событий, что и вывод:
 		// его Observe возвращается сразу, решение уходит в свою горутину.

@@ -11,7 +11,7 @@ import (
 // fakeConn — syscall.RawConn, у которого Control просто зовёт функцию.
 type fakeConn struct{}
 
-func (fakeConn) Control(f func(fd uintptr)) error { f(42); return nil }
+func (fakeConn) Control(f func(fd uintptr)) error  { f(42); return nil }
 func (fakeConn) Read(func(fd uintptr) bool) error  { return errors.New("не нужен") }
 func (fakeConn) Write(func(fd uintptr) bool) error { return errors.New("не нужен") }
 
@@ -110,5 +110,21 @@ func TestSetInterfacesOnTheFly(t *testing.T) {
 	}
 	if r.calls[0] != "4=7" {
 		t.Fatalf("вызовы %v", r.calls)
+	}
+}
+
+func TestLogf(t *testing.T) {
+	var lines []string
+	g := Guard{Logf: func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }}
+	g.SetInterfaces(3, 0)
+	var r recorder
+	if err := g.apply("tcp4", "203.0.113.80:443", fakeConn{}, r.set); err != nil {
+		t.Fatal(err)
+	}
+	// Loopback и отказ строк не дают.
+	_ = g.apply("udp4", "127.0.0.1:9000", fakeConn{}, r.set)
+	_ = g.apply("tcp6", "[2a00::1]:443", fakeConn{}, r.set)
+	if len(lines) != 1 || lines[0] != "[NETGUARD] tcp4 203.0.113.80:443 → интерфейс 3" {
+		t.Fatalf("строки %q", lines)
 	}
 }

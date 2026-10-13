@@ -8,3 +8,9 @@ package netguard
 const supported = false
 
 func setUnicastIf(uintptr, bool, uint32) error { return nil }
+
+// SelectInterfaces на других системах выбирать нечего: Control там ничего
+// не делает.
+func (g *Guard) SelectInterfaces(uint64) (string, error) {
+	return "не нужен на этой системе", nil
+}

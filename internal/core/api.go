@@ -89,6 +89,15 @@ type Config struct {
 	// UDP и отдаёт наружу конфиг событием EventConfig. Выбор и настройки
 	// datapath живут в internal/datapath (architecture.md §04).
 	Listen string
+
+	// --- обход туннеля ---
+
+	// DialControl ставится в поле Control всех собственных сокетов ядра:
+	// TURN, DNS, DoH и HTTPS к VK (см. netguard_hook.go). Его задаёт CLI,
+	// когда datapath забирает весь трафик системы, — это netguard.Guard.Control,
+	// который уводит сокеты мимо туннеля (architecture.md §05). Из профиля не
+	// читается. nil — сокеты идут по общей таблице маршрутов, как в Э1.
+	DialControl DialControlFunc
 }
 
 // DefaultConfig возвращает настройки со значениями по умолчанию —

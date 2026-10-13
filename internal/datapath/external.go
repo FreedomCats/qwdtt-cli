@@ -117,6 +117,7 @@ func (e *External) Requires() Requirements {
 	return Requirements{
 		Admin:    true,
 		Programs: []string{program},
+		Netguard: true,
 		Warning:  ExternalWarning,
 	}
 }

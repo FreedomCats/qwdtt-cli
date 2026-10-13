@@ -160,7 +160,7 @@ func TestProbeDNSHonoursContext(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	err = ProbeDNS(ctx, "custom:"+silent.LocalAddr().String())
+	err = ProbeDNS(ctx, Config{DNS: "custom:" + silent.LocalAddr().String()})
 	if err == nil {
 		t.Fatal("ProbeDNS через молчащий сервер вернул nil")
 	}
