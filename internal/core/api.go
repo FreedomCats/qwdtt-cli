@@ -10,7 +10,6 @@ package core
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 	"sync/atomic"
 )
@@ -21,12 +20,6 @@ const (
 	// accountMaxWorkers — потолок в режиме авторизации по аккаунту VK:
 	// на сессию выдаётся квота примерно в 4 TURN-relay.
 	accountMaxWorkers = 4
-)
-
-// Режимы работы клиента.
-const (
-	ModeVPN   = "vpn"   // слушать UDP, отдавать конфиг WireGuard
-	ModeSocks = "socks" // userspace WireGuard и локальный SOCKS5
 )
 
 // Режимы получения учётных данных VK.
@@ -88,20 +81,13 @@ type Config struct {
 
 	// --- локальная часть ---
 
-	// Mode — ModeVPN или ModeSocks.
-	Mode string
 	// Listen — локальный UDP-адрес, куда datapath отдаёт трафик.
+	//
+	// Что именно подаёт в него трафик — userspace WireGuard с SOCKS5, штатный
+	// wireguard.exe или свой адаптер — ядра не касается: оно только принимает
+	// UDP и отдаёт наружу конфиг событием EventConfig. Выбор и настройки
+	// datapath живут в internal/datapath (architecture.md §04).
 	Listen string
-	// Socks — настройки локального SOCKS5; учитываются только при ModeSocks.
-	Socks SocksConfig
-}
-
-// SocksConfig — настройки локального SOCKS5-сервера.
-type SocksConfig struct {
-	Listen   string
-	Auth     bool
-	Username string
-	Password string
 }
 
 // DefaultConfig возвращает настройки со значениями по умолчанию —
@@ -115,11 +101,7 @@ func DefaultConfig() Config {
 		ObfsMode:    "audio",
 		Workers:     9,
 		DNS:         "yandex",
-		Mode:        ModeVPN,
 		Listen:      "127.0.0.1:9000",
-		Socks: SocksConfig{
-			Listen: "127.0.0.1:1080",
-		},
 	}
 }
 
@@ -151,19 +133,9 @@ func (c *Config) Normalize() {
 		c.DNS = defaults.DNS
 	}
 
-	c.Mode = strings.ToLower(strings.TrimSpace(c.Mode))
-	if c.Mode == "" {
-		c.Mode = defaults.Mode
-	}
-
 	c.Listen = strings.TrimSpace(c.Listen)
 	if c.Listen == "" {
 		c.Listen = defaults.Listen
-	}
-
-	c.Socks.Listen = strings.TrimSpace(c.Socks.Listen)
-	if c.Socks.Listen == "" {
-		c.Socks.Listen = defaults.Socks.Listen
 	}
 
 	c.Workers = normalizeWorkers(c.Workers, c.VkAuthMode)
@@ -233,21 +205,6 @@ func (c *Config) Validate() error {
 	}
 	if len(c.Hashes) == 0 {
 		problems = append(problems, "не задано ни одного хеша звонка VK")
-	}
-
-	switch c.Mode {
-	case ModeVPN, ModeSocks:
-	default:
-		problems = append(problems, fmt.Sprintf("неизвестный режим %q: допустимы %q и %q", c.Mode, ModeVPN, ModeSocks))
-	}
-
-	if c.Mode == ModeSocks && c.Socks.Auth {
-		switch {
-		case c.Socks.Username == "" || c.Socks.Password == "":
-			problems = append(problems, "для авторизации SOCKS5 нужны логин и пароль")
-		case len(c.Socks.Username) > 255 || len(c.Socks.Password) > 255:
-			problems = append(problems, "логин и пароль SOCKS5 должны быть не длиннее 255 байт")
-		}
 	}
 
 	if len(problems) == 0 {

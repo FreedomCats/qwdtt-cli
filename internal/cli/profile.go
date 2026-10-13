@@ -15,6 +15,7 @@ import (
 
 	"qwdtt-cli/internal/config"
 	"qwdtt-cli/internal/core"
+	"qwdtt-cli/internal/datapath"
 )
 
 func profileCommand() *command {
@@ -208,7 +209,7 @@ func runProfileShow(_ context.Context, e *env, args []string) error {
 		printSetting(e.stdout, "dtls", fmt.Sprint(*p.DTLS), "")
 	}
 	printSetting(e.stdout, "dns", p.DNS, def.DNS)
-	printSetting(e.stdout, "socks.listen", p.Socks.Listen, def.Socks.Listen)
+	printSetting(e.stdout, "socks.listen", p.Socks.Listen, datapath.DefaultSocksListen)
 
 	fmt.Fprintln(e.stdout)
 	printField(e.stdout, "password", mask, secretNote(store, p.PasswordRef, false))

@@ -106,7 +106,7 @@ func Run(ctx context.Context, cfg Config, sink Sink, ctrl *Control) error {
 	configDone := make(chan struct{})
 	go func() {
 		defer close(configDone)
-		serveConfig(runCtx, &cfg, configCh)
+		serveConfig(runCtx, configCh)
 	}()
 
 	// Флаг паузы читают все воркеры разом, и раздаётся он один раз, при старте
@@ -124,8 +124,8 @@ func Run(ctx context.Context, cfg Config, sink Sink, ctrl *Control) error {
 	close(configCh)
 
 	// Воркеров больше нет — держать datapath не на чем. Отмена нужна и тогда,
-	// когда родительский ctx жив: иначе SOCKS5-сервер внутри serveConfig
-	// продолжал бы слушать, а Run — ждать его на configDone.
+	// когда родительский ctx жив: иначе горутина статистики продолжала бы
+	// работать, а ожидание конфига — висеть.
 	cancel()
 	<-configDone
 	logln("[КЛИЕНТ] Все воркеры завершены")
@@ -311,14 +311,10 @@ func startWorkers(
 // serveConfig ждёт конфиг WireGuard от первой группы воркеров и отдаёт его наружу.
 //
 // В апстриме та же горутина писала конфиг в файл wg-turn.conf в текущем каталоге —
-// вместе с приватным ключом. Библиотека файлов не пишет: конфиг уходит только
-// событием EventConfig, а куда его класть и когда удалять, решает datapath
-// (architecture.md §04, задача D3).
-//
-// Подъём userspace WireGuard и SOCKS5 — тоже работа datapath (задача D2). Пока
-// его нет, они остаются здесь; вынуть их должно быть не сложнее, чем удалить
-// нижнюю ветку целиком.
-func serveConfig(ctx context.Context, cfg *Config, configCh <-chan string) {
+// вместе с приватным ключом — и сама же поднимала userspace WireGuard с SOCKS5.
+// Ядро ничего этого не делает: конфиг уходит событием EventConfig, а что с ним
+// делать дальше, решает internal/datapath (architecture.md §04).
+func serveConfig(ctx context.Context, configCh <-chan string) {
 	var fromServer string
 	select {
 	case conf, ok := <-configCh:
@@ -330,23 +326,7 @@ func serveConfig(ctx context.Context, cfg *Config, configCh <-chan string) {
 		return
 	}
 
-	conf := withMTU(fromServer)
-	emit(EventConfig{WireGuard: conf})
-
-	if cfg.Mode != ModeSocks {
-		return
-	}
-
-	dev, tnet, err := startUserspaceWireGuard(conf)
-	if err != nil {
-		logf("[SOCKS] Ошибка userspace WG: %v", err)
-		return
-	}
-	defer dev.Close()
-
-	if err := runSocks5Server(ctx, cfg.Socks.Listen, tnet, cfg.Socks.Auth, cfg.Socks.Username, cfg.Socks.Password); err != nil {
-		logf("[SOCKS] Сервер остановлен: %v", err)
-	}
+	emit(EventConfig{WireGuard: withMTU(fromServer)})
 }
 
 // withMTU дописывает MTU в секцию [Interface], если сервер его не прислал.
@@ -388,13 +368,8 @@ func logStartup(cfg *Config) {
 		logln("[КЛИЕНТ] TURN-транспорт: UDP")
 	}
 
-	logf("[КЛИЕНТ] Режим: %s", cfg.Mode)
-	if cfg.Mode == ModeSocks {
-		logf("[КЛИЕНТ] SOCKS5: %s", cfg.Socks.Listen)
-		if cfg.Socks.Auth {
-			logln("[КЛИЕНТ] SOCKS5: авторизация по логину и паролю включена")
-		}
-	}
+	// Строки «Режим» и «SOCKS5» из апстрима сюда не переехали: чем занят
+	// datapath, ядро больше не знает — оно только отдаёт конфиг событием.
 
 	// В апстриме здесь была развилка «WRAP: ON / OFF»: ключ приходил флагом и
 	// мог не прийти вовсе. Теперь он выводится из пароля, а без пароля Validate

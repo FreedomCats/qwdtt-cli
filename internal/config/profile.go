@@ -101,10 +101,12 @@ type SocksSection struct {
 // вызывающий, развернув PasswordRef и VkHashesRef через хранилище (задача C2).
 // Поэтому core.Config.Validate после Core ещё не проходит — и не должен.
 //
-// Умолчания берутся из core.DefaultConfig, кроме одного. Ядро по умолчанию
-// работает в режиме vpn — так был устроен его флаг -mode; для настольного
-// клиента умолчание другое, socks: это единственный режим, которому не нужны
-// права администратора, и ради него затевался Э1.
+// Умолчания берутся из core.DefaultConfig целиком.
+//
+// Полей datapath здесь нет: ядру всё равно, кто заберёт у него конфиг. Выбор
+// реализации (Profile.Datapath, по умолчанию socks — единственный режим без
+// прав администратора) и её настройки (Profile.Socks) читает CLI и передаёт
+// конструктору из internal/datapath, минуя ядро (задача D2).
 func (p *Profile) Core() core.Config {
 	cfg := core.DefaultConfig()
 
@@ -121,15 +123,6 @@ func (p *Profile) Core() core.Config {
 	}
 	cfg.TurnTCP = strings.EqualFold(strings.TrimSpace(p.TurnTransport), "tcp")
 	cfg.NoDTLS = p.DTLS != nil && !*p.DTLS
-
-	if strings.TrimSpace(p.Datapath) == DatapathSocks || p.Datapath == "" {
-		cfg.Mode = core.ModeSocks
-	} else {
-		cfg.Mode = core.ModeVPN
-	}
-	if p.Socks.Listen != "" {
-		cfg.Socks.Listen = p.Socks.Listen
-	}
 
 	return cfg
 }

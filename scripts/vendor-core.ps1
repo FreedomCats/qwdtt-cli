@@ -64,7 +64,9 @@ if (-not (Test-Path -LiteralPath $source -PathType Container)) {
 # а не выбросит молча не то. Исключённый файл, оставшийся в internal/core,
 # удаляется при переносе и считается расхождением при -Check.
 $excludedFiles = [ordered]@{
-    'tun_fd.go' = 'приём TUN-дескриптора от Android по SCM_RIGHTS: режим rawtun на десктопе не поддерживается'
+    'tun_fd.go'    = 'приём TUN-дескриптора от Android по SCM_RIGHTS: режим rawtun на десктопе не поддерживается'
+    'socks_wg.go'  = 'userspace WireGuard через netstack: переехал в internal/datapath (задача D2)'
+    'socks5.go'    = 'SOCKS5-сервер поверх netstack: переехал в internal/datapath (задача D2)'
 }
 
 # listen.go задаёт SO_REUSEADDR через syscall.SetsockoptInt, а его сигнатура
@@ -341,9 +343,7 @@ $logReplacements = [ordered]@{
 #
 # Список закрытый: снимается только то, что могли осиротить именно наши правки.
 # Ложно снять импорт нельзя — проверка идёт по имени пакета, и если оно в файле
-# встречается, строка остаётся. Так, socks5.go сохраняет "log": он отдаёт
-# *log.Logger чужой библиотеке SOCKS5, и это её собственный вывод — он проходит
-# через socksLogFilter и уже оттуда попадает в logln.
+# встречается, строка остаётся.
 $prunableImports = @('bufio', 'flag', 'log', 'net', 'os', 'os/signal', 'strconv', 'sync', 'syscall')
 
 # ================================================================================

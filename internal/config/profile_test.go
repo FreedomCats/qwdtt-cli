@@ -1,6 +1,7 @@
 package config
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -19,17 +20,11 @@ func TestCoreDefaults(t *testing.T) {
 	if cfg.Workers != defaults.Workers || cfg.ObfsMode != defaults.ObfsMode || cfg.DNS != defaults.DNS {
 		t.Errorf("умолчания разъехались с ядром: %d, %q, %q", cfg.Workers, cfg.ObfsMode, cfg.DNS)
 	}
-	if cfg.Socks.Listen != defaults.Socks.Listen {
-		t.Errorf("socks.listen = %q, ожидалось %q", cfg.Socks.Listen, defaults.Socks.Listen)
-	}
 	if cfg.TurnTCP {
 		t.Error("TurnTCP включён без turn_transport = \"tcp\"")
 	}
 	if cfg.NoDTLS {
 		t.Error("DTLS выключен, хотя в профиле про него не сказано")
-	}
-	if cfg.Mode != core.ModeSocks {
-		t.Errorf("Mode = %q, ожидался %q: режим без прав администратора", cfg.Mode, core.ModeSocks)
 	}
 }
 
@@ -58,18 +53,21 @@ func TestCoreMapping(t *testing.T) {
 	if !cfg.NoDTLS {
 		t.Error("dtls = false не выключил DTLS")
 	}
-	if cfg.Socks.Listen != "127.0.0.1:1081" {
-		t.Errorf("socks.listen = %q", cfg.Socks.Listen)
-	}
 }
 
-// datapath = external означает режим ядра vpn: конфиг уходит наружу,
-// а туннель поднимает штатный WireGuard.
-func TestCoreExternalDatapath(t *testing.T) {
-	cfg := parse(t, fullFile).Profiles["work"].Core()
+// Выбор datapath в настройки ядра не попадает вовсе: ядро отдаёт конфиг
+// событием, а кто его заберёт — дело internal/datapath (задача D2). Настройки
+// самого datapath читает CLI прямо из профиля.
+func TestCoreIgnoresDatapath(t *testing.T) {
+	p := parse(t, fullFile).Profiles["home"]
 
-	if cfg.Mode != core.ModeVPN {
-		t.Errorf("Mode = %q, ожидался %q", cfg.Mode, core.ModeVPN)
+	p.Datapath = DatapathSocks
+	socks := p.Core()
+	p.Datapath = DatapathExternal
+	external := p.Core()
+
+	if !reflect.DeepEqual(socks, external) {
+		t.Errorf("datapath просочился в настройки ядра: %+v против %+v", socks, external)
 	}
 }
 

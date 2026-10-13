@@ -59,14 +59,8 @@ func TestNormalizeFillsDefaults(t *testing.T) {
 	if cfg.DeviceID != defaults.DeviceID {
 		t.Errorf("DeviceID = %q, ожидалось %q", cfg.DeviceID, defaults.DeviceID)
 	}
-	if cfg.Mode != ModeVPN {
-		t.Errorf("Mode = %q, ожидалось %q", cfg.Mode, ModeVPN)
-	}
 	if cfg.Listen != defaults.Listen {
 		t.Errorf("Listen = %q, ожидалось %q", cfg.Listen, defaults.Listen)
-	}
-	if cfg.Socks.Listen != defaults.Socks.Listen {
-		t.Errorf("Socks.Listen = %q, ожидалось %q", cfg.Socks.Listen, defaults.Socks.Listen)
 	}
 	if cfg.DNS != defaults.DNS {
 		t.Errorf("DNS = %q, ожидалось %q", cfg.DNS, defaults.DNS)
@@ -139,15 +133,14 @@ func TestNormalizeIsIdempotent(t *testing.T) {
 		Hashes:   []string{"aaa, bbb"},
 		Workers:  107,
 		ObfsMode: "VIDEO",
-		Mode:     " SOCKS ",
 	}
 
 	cfg.Normalize()
 	first := cfg
 	cfg.Normalize()
 
-	if cfg.Workers != first.Workers || cfg.Mode != first.Mode ||
-		cfg.ObfsMode != first.ObfsMode || !slices.Equal(cfg.Hashes, first.Hashes) {
+	if cfg.Workers != first.Workers || cfg.ObfsMode != first.ObfsMode ||
+		!slices.Equal(cfg.Hashes, first.Hashes) {
 		t.Errorf("повторный Normalize изменил результат: было %+v, стало %+v", first, cfg)
 	}
 }
@@ -175,25 +168,6 @@ func TestValidate(t *testing.T) {
 		{"без peer", func(c *Config) { c.Peer = "" }, "адрес сервера"},
 		{"без пароля", func(c *Config) { c.Password = "" }, "пароль подключения"},
 		{"без хешей", func(c *Config) { c.Hashes = nil }, "хеша звонка"},
-		{"неизвестный режим", func(c *Config) { c.Mode = "rawtun" }, "неизвестный режим"},
-		{
-			"socks-авторизация без логина",
-			func(c *Config) {
-				c.Mode = ModeSocks
-				c.Socks.Auth = true
-			},
-			"логин и пароль",
-		},
-		{
-			"слишком длинный логин socks",
-			func(c *Config) {
-				c.Mode = ModeSocks
-				c.Socks.Auth = true
-				c.Socks.Username = strings.Repeat("u", 256)
-				c.Socks.Password = "p"
-			},
-			"255 байт",
-		},
 	}
 
 	for _, tt := range tests {
