@@ -145,3 +145,17 @@ func TestProfileEmptyFile(t *testing.T) {
 		t.Error("пустой файл отдал профиль по имени")
 	}
 }
+
+// kill_switch включён, если о нём не сказано, и выключается только явным false.
+func TestKillSwitchOn(t *testing.T) {
+	if !parse(t, minimalFile).Profiles["home"].KillSwitchOn() {
+		t.Error("без kill_switch в профиле он выключен")
+	}
+	if parse(t, fullFile).Profiles["home"].KillSwitchOn() {
+		t.Error("kill_switch = false не выключил его")
+	}
+	on := true
+	if !(&Profile{KillSwitch: &on}).KillSwitchOn() {
+		t.Error("kill_switch = true выключил его")
+	}
+}

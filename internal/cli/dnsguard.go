@@ -4,7 +4,7 @@
 // Сессия WFP (на Linux — таблица nftables, plan-e4.md, D1) открывается здесь,
 // до первой попытки, и живёт весь tt connect; правила ставит и снимает сам
 // datapath. Отказ — по умолчанию ошибка с
-// подсказкой про -allow-dns-leak (решение пользователя: подключение без
+// подсказкой про -allow-leak (решение пользователя: подключение без
 // защиты — только явным согласием).
 package cli
 
@@ -32,7 +32,7 @@ var openDNSGuard = openSystemDNSGuard
 var prepareSystemDNS = systemDNSReady
 
 // setupDNSGuard открывает защиту DNS и возвращает её для datapath вместе
-// с функцией закрытия. Без -allow-dns-leak отказ — ошибка, с ним —
+// с функцией закрытия. Без -allow-leak отказ — ошибка, с ним —
 // предупреждение в warn и работа без защиты (guard == nil).
 func setupDNSGuard(out *printer, warn io.Writer, allowLeak bool) (guard datapath.DNSGuard, closeGuard func(), err error) {
 	session, err := openDNSGuard()
@@ -40,10 +40,10 @@ func setupDNSGuard(out *printer, warn io.Writer, allowLeak bool) (guard datapath
 		if !allowLeak {
 			return nil, nil, fmt.Errorf("защита от утечки DNS не включилась: %w; без неё DNS-запросы "+
 				"системы могут уходить мимо туннеля к провайдеру. Подключиться без защиты: "+
-				"добавьте флаг -allow-dns-leak", err)
+				"добавьте флаг -allow-leak", err)
 		}
 		fmt.Fprintf(warn, "Предупреждение: защита от утечки DNS не включилась: %v — "+
-			"с -allow-dns-leak подключаюсь без неё, DNS-запросы системы могут уходить мимо туннеля\n", err)
+			"с -allow-leak подключаюсь без неё, DNS-запросы системы могут уходить мимо туннеля\n", err)
 		return nil, func() {}, nil
 	}
 	out.line("защита DNS: пока туннель поднят, DNS системы — только к резолверам туннеля")
@@ -55,7 +55,7 @@ func setupDNSGuard(out *printer, warn io.Writer, allowLeak bool) (guard datapath
 	return guard, func() { _ = session.Close() }, nil
 }
 
-// tolerantDNSGuard — защита DNS под -allow-dns-leak: отказ правил посреди
+// tolerantDNSGuard — защита DNS под -allow-leak: отказ правил посреди
 // сеанса — строка в выводе, а не сбой попытки.
 type tolerantDNSGuard struct {
 	guard datapath.DNSGuard
@@ -64,7 +64,7 @@ type tolerantDNSGuard struct {
 
 func (g tolerantDNSGuard) Enable(dns []netip.Addr) error {
 	if err := g.guard.Enable(dns); err != nil {
-		g.logf("[DNS] Внимание: %v — с -allow-dns-leak туннель работает без защиты DNS", err)
+		g.logf("[DNS] Внимание: %v — с -allow-leak туннель работает без защиты DNS", err)
 	}
 	return nil
 }

@@ -71,7 +71,8 @@ type connectOptions struct {
 	datapath      string
 	socksListen   string
 	listen        string
-	allowDNSLeak  bool
+	noKillSwitch  bool
+	allowLeak     bool
 
 	named map[string]bool
 }
@@ -92,13 +93,24 @@ func addConnectFlags(fs *flag.FlagSet) *connectOptions {
 	fs.StringVar(&o.datapath, "datapath", "", "как отдавать трафик: socks, tun или external")
 	fs.StringVar(&o.socksListen, "socks-listen", "", "адрес локального SOCKS5 при datapath=socks")
 	fs.StringVar(&o.listen, "listen", "", "локальный UDP-адрес, куда datapath отдаёт трафик")
-	// Единственный флаг без поля в профиле: согласие на утечку DNS даётся
-	// на один запуск, а не записывается навсегда (plan-e2.md, W4).
-	fs.BoolVar(&o.allowDNSLeak, "allow-dns-leak", false,
-		"подключаться, даже если защита от утечки DNS (tun, external) не включилась")
+	// Выключить на запуск, а не включить: включён он и так, если профиль
+	// не выключил (plan-e3.md, решение 2).
+	fs.BoolVar(&o.noKillSwitch, "no-kill-switch", false,
+		"выключить kill-switch на этот запуск: "+killSwitchUsage)
+	// Флаг без поля в профиле: согласие на утечку даётся на один запуск, а не
+	// записывается навсегда (plan-e2.md, W4). Один на защиту DNS и
+	// kill-switch: отказывают они по одной причине — nftables или WFP
+	// (plan-e3.md, решение 3). -allow-dns-leak — прежнее имя.
+	fs.BoolVar(&o.allowLeak, "allow-leak", false,
+		"подключаться, даже если защита от утечки DNS и kill-switch (tun, external) не включились")
+	fs.BoolVar(&o.allowLeak, "allow-dns-leak", false, "прежнее имя -allow-leak")
 
 	return o
 }
+
+// killSwitchUsage — что делает kill-switch, для подсказок флагов connect и
+// profile set.
+const killSwitchUsage = "в tun и external он блокирует трафик системы, пока туннель не поднят"
 
 func runConnect(ctx context.Context, e *env, args []string) error {
 	fs := newFlagSet(connectCommand())
@@ -143,10 +155,14 @@ type connectPlan struct {
 	// describe — datapath одной фразой для заголовка: «SOCKS5 на 127.0.0.1:1080».
 	describe string
 
-	// allowDNSLeak — -allow-dns-leak: отказ защиты DNS не мешает подключению.
-	allowDNSLeak bool
+	// allowLeak — -allow-leak: отказ защиты DNS и kill-switch не мешает
+	// подключению.
+	allowLeak bool
+	// killSwitch — kill-switch включён (профиль, -no-kill-switch). Действует
+	// только у datapath с защитой DNS: это та же сессия WFP (таблица nftables).
+	killSwitch bool
 	// dnsGuard — защита DNS для datapath, которые её просят; открывается
-	// в run, до первой попытки. nil — нет (socks или -allow-dns-leak).
+	// в run, до первой попытки. nil — нет (socks или -allow-leak).
 	dnsGuard datapath.DNSGuard
 }
 
@@ -170,7 +186,7 @@ func planConnect(opts *connectOptions, name string) (*connectPlan, error) {
 		return nil, err
 	}
 
-	plan := &connectPlan{profile: p, cfg: cfg, allowDNSLeak: opts.allowDNSLeak}
+	plan := &connectPlan{profile: p, cfg: cfg, allowLeak: opts.allowLeak, killSwitch: p.KillSwitchOn()}
 	if err := plan.chooseDatapath(); err != nil {
 		return nil, err
 	}
@@ -230,6 +246,10 @@ func overrideProfile(base *config.Profile, opts *connectOptions) *config.Profile
 	}
 	if opts.named["socks-listen"] {
 		p.Socks.Listen = opts.socksListen
+	}
+	if opts.named["no-kill-switch"] && opts.noKillSwitch {
+		off := false
+		p.KillSwitch = &off
 	}
 	return &p
 }
@@ -457,7 +477,7 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	// на весь сеанс: отказ в Start супервизор принял бы за сбой попытки и
 	// ушёл бы в переподключения.
 	if req.DNSGuard {
-		guard, closeGuard, err := setupDNSGuard(out, e.stderr, plan.allowDNSLeak)
+		guard, closeGuard, err := setupDNSGuard(out, e.stderr, plan.allowLeak)
 		if err != nil {
 			return err
 		}

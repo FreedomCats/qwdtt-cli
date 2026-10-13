@@ -25,6 +25,7 @@ func sampleFile() *File {
 				DTLS:          boolPtr(false),
 				DNS:           "doh-yandex",
 				Datapath:      DatapathSocks,
+				KillSwitch:    boolPtr(false),
 				Socks:         SocksSection{Listen: "127.0.0.1:1080"},
 			},
 			"work": {
@@ -83,6 +84,13 @@ func TestSaveRoundTrip(t *testing.T) {
 	}
 	if got.Profiles["work"].DTLS != nil {
 		t.Errorf("у work появился dtls, которого не задавали: %v", *got.Profiles["work"].DTLS)
+	}
+	// С kill_switch так же: пропуск — «включён», и вписывать его незачем.
+	if home.KillSwitch == nil || *home.KillSwitch {
+		t.Errorf("kill_switch = %v, ожидалось false", home.KillSwitch)
+	}
+	if got.Profiles["work"].KillSwitch != nil {
+		t.Errorf("у work появился kill_switch, которого не задавали: %v", *got.Profiles["work"].KillSwitch)
 	}
 }
 

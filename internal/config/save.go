@@ -84,6 +84,9 @@ func render(f *File) string {
 			fmt.Fprintf(&b, "dtls = %t\n", *p.DTLS)
 		}
 		writeString(&b, "dns", p.DNS)
+		if p.KillSwitch != nil {
+			fmt.Fprintf(&b, "kill_switch = %t\n", *p.KillSwitch)
+		}
 
 		if listen := strings.TrimSpace(p.Socks.Listen); listen != "" {
 			fmt.Fprintf(&b, "\n[profile.%s.socks]\n", name)

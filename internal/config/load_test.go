@@ -25,6 +25,7 @@ turn_transport = "tcp"
 dtls           = false
 dns            = "doh-yandex"
 datapath       = "socks"
+kill_switch    = false
 
 [profile.home.socks]
 listen = "127.0.0.1:1081"

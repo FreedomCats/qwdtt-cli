@@ -29,7 +29,7 @@ type TunOptions struct {
 	Logf func(format string, args ...any)
 
 	// DNSGuard — защита от утечки DNS: включается, когда маршруты стоят,
-	// выключается в Suspend и Close. nil — без неё (CLI с -allow-dns-leak, тесты).
+	// выключается в Suspend и Close. nil — без неё (CLI с -allow-leak, тесты).
 	DNSGuard DNSGuard
 }
 

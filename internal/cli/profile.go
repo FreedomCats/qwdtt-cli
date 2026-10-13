@@ -209,6 +209,11 @@ func runProfileShow(_ context.Context, e *env, args []string) error {
 		printSetting(e.stdout, "dtls", fmt.Sprint(*p.DTLS), "")
 	}
 	printSetting(e.stdout, "dns", p.DNS, def.DNS)
+	if p.KillSwitch == nil {
+		printSetting(e.stdout, "kill_switch", "", "true")
+	} else {
+		printSetting(e.stdout, "kill_switch", fmt.Sprint(*p.KillSwitch), "")
+	}
 	printSetting(e.stdout, "socks.listen", p.Socks.Listen, datapath.DefaultSocksListen)
 
 	fmt.Fprintln(e.stdout)
@@ -268,6 +273,7 @@ func runProfileSet(_ context.Context, e *env, args []string) error {
 	dns := fs.String("dns", "", "резолвер для доменов VK: yandex, cloudflare, google, doh-*, custom:IP, doh:URL")
 	datapath := fs.String("datapath", "", "как отдавать трафик: socks, tun или external")
 	socksListen := fs.String("socks-listen", "", "адрес локального SOCKS5 при datapath=socks")
+	killSwitch := fs.Bool("kill-switch", true, "kill-switch: "+killSwitchUsage+"; -kill-switch=false — выключить")
 	askPassword := fs.Bool("password", false, "спросить пароль подключения заново")
 	askHashes := fs.Bool("hashes", false, "спросить хеши звонков VK заново")
 	makeDefault := fs.Bool("default", false, "сделать профиль профилем по умолчанию")
@@ -320,6 +326,10 @@ func runProfileSet(_ context.Context, e *env, args []string) error {
 	}
 	if named["socks-listen"] {
 		p.Socks.Listen = *socksListen
+	}
+	if named["kill-switch"] {
+		value := *killSwitch
+		p.KillSwitch = &value
 	}
 
 	if !existed && strings.TrimSpace(p.Peer) == "" {

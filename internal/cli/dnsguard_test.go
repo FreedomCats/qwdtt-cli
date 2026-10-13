@@ -39,16 +39,16 @@ func stubOpenDNSGuard(t *testing.T, session *fakeGuardSession, err error) {
 	t.Cleanup(func() { openDNSGuard = prev })
 }
 
-// Без -allow-dns-leak отказ защиты — ошибка, и она называет флаг.
+// Без -allow-leak отказ защиты — ошибка, и она называет флаг.
 func TestSetupDNSGuardRefusesByDefault(t *testing.T) {
 	stubOpenDNSGuard(t, nil, errors.New("сессия WFP: служба BFE остановлена"))
 	var stdout, stderr bytes.Buffer
 
 	guard, closeGuard, err := setupDNSGuard(newPrinter(&stdout, false), &stderr, false)
 	if err == nil {
-		t.Fatal("подключение без защиты DNS разрешено без -allow-dns-leak")
+		t.Fatal("подключение без защиты DNS разрешено без -allow-leak")
 	}
-	for _, want := range []string{"служба BFE остановлена", "-allow-dns-leak"} {
+	for _, want := range []string{"служба BFE остановлена", "-allow-leak"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("в ошибке нет %q: %v", want, err)
 		}
@@ -58,14 +58,14 @@ func TestSetupDNSGuardRefusesByDefault(t *testing.T) {
 	}
 }
 
-// С -allow-dns-leak отказ — предупреждение, и datapath идёт без защиты.
+// С -allow-leak отказ — предупреждение, и datapath идёт без защиты.
 func TestSetupDNSGuardAllowLeak(t *testing.T) {
 	stubOpenDNSGuard(t, nil, errors.New("сессия WFP: служба BFE остановлена"))
 	var stdout, stderr bytes.Buffer
 
 	guard, closeGuard, err := setupDNSGuard(newPrinter(&stdout, false), &stderr, true)
 	if err != nil {
-		t.Fatalf("с -allow-dns-leak отказ: %v", err)
+		t.Fatalf("с -allow-leak отказ: %v", err)
 	}
 	if guard != nil {
 		t.Errorf("защита %T, а сессии нет", guard)
@@ -100,11 +100,11 @@ func TestSetupDNSGuardOpens(t *testing.T) {
 	// Без флага отказ правил доходит до datapath — тот отказывает в Start.
 	session.enableErr = errors.New("правило не встало")
 	if err := guard.Enable(nil); err == nil {
-		t.Error("отказ Enable проглочен без -allow-dns-leak")
+		t.Error("отказ Enable проглочен без -allow-leak")
 	}
 }
 
-// С -allow-dns-leak отказ правил посреди сеанса — строка, а не сбой попытки.
+// С -allow-leak отказ правил посреди сеанса — строка, а не сбой попытки.
 func TestSetupDNSGuardAllowLeakTolerantEnable(t *testing.T) {
 	session := &fakeGuardSession{enableErr: errors.New("правило не встало")}
 	stubOpenDNSGuard(t, session, nil)
@@ -116,7 +116,7 @@ func TestSetupDNSGuardAllowLeakTolerantEnable(t *testing.T) {
 	}
 	defer closeGuard()
 	if err := guard.Enable(nil); err != nil {
-		t.Errorf("с -allow-dns-leak Enable = %v, ждали nil", err)
+		t.Errorf("с -allow-leak Enable = %v, ждали nil", err)
 	}
 	if !strings.Contains(stdout.String(), "[DNS] Внимание: правило не встало") {
 		t.Errorf("нет предупреждения об отказе правил: %q", stdout.String())
@@ -131,7 +131,7 @@ type blockingGuardSession struct {
 
 func (s *blockingGuardSession) BlockIPv6(block bool) { s.blockIPv6 = block }
 
-// С -allow-dns-leak обёртка не прячет от datapath умение закрыть IPv6.
+// С -allow-leak обёртка не прячет от datapath умение закрыть IPv6.
 func TestSetupDNSGuardAllowLeakBlocksIPv6(t *testing.T) {
 	session := &blockingGuardSession{}
 	prev := openDNSGuard
@@ -154,24 +154,58 @@ func TestSetupDNSGuardAllowLeakBlocksIPv6(t *testing.T) {
 	}
 }
 
-func TestPlanConnectAllowDNSLeak(t *testing.T) {
+// -allow-leak и его прежнее имя -allow-dns-leak — один флаг.
+func TestPlanConnectAllowLeak(t *testing.T) {
 	c := newConnectEnv(t)
 	for _, tc := range []struct {
 		args []string
 		want bool
 	}{
 		{[]string{"home", "-datapath", "tun"}, false},
+		{[]string{"home", "-datapath", "tun", "-allow-leak"}, true},
 		{[]string{"home", "-datapath", "tun", "-allow-dns-leak"}, true},
 	} {
 		plan, err := c.plan(tc.args...)
 		if err != nil {
 			t.Fatalf("%v: %v", tc.args, err)
 		}
-		if plan.allowDNSLeak != tc.want {
-			t.Errorf("%v: allowDNSLeak = %v", tc.args, plan.allowDNSLeak)
+		if plan.allowLeak != tc.want {
+			t.Errorf("%v: allowLeak = %v", tc.args, plan.allowLeak)
 		}
 		if !plan.datapath(nil).Requires().DNSGuard {
 			t.Errorf("%v: tun не просит защиту DNS", tc.args)
 		}
 	}
 }
+
+// kill-switch включён, если профиль не выключил; -no-kill-switch выключает
+// на запуск, профиль при этом не меняется.
+func TestPlanConnectKillSwitch(t *testing.T) {
+	c := newConnectEnv(t)
+	for _, tc := range []struct {
+		profile *bool
+		args    []string
+		want    bool
+	}{
+		{nil, []string{"home", "-datapath", "tun"}, true},
+		{nil, []string{"home", "-datapath", "tun", "-no-kill-switch"}, false},
+		{nil, []string{"home", "-datapath", "tun", "-no-kill-switch=false"}, true},
+		{boolPtr(false), []string{"home", "-datapath", "tun"}, false},
+		{boolPtr(true), []string{"home", "-datapath", "tun", "-no-kill-switch"}, false},
+	} {
+		c.file.Profiles["home"].KillSwitch = tc.profile
+		c.save()
+		plan, err := c.plan(tc.args...)
+		if err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		if plan.killSwitch != tc.want {
+			t.Errorf("профиль %v, %v: killSwitch = %v", tc.profile, tc.args, plan.killSwitch)
+		}
+		if got := c.file.Profiles["home"].KillSwitch; got != tc.profile {
+			t.Errorf("%v: план изменил профиль", tc.args)
+		}
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }

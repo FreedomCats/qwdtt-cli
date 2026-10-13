@@ -232,6 +232,37 @@ func TestProfileSetNormalizesWintun(t *testing.T) {
 	}
 }
 
+// -kill-switch=false записывается в профиль, а show его показывает; без
+// флага поле не появляется, и show называет умолчание.
+func TestProfileSetKillSwitch(t *testing.T) {
+	p := newProfileEnv(t)
+	p.setHome()
+
+	file, _ := config.Load(p.configPath())
+	if file.Profiles["home"].KillSwitch != nil {
+		t.Fatalf("kill_switch записан без флага: %v", *file.Profiles["home"].KillSwitch)
+	}
+	_, stdout, _ := p.run("profile", "show", "home")
+	if !strings.Contains(stdout, "kill_switch") || !strings.Contains(stdout, "true") {
+		t.Errorf("show не называет kill_switch по умолчанию:\n%s", stdout)
+	}
+
+	if code, _, stderr := p.run("profile", "set", "home", "-kill-switch=false"); code != exitOK {
+		t.Fatalf("код возврата %d, stderr:\n%s", code, stderr)
+	}
+	file, err := config.Load(p.configPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.Profiles["home"].KillSwitchOn() {
+		t.Error("-kill-switch=false не выключил kill-switch в профиле")
+	}
+	_, stdout, _ = p.run("profile", "show", "home")
+	if !strings.Contains(stdout, "false") {
+		t.Errorf("show не показывает kill_switch = false:\n%s", stdout)
+	}
+}
+
 // -password перезаписывает секрет по той же ссылке: осиротевших записей
 // в хранилище не остаётся.
 func TestProfileSetRewritesPasswordInPlace(t *testing.T) {
