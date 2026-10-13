@@ -12,7 +12,6 @@ import (
 	"sync"
 
 	"github.com/armon/go-socks5"
-	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 )
@@ -210,23 +209,9 @@ func (s *Socks) startWireGuard(conf *WGConfig) (*device.Device, *netstack.Net, e
 	if err != nil {
 		return nil, nil, fmt.Errorf("socks: CreateNetTUN: %w", err)
 	}
-	// Свой Logger вместо device.NewLogger: тот пишет прямо в stdout, а вывод
-	// принадлежит CLI. Verbosef — DiscardLogf: это тот же уровень, что был
-	// в ядре (LogLevelError), и обе функции обязаны быть непустыми — wireguard-go
-	// зовёт их без проверки на nil, в том числе из defer своих горутин.
-	dev := device.NewDevice(tunDev, conn.NewDefaultBind(), &device.Logger{
-		Verbosef: device.DiscardLogf,
-		Errorf: func(format string, args ...any) {
-			s.logf("[WG-SOCKS] "+format, args...)
-		},
-	})
-	if err := dev.IpcSet(conf.IPCRequest()); err != nil {
-		dev.Close()
-		return nil, nil, fmt.Errorf("socks: IpcSet: %w", err)
-	}
-	if err := dev.Up(); err != nil {
-		dev.Close()
-		return nil, nil, fmt.Errorf("socks: Up: %w", err)
+	dev, err := startDevice(tunDev, conf, "[WG-SOCKS]", s.logf)
+	if err != nil {
+		return nil, nil, fmt.Errorf("socks: %w", err)
 	}
 	s.logf("[SOCKS] userspace WireGuard поднят (addr=%v endpoint=%s)", conf.Addresses, conf.Endpoint)
 	return dev, tnet, nil
