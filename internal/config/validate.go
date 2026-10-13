@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -78,6 +79,39 @@ func validateFile(f *File) []string {
 	}
 
 	return problems
+}
+
+// CheckProfileName проверяет имя профиля по тем же правилам, что и файл. Нужна
+// тем, кто спрашивает имя у человека до записи (меню, plan-e5.md).
+func CheckProfileName(name string) error {
+	if bad := profileNameProblem(name); bad != "" {
+		return errors.New(bad)
+	}
+	return nil
+}
+
+// CheckPeer проверяет адрес сервера так же, как поле peer профиля.
+func CheckPeer(peer string) error {
+	if bad := hostPortProblem("адрес сервера", peer); bad != "" {
+		return errors.New(bad)
+	}
+	return nil
+}
+
+// DefaultPeerPort — порт сервера qWDTT, если в адресе его не назвали. Тот же,
+// что дописывает Android-клиент (PeerAddress.ensurePort).
+const DefaultPeerPort = "56000"
+
+// PeerWithPort дописывает к адресу без порта DefaultPeerPort. Адрес с портом,
+// IPv6 в скобках с портом и всё, где двоеточие уже есть, остаются как были:
+// угадывать, где в голом IPv6 кончается адрес, нельзя, а проверка потом
+// скажет, что не так.
+func PeerWithPort(peer string) string {
+	peer = strings.TrimSpace(peer)
+	if peer == "" || strings.Contains(peer, ":") {
+		return peer
+	}
+	return net.JoinHostPort(peer, DefaultPeerPort)
 }
 
 // profileNameProblem бережёт имя профиля от того, что тяжело набрать в командной

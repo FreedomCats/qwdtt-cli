@@ -109,7 +109,7 @@ func (m *menu) loop(ctx context.Context) error {
 	fmt.Fprintf(e.stdout, "tt %s — клиент qWDTT\n", e.build.Version)
 
 	for {
-		file, err := m.load()
+		_, file, err := m.load()
 		if err != nil {
 			return err
 		}
@@ -139,9 +139,8 @@ func (m *menu) loop(ctx context.Context) error {
 
 // load читает файл настроек. Файла нет — меню начинается с пустого списка:
 // первый профиль как раз и заводится из меню.
-func (m *menu) load() (*config.File, error) {
-	_, file, err := loadProfilesForWrite(m.config)
-	return file, err
+func (m *menu) load() (string, *config.File, error) {
+	return loadProfilesForWrite(m.config)
 }
 
 // selected — с каким профилем работают пункты меню: выбранный в этом сеансе,
@@ -290,8 +289,8 @@ func (m *menu) connect(ctx context.Context, name string) error {
 	return runConnect(ctx, m.e, m.args(name))
 }
 
-func (m *menu) pick(_ context.Context, current string) error {
-	file, err := m.load()
+func (m *menu) pick(context.Context, string) error {
+	_, file, err := m.load()
 	if err != nil {
 		return err
 	}
@@ -324,13 +323,6 @@ func (m *menu) pick(_ context.Context, current string) error {
 		}
 		return nil
 	}
-}
-
-// create — мастер профиля, задача I2.
-func (m *menu) create(context.Context, string) error {
-	fmt.Fprintln(m.e.stdout, "Мастер профиля ещё не готов. Пока профиль заводится командой:")
-	fmt.Fprintln(m.e.stdout, "  tt profile set <имя> -peer host:port")
-	return nil
 }
 
 func (m *menu) replaceHashes(ctx context.Context, name string) error {

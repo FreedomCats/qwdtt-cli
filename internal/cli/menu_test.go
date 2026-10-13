@@ -198,3 +198,121 @@ func TestMenuNumber(t *testing.T) {
 		}
 	}
 }
+
+// Мастер с нуля: Enter на имени, адрес без порта, режим по умолчанию — весь
+// трафик. Первый профиль становится профилем по умолчанию.
+func TestWizardCreatesFirstProfile(t *testing.T) {
+	p := newMenuEnv(t)
+	p.answer(testPassword, testPassword, testHashes)
+	p.input("\n\nexample.org\n\n0\n")
+
+	code, stdout, stderr := p.run("menu")
+	if code != exitOK {
+		t.Fatalf("код возврата %d, stderr:\n%s", code, stderr)
+	}
+	for _, want := range []string{"example.org:56000", "Принято ссылок: 3", "создан", "1. Подключиться (home)"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("в выводе нет %q:\n%s", want, stdout)
+		}
+	}
+	assertNoSecrets(t, "stdout", stdout)
+	assertNoSecrets(t, "stderr", stderr)
+
+	file, err := config.Load(p.configPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := file.Profiles["home"]
+	if h == nil || h.Peer != "example.org:56000" || h.Datapath != config.DatapathTun {
+		t.Fatalf("профиль записан неверно: %+v", h)
+	}
+	if file.DefaultProfile != "home" {
+		t.Errorf("default_profile = %q, ожидался home", file.DefaultProfile)
+	}
+	store := config.NewSecretStoreFor(p.configPath())
+	if got, _ := store.Get(h.PasswordRef); got != testPassword {
+		t.Errorf("пароль записан неверно: %q", got)
+	}
+	if got, _ := store.Get(h.VkHashesRef); got != testHashes {
+		t.Errorf("хеши записаны неверно: %q", got)
+	}
+}
+
+// Второй профиль: имя занято — предлагается свободное, режим SOCKS5, прежний
+// единственный профиль остаётся профилем по умолчанию, а меню переходит
+// к новому.
+func TestWizardCreatesSecondProfile(t *testing.T) {
+	p := newMenuEnv(t)
+	p.setHome()
+	p.answer(testPassword, testPassword, testHashes)
+	p.input("3\nhome\n\n198.51.100.7:56000\n2\n0\n")
+
+	code, stdout, stderr := p.run("menu")
+	if code != exitOK {
+		t.Fatalf("код возврата %d, stderr:\n%s", code, stderr)
+	}
+	if !strings.Contains(stderr, "Профиль home уже есть") {
+		t.Errorf("занятое имя не отвергнуто:\n%s", stderr)
+	}
+	if !strings.Contains(stdout, "1. Подключиться (profile-2)") {
+		t.Errorf("меню не перешло к новому профилю:\n%s", stdout)
+	}
+
+	file, err := config.Load(p.configPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := file.Profiles["profile-2"]; got == nil || got.Datapath != config.DatapathSocks {
+		t.Errorf("второй профиль записан неверно: %+v", got)
+	}
+	if file.DefaultProfile != "home" {
+		t.Errorf("default_profile = %q, ожидался home", file.DefaultProfile)
+	}
+}
+
+// Ошибки в ответах переспрашиваются: неверное имя и адрес, несовпавший
+// пароль, ввод без единой ссылки, неверный режим.
+func TestWizardRepeatsBadAnswers(t *testing.T) {
+	p := newMenuEnv(t)
+	p.answer(testPassword, "другой", "", testPassword, testPassword, "https://example.org/", testHashes)
+	p.input("\nмой дом\nhome\n\nexample.org:порт\n203.0.113.5:443\n5\n1\n0\n")
+
+	code, _, stderr := p.run("menu")
+	if code != exitOK {
+		t.Fatalf("код возврата %d, stderr:\n%s", code, stderr)
+	}
+	for _, want := range []string{"Такое имя не подойдёт", "Адрес сервера нужен", "Не похоже на адрес",
+		"Пароли не совпали", "Пароль не может быть пустым", "Не нашлось ни одной ссылки", "Введите 1 или 2"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("нет переспроса %q:\n%s", want, stderr)
+		}
+	}
+	if len(p.answers) != 0 {
+		t.Errorf("не все ответы на скрытый ввод спрошены: осталось %d", len(p.answers))
+	}
+
+	file, err := config.Load(p.configPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := file.Profiles["home"]; got == nil || got.Peer != "203.0.113.5:443" {
+		t.Errorf("профиль записан неверно: %+v", got)
+	}
+}
+
+// Конец ввода посреди мастера — отмена: файл настроек не появляется.
+func TestWizardCancelled(t *testing.T) {
+	p := newMenuEnv(t)
+	p.input("\n\n")
+
+	code, stdout, stderr := p.run("menu")
+	if code != exitOK {
+		t.Fatalf("код возврата %d, stderr:\n%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "Профиль не записан") {
+		t.Errorf("не сказано, что профиль не записан:\n%s", stdout)
+	}
+	if _, err := os.Stat(p.configPath()); !os.IsNotExist(err) {
+		t.Errorf("файл настроек создан при отмене")
+	}
+}

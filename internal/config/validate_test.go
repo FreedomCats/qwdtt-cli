@@ -222,3 +222,37 @@ func validFile() *File {
 		},
 	}
 }
+
+func TestPeerWithPort(t *testing.T) {
+	for in, want := range map[string]string{
+		"example.org":         "example.org:56000",
+		" 203.0.113.10 ":      "203.0.113.10:56000",
+		"203.0.113.10:443":    "203.0.113.10:443",
+		"[2001:db8::1]:56000": "[2001:db8::1]:56000",
+		"2001:db8::1":         "2001:db8::1",
+		"":                    "",
+	} {
+		if got := PeerWithPort(in); got != want {
+			t.Errorf("PeerWithPort(%q) = %q, ожидалось %q", in, got, want)
+		}
+	}
+}
+
+func TestCheckPeerAndName(t *testing.T) {
+	if err := CheckPeer("example.org:56000"); err != nil {
+		t.Errorf("годный адрес отвергнут: %v", err)
+	}
+	for _, bad := range []string{"example.org", "example.org:0", ":56000"} {
+		if err := CheckPeer(bad); err == nil {
+			t.Errorf("адрес %q принят", bad)
+		}
+	}
+	if err := CheckProfileName("home-2"); err != nil {
+		t.Errorf("годное имя отвергнуто: %v", err)
+	}
+	for _, bad := range []string{"", "дом", "my home"} {
+		if err := CheckProfileName(bad); err == nil {
+			t.Errorf("имя %q принято", bad)
+		}
+	}
+}

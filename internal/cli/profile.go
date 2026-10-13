@@ -339,47 +339,27 @@ func runProfileSet(_ context.Context, e *env, args []string) error {
 		return err
 	}
 
-	store := config.NewSecretStoreFor(path)
-	wantPassword := *askPassword || strings.TrimSpace(p.PasswordRef) == ""
-	wantHashes := *askHashes || strings.TrimSpace(p.VkHashesRef) == ""
-
-	if wantPassword {
-		value, err := e.askNewSecret(
+	var secrets profileSecrets
+	if *askPassword || strings.TrimSpace(p.PasswordRef) == "" {
+		secrets.password, err = e.askNewSecret(
 			fmt.Sprintf("Пароль подключения для профиля %q: ", name),
 			"Повторите пароль: ", "пароль подключения", true)
 		if err != nil {
 			return err
 		}
-		// Имя записи в хранилище — «<профиль>.password»: у каждого профиля
-		// свои секреты, а Put по тому же имени перезаписывает прежнее значение
-		// и не плодит осиротевших записей.
-		ref, err := store.Put(name+".password", value)
-		if err != nil {
-			return err
-		}
-		p.PasswordRef = ref
 	}
-
-	if wantHashes {
-		value, err := e.askNewSecret(
+	if *askHashes || strings.TrimSpace(p.VkHashesRef) == "" {
+		secrets.hashes, err = e.askNewSecret(
 			fmt.Sprintf("Хеши звонков VK для профиля %q (через запятую или пробел): ", name),
 			"", "хеши звонков VK", false)
 		if err != nil {
 			return err
 		}
-		if len(core.ParseHashes(value)) == 0 {
+		if len(core.ParseHashes(secrets.hashes)) == 0 {
 			return errors.New("хеши звонков VK: во введённом ни одного хеша не разобрано")
 		}
-		// Хранится строка ровно как её ввели: режет её на хеши ядро
-		// (core.ParseHashes), и второго формата склейки заводить незачем.
-		ref, err := store.Put(name+".vk_hashes", value)
-		if err != nil {
-			return err
-		}
-		p.VkHashesRef = ref
 	}
 
-	file.Profiles[name] = p
 	if named["default"] {
 		switch {
 		case *makeDefault:
@@ -388,7 +368,45 @@ func runProfileSet(_ context.Context, e *env, args []string) error {
 			file.DefaultProfile = ""
 		}
 	}
+	return storeProfile(e, path, file, p, existed, secrets)
+}
 
+// profileSecrets — новые значения секретов профиля. Пустое — не менять.
+type profileSecrets struct {
+	password string
+	hashes   string
+}
+
+// storeProfile записывает профиль: секреты — в хранилище, профиль — в файл
+// настроек, и говорит, что сделано. Общая для `tt profile set` и мастера
+// профиля в меню (menu.go). default_profile вызывающий выставляет сам.
+func storeProfile(e *env, path string, file *config.File, p *config.Profile, existed bool, secrets profileSecrets) error {
+	store := config.NewSecretStoreFor(path)
+
+	if secrets.password != "" {
+		// Имя записи в хранилище — «<профиль>.password»: у каждого профиля
+		// свои секреты, а Put по тому же имени перезаписывает прежнее значение
+		// и не плодит осиротевших записей.
+		ref, err := store.Put(p.Name+".password", secrets.password)
+		if err != nil {
+			return err
+		}
+		p.PasswordRef = ref
+	}
+	if secrets.hashes != "" {
+		// Хранится строка ровно как её ввели: режет её на хеши ядро
+		// (core.ParseHashes), и второго формата склейки заводить незачем.
+		ref, err := store.Put(p.Name+".vk_hashes", secrets.hashes)
+		if err != nil {
+			return err
+		}
+		p.VkHashesRef = ref
+	}
+
+	if file.Profiles == nil {
+		file.Profiles = map[string]*config.Profile{}
+	}
+	file.Profiles[p.Name] = p
 	if err := config.Save(path, file); err != nil {
 		return err
 	}
@@ -397,12 +415,12 @@ func runProfileSet(_ context.Context, e *env, args []string) error {
 	if !existed {
 		verb = "создан"
 	}
-	fmt.Fprintf(e.stdout, "Профиль %q %s: %s\n", name, verb, path)
-	if wantPassword || wantHashes {
+	fmt.Fprintf(e.stdout, "Профиль %q %s: %s\n", p.Name, verb, path)
+	if secrets.password != "" || secrets.hashes != "" {
 		fmt.Fprintf(e.stdout, "Секреты записаны в хранилище рядом с ним (%s)\n", config.SecretsFileName)
 	}
-	if file.DefaultProfile == name {
-		fmt.Fprintf(e.stdout, "Профиль по умолчанию: %s\n", name)
+	if file.DefaultProfile == p.Name {
+		fmt.Fprintf(e.stdout, "Профиль по умолчанию: %s\n", p.Name)
 	}
 	return nil
 }
