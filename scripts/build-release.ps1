@@ -19,11 +19,14 @@
         dist/tt_<версия>_linux_amd64/tt
         dist/tt_<версия>_darwin_arm64/tt
         dist/tt_<версия>_windows_amd64.zip   — tt.exe, wintun.dll, wintun-LICENSE.txt,
+                                               THIRD_PARTY_NOTICES.txt,
                                                tt.example.toml, LICENSE, README.md
 
     wintun.dll (режим -datapath wintun) кладётся в zip скриптом
     scripts/fetch-wintun.ps1: фиксированная версия, проверка SHA256 архива и
-    подписи DLL. В репозитории её нет.
+    подписи DLL. В репозитории её нет. THIRD_PARTY_NOTICES.txt — лицензии
+    всего, что слинковано в tt.exe, — собирает `go run ./scripts/notices`
+    на каждую сборку.
 
     Zip собирается только для Windows: это единственная платформа, для которой
     в Э1 есть все datapath и живая проверка. Остальные бинари лежат рядом как есть.
@@ -149,6 +152,8 @@ if (-not $NoZip) {
         $fetch = @{ Arch = $b.GOARCH; Dest = $b.Dir }
         if ($WintunArchive) { $fetch.Archive = $WintunArchive }
         & (Join-Path $PSScriptRoot 'fetch-wintun.ps1') @fetch
+        & go -C $root run ./scripts/notices -dest $b.Dir -goos $b.GOOS -goarch $b.GOARCH
+        if ($LASTEXITCODE -ne 0) { throw "уведомления для $($b.Platform) не собраны" }
         $zip = Join-Path $Out "$($b.Name).zip"
         if (Test-Path $zip) { Remove-Item -Force $zip }
         # Внутри архива — файлы без каталога: распаковал и запустил.
