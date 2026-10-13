@@ -382,6 +382,8 @@ func TestObserveIgnoresOtherEvents(t *testing.T) {
 		core.EventStats{ActiveWorkers: 9},
 		core.EventCaptchaRequired{Session: 1},
 		core.EventVkAuthRequired{Link: "https://vk.com/call/join/abc"},
+		// Отказ хеша туннель не роняет: его разбирает HashPool (F2).
+		core.EventHashFailed{Hash: "abc", Group: 2, Status: core.HashCheckDead},
 	} {
 		if tr, ok := m.Observe(ev); ok {
 			t.Errorf("%T дало переход: %+v", ev, tr)

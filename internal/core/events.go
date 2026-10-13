@@ -252,6 +252,49 @@ func emitHashCheck(index, total int, hash string, status HashCheckStatus, msg st
 	emit(EventHashCheck{Index: index, Total: total, Hash: hash, Status: status, Msg: msg})
 }
 
+// EventHashFailed — группа воркеров не получила креды VK по своему хешу звонка
+// и не стартовала.
+//
+// Ядро переживает это само: группа возвращается, остальные продолжают работать,
+// и туннель держится на них. Наружу событие уходит затем, что решение «этот хеш
+// больше не предлагать, а когда годных не останется — остановиться» принимает
+// супервизор (architecture.md §07, задача F2). В апстриме сигнала не было вовсе:
+// Android вылавливал отказ из строки лога.
+//
+// Событие приходит по одному на группу, фильтра повторов у него нет: у каждой
+// группы свой хеш, и терять вторую её не за что.
+type EventHashFailed struct {
+	// Hash — хеш звонка, по которому не вышло. Целиком: супервизор сопоставляет
+	// его со своим списком. Печатать его нельзя — хеши лежат в хранилище
+	// секретов (задача C2).
+	Hash string
+	// Group — номер группы воркеров, начиная с единицы.
+	Group int
+	// Status — чем кончилась попытка. HashCheckDead означает, что звонок закрыт
+	// и с тем же хешем не поможет ни повтор, ни перезапуск; остальные статусы
+	// временные.
+	Status HashCheckStatus
+	// Msg — пояснение для пользователя.
+	Msg string
+}
+
+func (EventHashFailed) isCoreEvent() {}
+
+// emitHashFailed классифицирует ошибку и отправляет событие.
+//
+// Классификация — та же classifyHashCheckError, которой пользуется `tt hashes`:
+// отличать «звонок закрыт» от «сеть отвалилась» нужно одинаково в обоих местах,
+// иначе одна и та же ошибка значила бы в команде одно, а в туннеле другое.
+func emitHashFailed(hash string, group int, err error) {
+	status, msg := classifyHashCheckError(err)
+	emit(EventHashFailed{
+		Hash:   hash,
+		Group:  group,
+		Status: HashCheckStatus(status),
+		Msg:    sanitizeHashCheckMessage(msg),
+	})
+}
+
 // ───────────────────────────── ping ─────────────────────────────
 
 // EventPing — итог команды `tt ping`. Заменяет маркеры PING_RESULT и PING_ERROR.

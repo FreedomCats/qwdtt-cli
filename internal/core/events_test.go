@@ -222,3 +222,36 @@ func TestHashCheckStatusMatchesClassifier(t *testing.T) {
 		}
 	}
 }
+
+// Отказ хеша уходит наружу классифицированным: супервизор по статусу решает,
+// исключать хеш навсегда или пробовать снова (задача F2).
+func TestEmitHashFailed(t *testing.T) {
+	rec := install(t)
+
+	emitHashFailed("a1b2c3d4e5f6", 2, errors.New("vk: call not found"))
+	emitHashFailed("ffffffffffff", 3, errors.New("i/o timeout"))
+
+	events := rec.all()
+	if len(events) != 2 {
+		t.Fatalf("событий %d, ожидалось 2", len(events))
+	}
+
+	dead, ok := events[0].(EventHashFailed)
+	if !ok {
+		t.Fatalf("получено %T, ожидалось EventHashFailed", events[0])
+	}
+	if dead.Hash != "a1b2c3d4e5f6" || dead.Group != 2 {
+		t.Errorf("хеш %q, группа %d", dead.Hash, dead.Group)
+	}
+	if dead.Status != HashCheckDead {
+		t.Errorf("статус %q, ожидался %q", dead.Status, HashCheckDead)
+	}
+	if dead.Msg == "" {
+		t.Error("пояснение пустое")
+	}
+
+	network, _ := events[1].(EventHashFailed)
+	if network.Status != HashCheckNetwork {
+		t.Errorf("статус %q, ожидался %q", network.Status, HashCheckNetwork)
+	}
+}
