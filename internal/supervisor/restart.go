@@ -147,6 +147,19 @@ func ShortHash(hash string) string {
 // неработающим. Та же величина, что у hasRecentTransportActivity на Android.
 const DefaultStallWindow = 25 * time.Second
 
+// DefaultStallBytes — сколько восходящих байт без единого байта в ответ нужно,
+// чтобы watchdog вообще начал отсчёт молчания.
+//
+// Порог нужен из-за WireGuard: раз в 25 секунд он шлёт keepalive в 32 байта,
+// на который сервер по протоколу не отвечает, а отвечает только на рукопожатие
+// раз в две минуты. Без порога простаивающий туннель выглядел бы молчащим
+// через 25 секунд и перезапускался бы каждые 50 — так и было на живой проверке
+// G2. Между двумя рукопожатиями keepalive набирает не больше 160 байт; живой
+// запрос приложения — SYN с повторами, DNS — набирает килобайт за секунды.
+// Android этого не замечал: там счётчики читались из лога с точностью
+// до 0,01 МБ, и keepalive в них не был виден вовсе.
+const DefaultStallBytes = 1024
+
 // StallReason — чем именно плох туннель. Пустая строка означает, что он здоров.
 type StallReason string
 
@@ -169,6 +182,9 @@ const (
 type Watchdog struct {
 	mu     sync.Mutex
 	window time.Duration
+	// minBytes — порог неотвеченной отправки, с которого идёт отсчёт.
+	// См. DefaultStallBytes.
+	minBytes int64
 
 	seen    bool  // была ли хоть одна статистика
 	workers int32 // из последней статистики
@@ -176,9 +192,12 @@ type Watchdog struct {
 	down    int64
 
 	statsAt time.Time // когда статистика приходила последний раз
-	// unansweredAt — когда начался восходящий трафик, на который с тех пор
-	// не пришло ни байта в ответ. Нулевое значение означает, что долга нет:
-	// либо не отправляли, либо всё отвеченное.
+	// unansweredBytes — сколько отправлено с тех пор, как в последний раз
+	// приходил ответ. Пока меньше minBytes, это keepalive, а не запрос.
+	unansweredBytes int64
+	// unansweredAt — когда неотвеченная отправка перевалила за minBytes.
+	// Нулевое значение означает, что долга нет: либо не отправляли, либо
+	// всё отвеченное, либо отправлено слишком мало, чтобы ждать ответа.
 	unansweredAt time.Time
 }
 
@@ -188,7 +207,7 @@ func NewWatchdog(window time.Duration) *Watchdog {
 	if window <= 0 {
 		window = DefaultStallWindow
 	}
-	return &Watchdog{window: window}
+	return &Watchdog{window: window, minBytes: DefaultStallBytes}
 }
 
 // Observe применяет событие ядра. События, кроме core.EventStats, он не трогает.
@@ -212,11 +231,13 @@ func (w *Watchdog) Observe(ev core.Event, now time.Time) {
 	// новая отправка открывает новый. Иначе тик, в котором выросли оба
 	// счётчика, оставлял бы долг с прошлого раза.
 	if stats.BytesDown > w.down {
-		w.down, w.unansweredAt = stats.BytesDown, time.Time{}
+		w.down = stats.BytesDown
+		w.unansweredBytes, w.unansweredAt = 0, time.Time{}
 	}
 	if stats.BytesUp > w.up {
+		w.unansweredBytes += stats.BytesUp - w.up
 		w.up = stats.BytesUp
-		if w.unansweredAt.IsZero() {
+		if w.unansweredAt.IsZero() && w.unansweredBytes >= w.minBytes {
 			w.unansweredAt = now
 		}
 	}
@@ -235,7 +256,8 @@ func (w *Watchdog) Observe(ev core.Event, now time.Time) {
 // прикрывшись отдельной проверкой на живость статистики
 // (TunnelManager.kt:1345).
 //
-// Простаивающий туннель здоров: не отправляли — нечего и ждать.
+// Простаивающий туннель здоров: не отправляли — нечего и ждать. Keepalive
+// WireGuard за отправку не считается — см. DefaultStallBytes.
 func (w *Watchdog) Stall(now time.Time) StallReason {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -265,6 +287,7 @@ func (w *Watchdog) Reset() {
 	defer w.mu.Unlock()
 
 	w.seen, w.workers, w.up, w.down = false, 0, 0, 0
+	w.unansweredBytes = 0
 	w.statsAt, w.unansweredAt = time.Time{}, time.Time{}
 }
 

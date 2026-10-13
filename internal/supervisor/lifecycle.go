@@ -93,6 +93,10 @@ type Options struct {
 	// StallPoll — как часто опрашивается watchdog. 0 — DefaultStallPoll.
 	StallPoll time.Duration
 
+	// StallBytes — сколько восходящих байт без ответа считается отправкой,
+	// а не keepalive WireGuard. 0 — DefaultStallBytes.
+	StallBytes int64
+
 	// StallRestartAfter — сколько ещё длится молчание в состоянии «трафика
 	// нет», прежде чем попытка обрывается и начинается новая. 0 — столько же,
 	// сколько StallWindow: деградация в 25 с, перезапуск на пятидесятой.
@@ -144,14 +148,19 @@ func NewTunnel(opts Options) (*Tunnel, error) {
 	if opts.StallRestartAfter <= 0 {
 		opts.StallRestartAfter = opts.StallWindow
 	}
+	if opts.StallBytes <= 0 {
+		opts.StallBytes = DefaultStallBytes
+	}
 
 	machine := New()
 	hashes := NewHashPool(opts.Hashes)
+	watchdog := NewWatchdog(opts.StallWindow)
+	watchdog.minBytes = opts.StallBytes
 	return &Tunnel{
 		opts:      opts,
 		machine:   machine,
 		hashes:    hashes,
-		watchdog:  NewWatchdog(opts.StallWindow),
+		watchdog:  watchdog,
 		restarter: NewRestarter(machine, hashes),
 		runCore:   core.Run,
 		sleep:     sleepCtx,
