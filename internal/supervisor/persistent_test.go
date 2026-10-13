@@ -78,6 +78,8 @@ func (r *lineRecorder) dump() string {
 const (
 	lineBypassed = "маршруты сняты на время переподключения"
 	lineReturned = "маршруты возвращены"
+	lineBlocked  = "трафик системы заблокирован (kill-switch)"
+	lineUpAgain  = "туннель снова поднят"
 )
 
 // failAfterConnect — ядро, которое доходит до конфига, а потом рвётся:
@@ -290,5 +292,51 @@ func TestSocksDatapathNoBypassLines(t *testing.T) {
 	}
 	if dump := lines.dump(); dump != "" {
 		t.Errorf("строки у socks:\n%s", dump)
+	}
+}
+
+// С kill-switch окно закрыто: вместо «маршруты сняты…» — «заблокирован», а
+// вместо «маршруты возвращены» — «туннель снова поднят». Не встал
+// kill-switch (KillSwitch() == false) — прежние строки: они правдивы.
+func TestKillSwitchLines(t *testing.T) {
+	for _, locked := range []bool{true, false} {
+		dp := fakePersistent{&fakeFullTunnel{fakeDatapath: newFakeDatapath()}}
+		lines := &lineRecorder{}
+		var asked int
+		tun, _ := newTestTunnel(t, Options{
+			Hashes:      []string{"hash-one"},
+			NewDatapath: func() (datapath.Datapath, error) { return dp, nil },
+			Logf:        lines.logf,
+			KillSwitch: func() bool {
+				// Спрашивать — после Suspend: он и ставит «закрыто».
+				if dp.suspendCount() == asked {
+					t.Error("KillSwitch спрошен до Suspend")
+				}
+				asked++
+				return locked
+			},
+		}, failAfterConnect)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		var waits int
+		tun.sleep = func(context.Context, time.Duration) bool {
+			waits++
+			if waits >= 2 {
+				cancel()
+				return false
+			}
+			return true
+		}
+		if err := tun.Run(ctx); err != nil {
+			t.Fatalf("Run = %v", err)
+		}
+		cancel()
+
+		blocked, upAgain := lines.count(lineBlocked), lines.count(lineUpAgain)
+		bypassed, returned := lines.count(lineBypassed), lines.count(lineReturned)
+		if locked && (blocked != 2 || upAgain != 1 || bypassed != 0 || returned != 0) ||
+			!locked && (blocked != 0 || upAgain != 0 || bypassed != 2 || returned != 1) {
+			t.Errorf("kill-switch стоит=%v, строки:\n%s", locked, lines.dump())
+		}
 	}
 }

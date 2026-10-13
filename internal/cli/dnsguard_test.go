@@ -44,17 +44,18 @@ func TestSetupDNSGuardRefusesByDefault(t *testing.T) {
 	stubOpenDNSGuard(t, nil, errors.New("сессия WFP: служба BFE остановлена"))
 	var stdout, stderr bytes.Buffer
 
-	guard, closeGuard, err := setupDNSGuard(newPrinter(&stdout, false), &stderr, false)
+	setup, err := setupDNSGuard(newPrinter(&stdout, false), &stderr, false, "")
 	if err == nil {
 		t.Fatal("подключение без защиты DNS разрешено без -allow-leak")
 	}
-	for _, want := range []string{"служба BFE остановлена", "-allow-leak"} {
+	for _, want := range []string{"защита от утечки DNS и kill-switch не включились", "служба BFE остановлена",
+		"без них", "-allow-leak"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("в ошибке нет %q: %v", want, err)
 		}
 	}
-	if guard != nil || closeGuard != nil {
-		t.Error("при отказе вернулась защита или функция закрытия")
+	if setup != nil {
+		t.Error("при отказе вернулась защита")
 	}
 }
 
@@ -63,15 +64,16 @@ func TestSetupDNSGuardAllowLeak(t *testing.T) {
 	stubOpenDNSGuard(t, nil, errors.New("сессия WFP: служба BFE остановлена"))
 	var stdout, stderr bytes.Buffer
 
-	guard, closeGuard, err := setupDNSGuard(newPrinter(&stdout, false), &stderr, true)
+	setup, err := setupDNSGuard(newPrinter(&stdout, false), &stderr, true, "-no-kill-switch")
 	if err != nil {
 		t.Fatalf("с -allow-leak отказ: %v", err)
 	}
-	if guard != nil {
-		t.Errorf("защита %T, а сессии нет", guard)
+	if setup.guard != nil || setup.locked != nil {
+		t.Errorf("защита %T, а сессии нет", setup.guard)
 	}
-	closeGuard()
-	if !strings.Contains(stderr.String(), "Предупреждение: защита от утечки DNS не включилась") {
+	setup.close()
+	if !strings.Contains(stderr.String(), "Предупреждение: защита от утечки DNS не включилась: сессия WFP") ||
+		!strings.Contains(stderr.String(), "подключаюсь без неё") {
 		t.Errorf("нет предупреждения в stderr: %q", stderr.String())
 	}
 }
@@ -82,19 +84,23 @@ func TestSetupDNSGuardOpens(t *testing.T) {
 	stubOpenDNSGuard(t, session, nil)
 	var stdout, stderr bytes.Buffer
 
-	guard, closeGuard, err := setupDNSGuard(newPrinter(&stdout, false), &stderr, false)
+	setup, err := setupDNSGuard(newPrinter(&stdout, false), &stderr, false, "-no-kill-switch")
 	if err != nil {
 		t.Fatal(err)
 	}
+	guard := setup.guard
 	if err := guard.Enable(nil); err != nil || !session.enabled {
 		t.Errorf("Enable: err=%v, включена=%v", err, session.enabled)
 	}
-	closeGuard()
+	setup.close()
 	if !session.closed {
 		t.Error("сессия не закрыта")
 	}
 	if !strings.Contains(stdout.String(), "защита DNS") {
 		t.Errorf("нет строки о защите DNS: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "kill-switch выключен (-no-kill-switch)") || setup.locked != nil {
+		t.Errorf("нет строки о выключенном kill-switch: %q", stdout.String())
 	}
 
 	// Без флага отказ правил доходит до datapath — тот отказывает в Start.
@@ -110,11 +116,12 @@ func TestSetupDNSGuardAllowLeakTolerantEnable(t *testing.T) {
 	stubOpenDNSGuard(t, session, nil)
 	var stdout, stderr bytes.Buffer
 
-	guard, closeGuard, err := setupDNSGuard(newPrinter(&stdout, false), &stderr, true)
+	setup, err := setupDNSGuard(newPrinter(&stdout, false), &stderr, true, "-no-kill-switch")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer closeGuard()
+	defer setup.close()
+	guard := setup.guard
 	if err := guard.Enable(nil); err != nil {
 		t.Errorf("с -allow-leak Enable = %v, ждали nil", err)
 	}
@@ -139,11 +146,12 @@ func TestSetupDNSGuardAllowLeakBlocksIPv6(t *testing.T) {
 	t.Cleanup(func() { openDNSGuard = prev })
 	var stdout, stderr bytes.Buffer
 
-	guard, closeGuard, err := setupDNSGuard(newPrinter(&stdout, false), &stderr, true)
+	setup, err := setupDNSGuard(newPrinter(&stdout, false), &stderr, true, "-no-kill-switch")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer closeGuard()
+	defer setup.close()
+	guard := setup.guard
 	blocker, ok := guard.(datapath.IPv6Blocker)
 	if !ok {
 		t.Fatalf("%T не IPv6Blocker", guard)
@@ -186,12 +194,15 @@ func TestPlanConnectKillSwitch(t *testing.T) {
 		profile *bool
 		args    []string
 		want    bool
+		off     string
 	}{
-		{nil, []string{"home", "-datapath", "tun"}, true},
-		{nil, []string{"home", "-datapath", "tun", "-no-kill-switch"}, false},
-		{nil, []string{"home", "-datapath", "tun", "-no-kill-switch=false"}, true},
-		{boolPtr(false), []string{"home", "-datapath", "tun"}, false},
-		{boolPtr(true), []string{"home", "-datapath", "tun", "-no-kill-switch"}, false},
+		{nil, []string{"home", "-datapath", "tun"}, true, ""},
+		{nil, []string{"home", "-datapath", "tun", "-no-kill-switch"}, false, "-no-kill-switch"},
+		{nil, []string{"home", "-datapath", "tun", "-no-kill-switch=false"}, true, ""},
+		{boolPtr(false), []string{"home", "-datapath", "tun"}, false, "kill_switch = false в профиле"},
+		{boolPtr(false), []string{"home", "-datapath", "tun", "-no-kill-switch=false"}, false,
+			"kill_switch = false в профиле"},
+		{boolPtr(true), []string{"home", "-datapath", "tun", "-no-kill-switch"}, false, "-no-kill-switch"},
 	} {
 		c.file.Profiles["home"].KillSwitch = tc.profile
 		c.save()
@@ -199,8 +210,9 @@ func TestPlanConnectKillSwitch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v: %v", tc.args, err)
 		}
-		if plan.killSwitch != tc.want {
-			t.Errorf("профиль %v, %v: killSwitch = %v", tc.profile, tc.args, plan.killSwitch)
+		if plan.killSwitch != tc.want || plan.killSwitchOff != tc.off {
+			t.Errorf("профиль %v, %v: killSwitch = %v, killSwitchOff = %q", tc.profile, tc.args,
+				plan.killSwitch, plan.killSwitchOff)
 		}
 		if got := c.file.Profiles["home"].KillSwitch; got != tc.profile {
 			t.Errorf("%v: план изменил профиль", tc.args)

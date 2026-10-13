@@ -161,6 +161,9 @@ type connectPlan struct {
 	// killSwitch — kill-switch включён (профиль, -no-kill-switch). Действует
 	// только у datapath с защитой DNS: это та же сессия WFP (таблица nftables).
 	killSwitch bool
+	// killSwitchOff — чем kill-switch выключен, для строки до подключения;
+	// пусто — включён.
+	killSwitchOff string
 	// dnsGuard — защита DNS для datapath, которые её просят; открывается
 	// в run, до первой попытки. nil — нет (socks или -allow-leak).
 	dnsGuard datapath.DNSGuard
@@ -187,6 +190,13 @@ func planConnect(opts *connectOptions, name string) (*connectPlan, error) {
 	}
 
 	plan := &connectPlan{profile: p, cfg: cfg, allowLeak: opts.allowLeak, killSwitch: p.KillSwitchOn()}
+	switch {
+	case plan.killSwitch:
+	case opts.named["no-kill-switch"] && opts.noKillSwitch:
+		plan.killSwitchOff = "-no-kill-switch"
+	default:
+		plan.killSwitchOff = "kill_switch = false в профиле"
+	}
 	if err := plan.chooseDatapath(); err != nil {
 		return nil, err
 	}
@@ -473,16 +483,18 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 			return err
 		}
 	}
-	// Защита DNS (сессия WFP, на Linux — таблица nftables) — тоже до сети и
-	// на весь сеанс: отказ в Start супервизор принял бы за сбой попытки и
-	// ушёл бы в переподключения.
+	// Защита DNS и kill-switch (сессия WFP, на Linux — таблица nftables) —
+	// тоже до сети и на весь сеанс: отказ в Start супервизор принял бы за
+	// сбой попытки и ушёл бы в переподключения. Kill-switch закрывает
+	// систему уже здесь, до первой попытки (plan-e3.md, решение 5).
+	var killSwitch func() bool
 	if req.DNSGuard {
-		guard, closeGuard, err := setupDNSGuard(out, e.stderr, plan.allowLeak)
+		setup, err := setupDNSGuard(out, e.stderr, plan.allowLeak, plan.killSwitchOff)
 		if err != nil {
 			return err
 		}
-		defer closeGuard()
-		plan.dnsGuard = guard
+		defer setup.close()
+		plan.dnsGuard, killSwitch = setup.guard, setup.locked
 	}
 
 	// Ручка ядра создаётся до запуска и раздаётся обоим, кому она нужна:
@@ -496,7 +508,8 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	var guard *netguard.Guard
 	if req.Netguard || netguardForced() {
 		// Метка сокетов ядра — только при включённой защите DNS: по ней
-		// nftables пропускает tt к DNS VK.
+		// nftables пропускает tt к DNS VK, а при kill-switch — и вообще
+		// (он живёт в той же таблице, без защиты DNS его не бывает).
 		var mark uint32
 		if plan.dnsGuard != nil {
 			mark = dnsGuardMark
@@ -529,6 +542,7 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 		},
 		OnTransition: out.transition,
 		Logf:         out.logf,
+		KillSwitch:   killSwitch,
 	})
 	if err != nil {
 		return err

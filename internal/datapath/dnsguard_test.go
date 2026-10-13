@@ -19,8 +19,10 @@ type fakeDNSGuard struct {
 	enables   int
 	disables  int
 	enableErr error
-	// onEnable, если задан, зовётся в Enable — чтобы проверить порядок.
-	onEnable func()
+	// onEnable и onDisable, если заданы, зовутся в Enable и Disable — чтобы
+	// проверить порядок.
+	onEnable  func()
+	onDisable func()
 }
 
 func (g *fakeDNSGuard) Enable(dns []netip.Addr) error {
@@ -41,6 +43,9 @@ func (g *fakeDNSGuard) Disable() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.disables++
+	if g.onDisable != nil {
+		g.onDisable()
+	}
 	g.enabled = false
 	return nil
 }
@@ -65,7 +70,8 @@ func TestRequiresDNSGuard(t *testing.T) {
 }
 
 // Защита включается после маршрутов — с резолверами из конфига — и
-// снимается в Close.
+// снимается в Close раньше адаптера: с kill-switch её Disable закрывает
+// трафик системы, и мига без адаптера и без запрета быть не должно.
 func TestTunDNSGuard(t *testing.T) {
 	guard := &fakeDNSGuard{}
 	w, f, _ := newTestTun(t)
@@ -73,6 +79,11 @@ func TestTunDNSGuard(t *testing.T) {
 	guard.onEnable = func() {
 		if !f.routed.Load() {
 			t.Error("защита DNS включена до маршрутов")
+		}
+	}
+	guard.onDisable = func() {
+		if f.tun.closed.Load() != 0 || f.flushed.Load() != 0 {
+			t.Error("защита DNS снята после сброса или закрытия адаптера")
 		}
 	}
 	conf := testWGConfig(t, "127.0.0.1:9")
@@ -89,6 +100,26 @@ func TestTunDNSGuard(t *testing.T) {
 	}
 	if on, _, _, disables := guard.state(); on || disables != 1 {
 		t.Errorf("после Close: включена=%v, Disable %d раз", on, disables)
+	}
+}
+
+// Suspend снимает защиту раньше маршрутов — по той же причине, что Close.
+func TestTunSuspendDisablesGuardFirst(t *testing.T) {
+	guard := &fakeDNSGuard{}
+	w, f, _ := newTestTun(t)
+	w.opts.DNSGuard = guard
+	if err := w.Start(context.Background(), testWGConfig(t, "127.0.0.1:9")); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer w.Close()
+	routedAtDisable := false
+	guard.onDisable = func() { routedAtDisable = f.routed.Load() }
+	if err := w.Suspend(); err != nil {
+		t.Fatal(err)
+	}
+	if !routedAtDisable || f.routed.Load() {
+		t.Errorf("маршруты при Disable: %v, после Suspend: %v; ждали true и false",
+			routedAtDisable, f.routed.Load())
 	}
 }
 
@@ -183,6 +214,12 @@ func TestExternalDNSGuard(t *testing.T) {
 	guard := &fakeDNSGuard{}
 	dp := x.datapath(ExternalOptions{DNSGuard: guard})
 	conf := parsedServerConfig(t)
+	// Защита снимается раньше службы, как у tun.
+	guard.onDisable = func() {
+		if calls := x.calls(); len(calls) != 1 {
+			t.Errorf("при Disable вызовы wireguard.exe: %v; ждали только установку", calls)
+		}
+	}
 
 	if err := dp.Start(context.Background(), conf); err != nil {
 		t.Fatalf("Start: %v", err)

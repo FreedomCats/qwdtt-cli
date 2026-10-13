@@ -269,14 +269,18 @@ func (e *External) close() error {
 		return nil
 	}
 
-	// Сначала служба, потом файл: служба читает его, пока работает. Запрет
-	// DNS — после службы: пока она работает, DNS туннеля доступен.
-	err := e.uninstall()
+	// Защита — раньше службы: с kill-switch её Disable закрывает трафик
+	// системы (plan-e3.md, K3), и мига, когда службы уже нет, а закрыть ещё
+	// не успели, быть не должно. Без kill-switch DNS без запрета на этот миг
+	// уходит в туннель. Потом служба, потом файл: служба читает его, пока
+	// работает.
+	var err error
 	if e.opts.DNSGuard != nil {
 		if derr := e.opts.DNSGuard.Disable(); derr != nil {
-			err = errors.Join(err, fmt.Errorf("external: %w", derr))
+			err = fmt.Errorf("external: %w", derr)
 		}
 	}
+	err = errors.Join(err, e.uninstall())
 	if rerr := os.Remove(e.confPath()); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
 		err = errors.Join(err, fmt.Errorf("external: удаление конфига %s: %w", e.confPath(), rerr))
 	}

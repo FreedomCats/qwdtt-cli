@@ -96,6 +96,13 @@ type Options struct {
 	// OnTransition. nil — молчать.
 	Logf func(format string, args ...any)
 
+	// KillSwitch — стоит ли сейчас kill-switch, набор «закрыто» (plan-e3.md,
+	// K3): с ним datapath, снимая защиту DNS, закрывает трафик системы, а не
+	// отпускает его мимо туннеля. Цикл спрашивает после конца попытки, чтобы
+	// строка говорила правду: kill-switch мог и не встать (-allow-leak).
+	// nil — kill-switch нет.
+	KillSwitch func() bool
+
 	// StallWindow — сколько молчания терпит watchdog, прежде чем объявить
 	// туннель деградировавшим. 0 — DefaultStallWindow (25 с).
 	StallWindow time.Duration
@@ -147,6 +154,9 @@ type Tunnel struct {
 	// bypassed — маршруты сняты на время переподключения, и об этом сказано
 	// строкой; когда datapath поднимется снова, нужно сказать, что вернулись.
 	bypassed bool
+	// blocked — при этом стоит kill-switch: сказано, что трафик системы
+	// заблокирован, а не идёт мимо туннеля.
+	blocked bool
 
 	// restartMu охраняет намеренный перезапуск (Restart): что прерывать
 	// и что ещё не исполнено.
@@ -442,10 +452,13 @@ func (t *Tunnel) datapathUp(dp datapath.Datapath) {
 	}
 	t.dpMu.Lock()
 	t.routed = true
-	returned := t.bypassed
-	t.bypassed = false
+	returned, blocked := t.bypassed, t.blocked
+	t.bypassed, t.blocked = false, false
 	t.dpMu.Unlock()
-	if returned {
+	switch {
+	case returned && blocked:
+		t.logf("туннель снова поднят — трафик системы идёт через него")
+	case returned:
 		t.logf("маршруты возвращены — трафик системы снова идёт через туннель")
 	}
 }
@@ -453,7 +466,8 @@ func (t *Tunnel) datapathUp(dp datapath.Datapath) {
 // suspend — конец неудачной попытки: у долгоживущего datapath снимаются
 // маршруты и защита DNS (одноразовый к этому моменту уже закрыт целиком),
 // и пользователь видит строку о том, что трафик пошёл мимо туннеля
-// (plan-e2.md, решение 3: окно нужно видеть, а не узнавать из README).
+// (plan-e2.md, решение 3: окно нужно видеть, а не узнавать из README) или,
+// с kill-switch, что он заблокирован.
 func (t *Tunnel) suspend() {
 	t.dpMu.Lock()
 	dp := t.persistent
@@ -469,14 +483,18 @@ func (t *Tunnel) suspend() {
 		}
 	}
 
+	blocked := t.opts.KillSwitch != nil && t.opts.KillSwitch()
 	t.dpMu.Lock()
 	wasRouted := t.routed
 	t.routed = false
 	if wasRouted {
-		t.bypassed = true
+		t.bypassed, t.blocked = true, blocked
 	}
 	t.dpMu.Unlock()
-	if wasRouted {
+	switch {
+	case wasRouted && blocked:
+		t.logf("туннель переподключается — трафик системы заблокирован (kill-switch)")
+	case wasRouted:
 		t.logf("маршруты сняты на время переподключения — трафик и DNS системы идут мимо туннеля")
 	}
 }

@@ -289,10 +289,15 @@ func (w *Tun) route(adapter *tunAdapter, conf *WGConfig) error {
 	return nil
 }
 
-// Suspend снимает маршруты и защиту DNS, оставляя адаптер (Persistent):
+// Suspend снимает защиту DNS и маршруты, оставляя адаптер (Persistent):
 // трафик системы идёт мимо туннеля, пока следующий Start их не вернёт.
 // Заодно у устройства убирается пир — иначе wireguard-go стучался бы
 // рукопожатиями в порт ядра, которого после попытки уже нет.
+//
+// Защита — раньше маршрутов: с kill-switch её Disable закрывает трафик
+// системы (plan-e3.md, K3), и мига, когда маршрутов уже нет, а закрыть
+// ещё не успели, быть не должно. Без kill-switch порядок безвреден: DNS
+// без запрета на этот миг уходит в туннель.
 func (w *Tun) Suspend() error {
 	w.mu.Lock()
 	dev, adapter := w.dev, w.adapter
@@ -303,13 +308,13 @@ func (w *Tun) Suspend() error {
 
 	dev.RemoveAllPeers()
 	var err error
-	if rerr := adapter.removeRoutes(); rerr != nil {
-		err = fmt.Errorf("tun: снятие маршрутов: %w", rerr)
-	}
 	if w.opts.DNSGuard != nil {
 		if derr := w.opts.DNSGuard.Disable(); derr != nil {
-			err = errors.Join(err, fmt.Errorf("tun: %w", derr))
+			err = fmt.Errorf("tun: %w", derr)
 		}
+	}
+	if rerr := adapter.removeRoutes(); rerr != nil {
+		err = errors.Join(err, fmt.Errorf("tun: снятие маршрутов: %w", rerr))
 	}
 	return err
 }
@@ -332,6 +337,8 @@ func (w *Tun) close() error {
 	if dev == nil {
 		return nil
 	}
+	// Защита — раньше адаптера, по той же причине, что в Suspend.
+	w.disableDNSGuard()
 	if adapter.flush != nil {
 		if err := adapter.flush(); err != nil {
 			w.logf("[TUN] сброс настроек адаптера перед закрытием: %v", err)
@@ -341,7 +348,6 @@ func (w *Tun) close() error {
 	// Ошибки wireguard-go здесь не возвращает.
 	dev.Close()
 	adapter.release()
-	w.disableDNSGuard()
 	w.logf("[TUN] адаптер %q снят", w.opts.Name)
 	return nil
 }
@@ -389,8 +395,8 @@ func (w *Tun) blockIPv6(block bool) {
 	}
 }
 
-// disableDNSGuard снимает защиту DNS. Отказ только пишется: адаптера уже
-// нет, а правила уйдут вместе с сессией, когда tt выйдет.
+// disableDNSGuard снимает защиту DNS. Отказ только пишется: адаптер всё
+// равно снимается, а правила уйдут вместе с сессией, когда tt выйдет.
 func (w *Tun) disableDNSGuard() {
 	if w.opts.DNSGuard == nil {
 		return
