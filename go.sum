@@ -1,7 +1,7 @@
 github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
-github.com/FreedomCats/tailscale-wf v0.0.0-20260101000000-00fa1758820d h1:ls8yKTU8uIcRTCS9Nt4sUaF4B+O13dPPOPP6o1Ebbss=
-github.com/FreedomCats/tailscale-wf v0.0.0-20260101000000-00fa1758820d/go.mod h1:ZXRML051h7o4OcI0d3AaILDIad/Xw0IkXaHM17dic1Y=
+github.com/FreedomCats/tailscale-wf v0.0.0-20260101000000-d74d68cb0951 h1:605Iihz8cAnbce5QIl6pLf6pT+pE9EJEGNjM5zw3PbA=
+github.com/FreedomCats/tailscale-wf v0.0.0-20260101000000-d74d68cb0951/go.mod h1:ZXRML051h7o4OcI0d3AaILDIad/Xw0IkXaHM17dic1Y=
 github.com/andybalholm/brotli v1.2.0 h1:ukwgCxwYrmACq68yiUqwIWnGY0cTPox/M94sVwToPjQ=
 github.com/andybalholm/brotli v1.2.0/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
 github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5 h1:0CwZNZbxp69SHPdPJAN/hZIm0C4OItdklCFmMRWYpio=

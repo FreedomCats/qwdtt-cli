@@ -92,4 +92,4 @@ exclude golang.zx2c4.com/wireguard/tun/netstack v0.0.0-20220703234212-c31a7b1ab4
 // («bulkBarrierPreWrite: unaligned arguments», найдено живым прогоном S1 Э2).
 // В форке одна правка, malloc.go, с тестом; апстрим с 2024 года не
 // развивается. Регрессия у нас — TestDNSGuardUnderGC в internal/winsys.
-replace github.com/tailscale/wf => github.com/FreedomCats/tailscale-wf v0.0.0-20260101000000-00fa1758820d
+replace github.com/tailscale/wf => github.com/FreedomCats/tailscale-wf v0.0.0-20260101000000-d74d68cb0951
