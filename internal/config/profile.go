@@ -34,10 +34,25 @@ const (
 	// DatapathExternal — конфиг отдаётся штатному WireGuard, тот поднимает
 	// туннель сам. Нужны права администратора и установленный WireGuard.
 	DatapathExternal = "external"
-	// DatapathWintun — свой адаптер поверх wintun.dll, весь трафик системы
-	// (Э2). Нужны права администратора и wintun.dll рядом с tt.
+	// DatapathTun — свой адаптер tt, весь трафик системы (Э2). На Windows
+	// адаптер даёт драйвер Wintun: нужны права администратора и wintun.dll
+	// рядом с tt.
+	DatapathTun = "tun"
+	// DatapathWintun — прежнее имя tun (до Э4); принимается как синоним,
+	// чтобы старые профили не ломались. См. NormalizeDatapath.
 	DatapathWintun = "wintun"
 )
+
+// NormalizeDatapath приводит значение datapath к каноническому: без пробелов
+// по краям, синоним wintun — к tun. Остальное не трогает: неизвестные
+// значения отвергает Validate.
+func NormalizeDatapath(value string) string {
+	value = strings.TrimSpace(value)
+	if value == DatapathWintun {
+		return DatapathTun
+	}
+	return value
+}
 
 // File — разобранный profiles.toml целиком.
 type File struct {
@@ -79,7 +94,7 @@ type Profile struct {
 	DTLS *bool `toml:"dtls"`
 	// DNS — резолвер для доменов VK.
 	DNS string `toml:"dns"`
-	// Datapath — как отдавать трафик: socks или external.
+	// Datapath — как отдавать трафик: socks, tun или external.
 	Datapath string `toml:"datapath"`
 
 	// Socks — секция [profile.<имя>.socks].

@@ -97,8 +97,8 @@ func TestValidateProfileProblems(t *testing.T) {
 		},
 		{
 			name:  "неизвестный datapath",
-			patch: func(p *Profile) { p.Datapath = "tun" },
-			want:  []string{"datapath", `"socks"`, `"wintun"`, `"external"`},
+			patch: func(p *Profile) { p.Datapath = "tap" },
+			want:  []string{"datapath", `"socks"`, `"tun"`, `"external"`},
 		},
 		{
 			name:  "адрес SOCKS5 без порта",
@@ -140,6 +140,8 @@ func TestValidateAcceptsValues(t *testing.T) {
 		{"адрес с именем узла", func(p *Profile) { p.Peer = "vpn.example:56000" }},
 		{"потолок воркеров", func(p *Profile) { p.Workers = 108 }},
 		{"внешний datapath", func(p *Profile) { p.Datapath = DatapathExternal }},
+		{"свой адаптер", func(p *Profile) { p.Datapath = DatapathTun }},
+		{"прежнее имя своего адаптера", func(p *Profile) { p.Datapath = "wintun" }},
 	}
 
 	for _, tt := range tests {
@@ -161,7 +163,7 @@ func TestValidateReportsEveryProblem(t *testing.T) {
 	home := file.Profiles["home"]
 	home.Peer = ""
 	home.Obfs = "voice"
-	home.Datapath = "tun"
+	home.Datapath = "tap"
 
 	err := file.Validate()
 	if err == nil {

@@ -215,6 +215,23 @@ func TestProfileSetUpdatesFieldKeepingSecrets(t *testing.T) {
 	}
 }
 
+// -datapath wintun записывается в профиль уже как tun.
+func TestProfileSetNormalizesWintun(t *testing.T) {
+	p := newProfileEnv(t)
+	p.setHome()
+
+	if code, _, stderr := p.run("profile", "set", "home", "-datapath", "wintun"); code != exitOK {
+		t.Fatalf("код возврата %d, stderr:\n%s", code, stderr)
+	}
+	file, err := config.Load(p.configPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := file.Profiles["home"].Datapath; got != config.DatapathTun {
+		t.Errorf("datapath = %q, ожидался %q", got, config.DatapathTun)
+	}
+}
+
 // -password перезаписывает секрет по той же ссылке: осиротевших записей
 // в хранилище не остаётся.
 func TestProfileSetRewritesPasswordInPlace(t *testing.T) {

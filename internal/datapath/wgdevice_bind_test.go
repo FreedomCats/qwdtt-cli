@@ -115,7 +115,7 @@ func TestReconfigureDeviceSurvivesPortUnreachable(t *testing.T) {
 	// Рукопожатие и keepalive в закрытый порт, ICMP в ответ.
 	time.Sleep(1500 * time.Millisecond)
 
-	// Как Wintun.Suspend и следующий Start.
+	// Как Tun.Suspend и следующий Start.
 	dev.RemoveAllPeers()
 	next := *conf
 	next.Endpoint = fmt.Sprintf("127.0.0.1:%d", serverPort)

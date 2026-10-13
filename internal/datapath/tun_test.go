@@ -11,10 +11,10 @@ import (
 	"time"
 )
 
-// fakeWintun подменяет создание адаптера: вместо драйвера — netstack-TUN,
+// fakeTun подменяет создание адаптера: вместо драйвера — netstack-TUN,
 // который считает Close, и счётчик release. Логика Start и Close от
 // настоящего адаптера не зависит, а он требует прав администратора.
-type fakeWintun struct {
+type fakeTun struct {
 	t        *testing.T
 	tun      *closeCountingTUN
 	opened   atomic.Int32
@@ -38,7 +38,7 @@ type fakeWintun struct {
 	flushedBeforeTUN atomic.Bool
 }
 
-func (f *fakeWintun) open(name string, conf *WGConfig, logf func(string, ...any)) (*wintunAdapter, error) {
+func (f *fakeTun) open(name string, conf *WGConfig, logf func(string, ...any)) (*tunAdapter, error) {
 	f.opened.Add(1)
 	if f.gate != nil {
 		<-f.gate
@@ -47,7 +47,7 @@ func (f *fakeWintun) open(name string, conf *WGConfig, logf func(string, ...any)
 		return nil, f.openErr
 	}
 	f.tun = newTestTUN(f.t, conf)
-	return &wintunAdapter{
+	return &tunAdapter{
 		tun:  f.tun,
 		luid: 42,
 		configure: func(*WGConfig) error {
@@ -78,17 +78,17 @@ func (f *fakeWintun) open(name string, conf *WGConfig, logf func(string, ...any)
 	}, nil
 }
 
-func newTestWintun(t *testing.T) (*Wintun, *fakeWintun, *recorder) {
+func newTestTun(t *testing.T) (*Tun, *fakeTun, *recorder) {
 	t.Helper()
 	rec := &recorder{}
-	w := NewWintun(WintunOptions{Logf: rec.logf})
-	f := &fakeWintun{t: t}
+	w := NewTun(TunOptions{Logf: rec.logf})
+	f := &fakeTun{t: t}
 	w.openAdapter = f.open
 	return w, f, rec
 }
 
-func TestWintunRequires(t *testing.T) {
-	req := NewWintun(WintunOptions{}).Requires()
+func TestTunRequires(t *testing.T) {
+	req := NewTun(TunOptions{}).Requires()
 	if !req.Admin || !req.Netguard || len(req.Programs) != 0 || req.Warning != "" {
 		t.Errorf("Requires = %+v, ждали Admin и Netguard без программ и предупреждений", req)
 	}
@@ -96,12 +96,12 @@ func TestWintunRequires(t *testing.T) {
 		t.Errorf("Files = %v, ждали [wintun.dll]", req.Files)
 	}
 	if (req.Unsupported == nil) != (runtime.GOOS == "windows") {
-		t.Errorf("Unsupported = %v на %s: wintun есть только на Windows", req.Unsupported, runtime.GOOS)
+		t.Errorf("Unsupported = %v на %s: tun пока есть только на Windows", req.Unsupported, runtime.GOOS)
 	}
 }
 
-func TestWintunCloseWithoutStart(t *testing.T) {
-	w, f, _ := newTestWintun(t)
+func TestTunCloseWithoutStart(t *testing.T) {
+	w, f, _ := newTestTun(t)
 	if err := w.Close(); err != nil {
 		t.Fatalf("Close до Start: %v", err)
 	}
@@ -116,8 +116,8 @@ func TestWintunCloseWithoutStart(t *testing.T) {
 	}
 }
 
-func TestWintunStartClose(t *testing.T) {
-	w, f, rec := newTestWintun(t)
+func TestTunStartClose(t *testing.T) {
+	w, f, rec := newTestTun(t)
 	conf := testWGConfig(t, "127.0.0.1:9")
 
 	if err := w.Start(context.Background(), conf); err != nil {
@@ -146,7 +146,7 @@ func TestWintunStartClose(t *testing.T) {
 		t.Errorf("повторный Close: err=%v, release %d раз", err, f.released.Load())
 	}
 	log := rec.dump()
-	for _, want := range []string{`[WINTUN] адаптер "tt" поднят`, `[WINTUN] адаптер "tt" снят`} {
+	for _, want := range []string{`[TUN] адаптер "tt" поднят`, `[TUN] адаптер "tt" снят`} {
 		if !strings.Contains(log, want) {
 			t.Errorf("в логе нет %q:\n%s", want, log)
 		}
@@ -155,8 +155,8 @@ func TestWintunStartClose(t *testing.T) {
 
 // Persistent: Suspend снимает маршруты и защиту DNS, адаптер остаётся;
 // следующий Start — перенастройка того же адаптера, а не новый.
-func TestWintunSuspendAndRestart(t *testing.T) {
-	w, f, rec := newTestWintun(t)
+func TestTunSuspendAndRestart(t *testing.T) {
+	w, f, rec := newTestTun(t)
 	guard := &fakeDNSGuard{}
 	w.opts.DNSGuard = guard
 	if err := w.Suspend(); err != nil {
@@ -202,7 +202,7 @@ func TestWintunSuspendAndRestart(t *testing.T) {
 	if got := w.Endpoint().String(); got != "127.0.0.1:10" {
 		t.Errorf("Endpoint после перенастройки = %s", got)
 	}
-	if log := rec.dump(); !strings.Contains(log, `[WINTUN] адаптер "tt" перенастроен (endpoint=127.0.0.1:10)`) {
+	if log := rec.dump(); !strings.Contains(log, `[TUN] адаптер "tt" перенастроен (endpoint=127.0.0.1:10)`) {
 		t.Errorf("в логе нет строки о перенастройке:\n%s", log)
 	}
 
@@ -218,8 +218,8 @@ func TestWintunSuspendAndRestart(t *testing.T) {
 }
 
 // Сервер выдал на новой попытке другой адрес — адаптер перенастраивается.
-func TestWintunRestartReconfiguresAdapter(t *testing.T) {
-	w, f, _ := newTestWintun(t)
+func TestTunRestartReconfiguresAdapter(t *testing.T) {
+	w, f, _ := newTestTun(t)
 	if err := w.Start(context.Background(), testWGConfig(t, "127.0.0.1:9")); err != nil {
 		t.Fatal(err)
 	}
@@ -238,8 +238,8 @@ func TestWintunRestartReconfiguresAdapter(t *testing.T) {
 
 // Отказ перенастройки — отказ попытки, но адаптер остаётся, маршрутов нет,
 // и следующий Start работает.
-func TestWintunRestartFailureKeepsAdapter(t *testing.T) {
-	w, f, _ := newTestWintun(t)
+func TestTunRestartFailureKeepsAdapter(t *testing.T) {
+	w, f, _ := newTestTun(t)
 	conf := testWGConfig(t, "127.0.0.1:9")
 	if err := w.Start(context.Background(), conf); err != nil {
 		t.Fatal(err)
@@ -264,13 +264,13 @@ func TestWintunRestartFailureKeepsAdapter(t *testing.T) {
 	}
 }
 
-func TestWintunRouteFailureReleases(t *testing.T) {
-	w, f, _ := newTestWintun(t)
+func TestTunRouteFailureReleases(t *testing.T) {
+	w, f, _ := newTestTun(t)
 	conf := testWGConfig(t, "127.0.0.1:9")
 
 	f.routesErr = errorString("доступ запрещён")
 	err := w.Start(context.Background(), conf)
-	if err == nil || !strings.Contains(err.Error(), "wintun: маршруты: доступ запрещён") {
+	if err == nil || !strings.Contains(err.Error(), "tun: маршруты: доступ запрещён") {
 		t.Fatalf("Start = %v, ждали отказ маршрутов", err)
 	}
 	if f.tun.closed.Load() == 0 || f.released.Load() != 1 {
@@ -287,8 +287,8 @@ func TestWintunRouteFailureReleases(t *testing.T) {
 	}
 }
 
-func TestWintunWarnsPartialAllowedIPs(t *testing.T) {
-	w, _, rec := newTestWintun(t)
+func TestTunWarnsPartialAllowedIPs(t *testing.T) {
+	w, _, rec := newTestTun(t)
 	conf := testWGConfig(t, "127.0.0.1:9")
 	conf.AllowedIPs = []string{"10.0.0.0/8"}
 
@@ -296,19 +296,19 @@ func TestWintunWarnsPartialAllowedIPs(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	defer w.Close()
-	want := "[WINTUN] Внимание: сервер разрешил в туннеле не весь IPv4 (AllowedIPs: 10.0.0.0/8)"
+	want := "[TUN] Внимание: сервер разрешил в туннеле не весь IPv4 (AllowedIPs: 10.0.0.0/8)"
 	if log := rec.dump(); !strings.Contains(log, want) {
 		t.Errorf("в логе нет %q:\n%s", want, log)
 	}
 }
 
-func TestWintunOpenFailureAllowsRetry(t *testing.T) {
-	w, f, _ := newTestWintun(t)
+func TestTunOpenFailureAllowsRetry(t *testing.T) {
+	w, f, _ := newTestTun(t)
 	conf := testWGConfig(t, "127.0.0.1:9")
 
 	f.openErr = errorString("драйвер не отвечает")
 	err := w.Start(context.Background(), conf)
-	if err == nil || !strings.Contains(err.Error(), "wintun: драйвер не отвечает") {
+	if err == nil || !strings.Contains(err.Error(), "tun: драйвер не отвечает") {
 		t.Fatalf("Start = %v, ждали ошибку создания адаптера", err)
 	}
 
@@ -321,13 +321,13 @@ func TestWintunOpenFailureAllowsRetry(t *testing.T) {
 	}
 }
 
-func TestWintunDeviceFailureReleases(t *testing.T) {
-	w, f, _ := newTestWintun(t)
+func TestTunDeviceFailureReleases(t *testing.T) {
+	w, f, _ := newTestTun(t)
 	conf := testWGConfig(t, "127.0.0.1:9")
 	conf.PrivateKeyHex = "не-hex"
 
 	err := w.Start(context.Background(), conf)
-	if err == nil || !strings.Contains(err.Error(), "wintun: IpcSet") {
+	if err == nil || !strings.Contains(err.Error(), "tun: IpcSet") {
 		t.Fatalf("Start = %v, ждали отказ IpcSet", err)
 	}
 	if f.tun.closed.Load() == 0 || f.released.Load() != 1 {
@@ -341,8 +341,8 @@ func TestWintunDeviceFailureReleases(t *testing.T) {
 
 // Адаптер переживает попытку: отмена ctx, с которым звали Start, его не
 // снимает (Persistent) — снимает только Close.
-func TestWintunOutlivesStartContext(t *testing.T) {
-	w, f, _ := newTestWintun(t)
+func TestTunOutlivesStartContext(t *testing.T) {
+	w, f, _ := newTestTun(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	if err := w.Start(ctx, testWGConfig(t, "127.0.0.1:9")); err != nil {
 		t.Fatal(err)
@@ -359,8 +359,8 @@ func TestWintunOutlivesStartContext(t *testing.T) {
 
 // Контракт Datapath.Close: одновременный вызов возвращается только после
 // конца уборки (гонка, найденная в N4 у external).
-func TestWintunConcurrentCloseWaits(t *testing.T) {
-	w, f, _ := newTestWintun(t)
+func TestTunConcurrentCloseWaits(t *testing.T) {
+	w, f, _ := newTestTun(t)
 	f.releaseDelay = 300 * time.Millisecond
 	if err := w.Start(context.Background(), testWGConfig(t, "127.0.0.1:9")); err != nil {
 		t.Fatal(err)
@@ -382,8 +382,8 @@ func TestWintunConcurrentCloseWaits(t *testing.T) {
 
 // Close, пришедший посреди Start, убирать ещё нечего; адаптер, созданный
 // после него, Start обязан снять сам.
-func TestWintunCloseDuringStart(t *testing.T) {
-	w, f, _ := newTestWintun(t)
+func TestTunCloseDuringStart(t *testing.T) {
+	w, f, _ := newTestTun(t)
 	f.gate = make(chan struct{})
 
 	errc := make(chan error, 1)
@@ -412,8 +412,8 @@ func (e errorString) Error() string { return string(e) }
 // Close сбрасывает адаптер (маршруты, адреса, DNS) до того, как закрыть его,
 // как wireguard-windows: иначе после остановки в реестре оставался ключ
 // интерфейса с DNS туннеля (R2, сценарий 2).
-func TestWintunCloseFlushesAdapterFirst(t *testing.T) {
-	w, f, _ := newTestWintun(t)
+func TestTunCloseFlushesAdapterFirst(t *testing.T) {
+	w, f, _ := newTestTun(t)
 	if err := w.Start(context.Background(), testWGConfig(t, "127.0.0.1:9")); err != nil {
 		t.Fatalf("Start: %v", err)
 	}

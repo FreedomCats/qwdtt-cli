@@ -88,7 +88,7 @@ func networkChanged(out *printer, restart func(error)) func(now, before netguard
 }
 
 // ownAdapter помнит последний построенный datapath, чтобы исключать его
-// адаптер (wintun) из слежения за сетью. У datapath без своего адаптера
+// адаптер (tun) из слежения за сетью. У datapath без своего адаптера
 // LUID 0 — исключать нечего.
 type ownAdapter struct {
 	mu sync.Mutex

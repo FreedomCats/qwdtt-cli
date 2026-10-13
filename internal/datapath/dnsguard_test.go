@@ -52,8 +52,8 @@ func (g *fakeDNSGuard) state() (enabled bool, dns []netip.Addr, enables, disable
 }
 
 func TestRequiresDNSGuard(t *testing.T) {
-	if !NewWintun(WintunOptions{}).Requires().DNSGuard {
-		t.Error("wintun: DNSGuard = false, а он забирает весь трафик")
+	if !NewTun(TunOptions{}).Requires().DNSGuard {
+		t.Error("tun: DNSGuard = false, а он забирает весь трафик")
 	}
 	x := newExternalEnv(t)
 	if !x.datapath(ExternalOptions{}).Requires().DNSGuard {
@@ -66,9 +66,9 @@ func TestRequiresDNSGuard(t *testing.T) {
 
 // Защита включается после маршрутов — с резолверами из конфига — и
 // снимается в Close.
-func TestWintunDNSGuard(t *testing.T) {
+func TestTunDNSGuard(t *testing.T) {
 	guard := &fakeDNSGuard{}
-	w, f, _ := newTestWintun(t)
+	w, f, _ := newTestTun(t)
 	w.opts.DNSGuard = guard
 	guard.onEnable = func() {
 		if !f.routed.Load() {
@@ -93,14 +93,14 @@ func TestWintunDNSGuard(t *testing.T) {
 }
 
 // Отказ защиты — отказ Start с уборкой адаптера; следующий Start возможен.
-func TestWintunDNSGuardFailure(t *testing.T) {
+func TestTunDNSGuardFailure(t *testing.T) {
 	guard := &fakeDNSGuard{enableErr: errors.New("защита DNS: BFE не отвечает")}
-	w, f, _ := newTestWintun(t)
+	w, f, _ := newTestTun(t)
 	w.opts.DNSGuard = guard
 	conf := testWGConfig(t, "127.0.0.1:9")
 
 	err := w.Start(context.Background(), conf)
-	if err == nil || !strings.Contains(err.Error(), "wintun: защита DNS: BFE не отвечает") {
+	if err == nil || !strings.Contains(err.Error(), "tun: защита DNS: BFE не отвечает") {
 		t.Fatalf("Start = %v, ждали отказ защиты DNS", err)
 	}
 	if f.tun.closed.Load() == 0 || f.released.Load() != 1 {

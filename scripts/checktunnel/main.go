@@ -53,7 +53,7 @@ import (
 )
 
 // wintunGUID — постоянный GUID адаптера wintun
-// (internal/datapath/wintun_windows.go).
+// (internal/datapath/tun_windows.go).
 var wintunGUID = windows.GUID{
 	Data1: 0xe46af63b, Data2: 0x12e0, Data3: 0x4377,
 	Data4: [8]byte{0x97, 0xdb, 0x29, 0xf1, 0x24, 0xa7, 0x0f, 0x40},

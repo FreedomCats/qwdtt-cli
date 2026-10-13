@@ -89,13 +89,13 @@ func addConnectFlags(fs *flag.FlagSet) *connectOptions {
 	fs.StringVar(&o.turnTransport, "turn-transport", "", "транспорт до TURN-relay: udp или tcp")
 	fs.BoolVar(&o.dtls, "dtls", true, "поднимать DTLS поверх TURN; -dtls=false — прямой RTP-obfs AEAD")
 	fs.StringVar(&o.dns, "dns", "", "резолвер для доменов VK: yandex, cloudflare, google, doh-*, custom:IP, doh:URL")
-	fs.StringVar(&o.datapath, "datapath", "", "как отдавать трафик: socks, wintun или external")
+	fs.StringVar(&o.datapath, "datapath", "", "как отдавать трафик: socks, tun или external")
 	fs.StringVar(&o.socksListen, "socks-listen", "", "адрес локального SOCKS5 при datapath=socks")
 	fs.StringVar(&o.listen, "listen", "", "локальный UDP-адрес, куда datapath отдаёт трафик")
 	// Единственный флаг без поля в профиле: согласие на утечку DNS даётся
 	// на один запуск, а не записывается навсегда (plan-e2.md, W4).
 	fs.BoolVar(&o.allowDNSLeak, "allow-dns-leak", false,
-		"подключаться, даже если защита от утечки DNS (wintun, external) не включилась")
+		"подключаться, даже если защита от утечки DNS (tun, external) не включилась")
 
 	return o
 }
@@ -294,7 +294,7 @@ func secretError(what, profile, flag string, err error) error {
 // chooseDatapath выбирает реализацию по профилю. Ядру о выборе знать незачем
 // (D2): настройки datapath идут его конструктору, а не в core.Config.
 func (plan *connectPlan) chooseDatapath() error {
-	switch strings.TrimSpace(plan.profile.Datapath) {
+	switch config.NormalizeDatapath(plan.profile.Datapath) {
 	case "", config.DatapathSocks:
 		listen := strings.TrimSpace(plan.profile.Socks.Listen)
 		if listen == "" {
@@ -307,9 +307,9 @@ func (plan *connectPlan) chooseDatapath() error {
 		plan.describe = "SOCKS5 на " + listen
 		return nil
 
-	case config.DatapathWintun:
+	case config.DatapathTun:
 		plan.datapath = func(logf func(string, ...any)) datapath.Datapath {
-			return datapath.NewWintun(datapath.WintunOptions{Logf: logf, DNSGuard: plan.dnsGuard})
+			return datapath.NewTun(datapath.TunOptions{Logf: logf, DNSGuard: plan.dnsGuard})
 		}
 		plan.stage = core.StageVPN
 		plan.describe = "адаптер " + datapath.DefaultTunnelName + ", весь трафик системы"
@@ -436,7 +436,7 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	if req.Warning != "" {
 		fmt.Fprintf(e.stderr, "Предупреждение: %s\n", req.Warning)
 	}
-	// Общее на машину (адаптер wintun) занимается до первого похода в сеть
+	// Общее на машину (адаптер tun) занимается до первого похода в сеть
 	// и держится весь сеанс: занятый — это ошибка сейчас, а не цикл
 	// переподключений с запросами кредов VK.
 	if r, ok := probe.(datapath.Reserver); ok {

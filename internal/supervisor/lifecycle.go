@@ -52,7 +52,7 @@ type Options struct {
 	// WireGuard сервер выдаёт новый на каждое подключение. Проверить Requires
 	// и объяснить нехватку прав нужно до входа в цикл, и это дело CLI.
 	//
-	// Исключение — datapath.Persistent (wintun): такой экземпляр цикл
+	// Исключение — datapath.Persistent (tun): такой экземпляр цикл
 	// строит один раз, на первой попытке, зовёт его Start на каждую
 	// попытку, Suspend — после каждой неудачной и Close — при выходе из Run.
 	NewDatapath func() (datapath.Datapath, error)

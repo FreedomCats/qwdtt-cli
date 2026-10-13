@@ -7,7 +7,7 @@ import (
 	"net/netip"
 )
 
-// DNSGuard вне Windows не существует: datapath, которым он нужен (wintun,
+// DNSGuard вне Windows не существует: datapath, которым он нужен (tun,
 // external), есть только там. Тип объявлен, чтобы CLI собирался везде.
 type DNSGuard struct{}
 

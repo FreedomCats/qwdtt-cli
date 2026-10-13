@@ -26,7 +26,7 @@ const (
 )
 
 // testHelpers — другие роли тестового бинаря, запущенного самим тестом;
-// регистрируются в init платформенных тестов (wintun_windows_test.go).
+// регистрируются в init платформенных тестов (tun_windows_test.go).
 // ok = true — роль узнала себя по окружению, процесс выходит с кодом code.
 var testHelpers []func() (code int, ok bool)
 
@@ -483,7 +483,7 @@ func TestSplitDefaultRoutes(t *testing.T) {
 }
 
 // Полный туннель IPv4 без IPv6 от сервера: IPv6 машины шёл бы мимо туннеля
-// (R2, находка 3) — половины IPv6 дописываются, как у wintun (решение 2).
+// (R2, находка 3) — половины IPv6 дописываются, как у tun (решение 2).
 func TestBlockIPv6(t *testing.T) {
 	tests := []struct {
 		name    string

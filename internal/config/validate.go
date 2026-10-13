@@ -178,12 +178,12 @@ func oneOfProblem(key, value string, allowed ...string) string {
 }
 
 func datapathProblem(value string) string {
-	switch strings.TrimSpace(value) {
-	case "", DatapathSocks, DatapathWintun, DatapathExternal:
+	switch NormalizeDatapath(value) {
+	case "", DatapathSocks, DatapathTun, DatapathExternal:
 		return ""
 	default:
 		return fmt.Sprintf("datapath = %q: допустимы %s",
-			value, quotedList([]string{DatapathSocks, DatapathWintun, DatapathExternal}))
+			value, quotedList([]string{DatapathSocks, DatapathTun, DatapathExternal}))
 	}
 }
 

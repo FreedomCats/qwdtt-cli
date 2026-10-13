@@ -14,8 +14,8 @@ import (
 )
 
 // fakeFullTunnel — datapath, который забирает весь трафик системы
-// (Requires().Netguard), как wintun и external. С persistent он ещё и
-// datapath.Persistent, как wintun.
+// (Requires().Netguard), как tun и external. С persistent он ещё и
+// datapath.Persistent, как tun.
 type fakeFullTunnel struct {
 	*fakeDatapath
 	suspendErr error

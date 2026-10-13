@@ -16,8 +16,8 @@ const wgDebugEnv = "TT_WG_DEBUG"
 
 // startDevice поднимает wireguard-go поверх готового TUN по конфигу сервера.
 //
-// Это общая часть socks и wintun: они отличаются только TUN (architecture.md
-// §04) — netstack у первого, адаптер Wintun у второго. Bind — стандартный UDP:
+// Это общая часть socks и tun: они отличаются только TUN (architecture.md
+// §04) — netstack у первого, свой адаптер у второго. Bind — стандартный UDP:
 // wireguard-go шлёт пакеты на Endpoint из конфига, то есть на loopback ядра
 // (решение Р4), и хук netguard ему не нужен — loopback маршрутами туннеля
 // не затрагивается.

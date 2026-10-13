@@ -23,21 +23,21 @@ var wintunGUID = windows.GUID{
 	Data4: [8]byte{0x97, 0xdb, 0x29, 0xf1, 0x24, 0xa7, 0x0f, 0x40},
 }
 
-// wintunUnsupported — на Windows wintun работает (см. wintun_other.go).
-var wintunUnsupported error
+// tunUnsupported — на Windows tun работает (см. tun_other.go).
+var tunUnsupported error
 
 // wintunTunnelType — тип адаптера у драйвера, виден в диспетчере устройств
 // («tt Tunnel»). Умолчание wireguard-go — «WireGuard», его легко спутать
 // с адаптером штатного клиента.
 const wintunTunnelType = "tt"
 
-// wintunLockName — именованный мьютекс одного адаптера на машину. Два tt
-// с datapath wintun делили бы один GUID, а что драйвер делает со вторым
+// tunLockName — именованный мьютекс одного адаптера на машину. Два tt
+// с datapath tun делили бы один GUID, а что драйвер делает со вторым
 // адаптером с тем же GUID, не документировано. Мьютекс умирает вместе с
 // процессом, так что упавший запуск следующему не мешает.
-const wintunLockName = `Global\qwdtt-cli-wintun`
+const tunLockName = `Global\qwdtt-cli-wintun`
 
-// openWintunAdapter создаёт адаптер и задаёт ему адреса, MTU и DNS из конфига;
+// openTunAdapter создаёт адаптер и задаёт ему адреса, MTU и DNS из конфига;
 // перенастройку и маршруты делает вызывающий (configure, addRoutes,
 // removeRoutes).
 // На отказе за собой убирает всё.
@@ -45,8 +45,8 @@ const wintunLockName = `Global\qwdtt-cli-wintun`
 // Адаптер от упавшего прошлого запуска убирать не нужно: он исчезает, как
 // только система закрыла дескрипторы умершего процесса, а его остатки драйвер
 // вычищает сам при следующем создании (plan-e2.md, врезка N1, п. 3).
-func openWintunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (*wintunAdapter, error) {
-	unlock, err := acquireWintunLock()
+func openTunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (*tunAdapter, error) {
+	unlock, err := acquireTunLock()
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func openWintunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (
 		release()
 		return nil, err
 	}
-	return &wintunAdapter{
+	return &tunAdapter{
 		tun:       tunDev,
 		luid:      luid,
 		configure: configure,
@@ -105,52 +105,52 @@ func openWintunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (
 	}, nil
 }
 
-// acquireWintunLock занимает мьютекс одного адаптера на машину и возвращает
+// acquireTunLock занимает мьютекс одного адаптера на машину и возвращает
 // функцию, которая его отпустит. Занят другим процессом — значит, на машине
-// уже работает tt с datapath wintun.
+// уже работает tt с datapath tun.
 //
 // Внутри процесса захваты считаются: CLI держит мьютекс весь tt connect
-// (Wintun.Reserve), а первый Start берёт его ещё раз. Повторный
+// (Tun.Reserve), а первый Start берёт его ещё раз. Повторный
 // CreateMutex с тем же именем вернул бы ERROR_ALREADY_EXISTS и своему же
 // процессу, поэтому дескриптор один и закрывается с последним захватом.
-func acquireWintunLock() (release func(), err error) {
-	wintunLock.mu.Lock()
-	defer wintunLock.mu.Unlock()
+func acquireTunLock() (release func(), err error) {
+	tunLock.mu.Lock()
+	defer tunLock.mu.Unlock()
 
-	if wintunLock.refs == 0 {
-		name, err := windows.UTF16PtrFromString(wintunLockName)
+	if tunLock.refs == 0 {
+		name, err := windows.UTF16PtrFromString(tunLockName)
 		if err != nil {
 			return nil, err
 		}
 		h, err := windows.CreateMutex(nil, false, name)
 		if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
 			windows.CloseHandle(h)
-			return nil, errors.New("адаптер уже занят: на этой машине работает другой tt с datapath wintun; " +
+			return nil, errors.New("адаптер уже занят: на этой машине работает другой tt с datapath tun; " +
 				"остановите его или подключитесь с -datapath socks")
 		}
 		if err != nil {
 			return nil, fmt.Errorf("мьютекс адаптера: %w", err)
 		}
-		wintunLock.handle = h
+		tunLock.handle = h
 	}
-	wintunLock.refs++
+	tunLock.refs++
 
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			wintunLock.mu.Lock()
-			defer wintunLock.mu.Unlock()
-			wintunLock.refs--
-			if wintunLock.refs == 0 {
-				windows.CloseHandle(wintunLock.handle)
-				wintunLock.handle = 0
+			tunLock.mu.Lock()
+			defer tunLock.mu.Unlock()
+			tunLock.refs--
+			if tunLock.refs == 0 {
+				windows.CloseHandle(tunLock.handle)
+				tunLock.handle = 0
 			}
 		})
 	}, nil
 }
 
-// wintunLock — дескриптор мьютекса и число захватов в этом процессе.
-var wintunLock struct {
+// tunLock — дескриптор мьютекса и число захватов в этом процессе.
+var tunLock struct {
 	mu     sync.Mutex
 	handle windows.Handle
 	refs   int

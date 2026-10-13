@@ -28,7 +28,7 @@ func SetTunnelRoutes(luid uint64, routes []netip.Prefix, logf func(string, ...an
 	for _, family := range routeFamilies(routes) {
 		ipif, err := l.IPInterface(family)
 		if family == windows.AF_INET6 && errors.Is(err, windows.ERROR_NOT_FOUND) {
-			logf("[WINTUN] IPv6 на адаптере выключен: маршруты IPv6 не поставлены, IPv6 машины идёт мимо туннеля")
+			logf("[TUN] IPv6 на адаптере выключен: маршруты IPv6 не поставлены, IPv6 машины идёт мимо туннеля")
 			continue
 		}
 		if err != nil {

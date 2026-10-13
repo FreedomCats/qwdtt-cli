@@ -227,10 +227,10 @@ func TestPlanConnectExternal(t *testing.T) {
 	}
 }
 
-func TestPlanConnectWintun(t *testing.T) {
+func TestPlanConnectTun(t *testing.T) {
 	c := newConnectEnv(t)
 
-	plan, err := c.plan("home", "-datapath", "wintun")
+	plan, err := c.plan("home", "-datapath", "tun")
 	if err != nil {
 		t.Fatalf("planConnect: %v", err)
 	}
@@ -240,12 +240,25 @@ func TestPlanConnectWintun(t *testing.T) {
 	if !strings.Contains(plan.describe, "адаптер tt") || !strings.Contains(plan.describe, "весь трафик") {
 		t.Errorf("описание datapath не про свой адаптер: %q", plan.describe)
 	}
-	if _, ok := plan.datapath(nil).(*datapath.Wintun); !ok {
-		t.Errorf("datapath не wintun: %T", plan.datapath(nil))
+	if _, ok := plan.datapath(nil).(*datapath.Tun); !ok {
+		t.Errorf("datapath не tun: %T", plan.datapath(nil))
 	}
 	req := plan.datapath(nil).Requires()
 	if !req.Admin || !req.Netguard || len(req.Files) != 1 || req.Files[0] != "wintun.dll" {
-		t.Errorf("требования wintun не те: %+v", req)
+		t.Errorf("требования tun не те: %+v", req)
+	}
+}
+
+// Прежнее имя wintun — синоним tun: старые профили и команды не ломаются.
+func TestPlanConnectWintunAlias(t *testing.T) {
+	c := newConnectEnv(t)
+
+	plan, err := c.plan("home", "-datapath", "wintun")
+	if err != nil {
+		t.Fatalf("planConnect: %v", err)
+	}
+	if _, ok := plan.datapath(nil).(*datapath.Tun); !ok {
+		t.Errorf("wintun не стал tun: %T", plan.datapath(nil))
 	}
 }
 
@@ -269,7 +282,7 @@ func TestRequirementProblemsAdmin(t *testing.T) {
 // советовать права администратора и wintun.dll бессмысленно (найдено первым
 // прогоном на Linux).
 func TestRequirementsErrorUnsupported(t *testing.T) {
-	why := errors.New("datapath wintun поддерживается только на Windows")
+	why := errors.New("datapath tun поддерживается только на Windows")
 	req := datapath.Requirements{Unsupported: why, Admin: true, Files: []string{"wintun.dll"}}
 
 	err := requirementsError("адаптер tt", req)
@@ -288,10 +301,10 @@ func TestRequirementsErrorNone(t *testing.T) {
 	}
 }
 
-// Wintun и external работают только на Windows; на остальных системах план
+// tun и external пока работают только на Windows; на остальных системах план
 // строится, но запуск отказывает их собственной причиной.
 func TestPlanConnectUnsupportedElsewhere(t *testing.T) {
-	for _, dp := range []string{"wintun", "external"} {
+	for _, dp := range []string{"tun", "external"} {
 		c := newConnectEnv(t)
 		plan, err := c.plan("home", "-datapath", dp)
 		if err != nil {

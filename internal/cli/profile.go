@@ -266,7 +266,7 @@ func runProfileSet(_ context.Context, e *env, args []string) error {
 	turnTransport := fs.String("turn-transport", "", "транспорт до TURN-relay: udp или tcp")
 	dtls := fs.Bool("dtls", true, "поднимать DTLS поверх TURN; -dtls=false — прямой RTP-obfs AEAD")
 	dns := fs.String("dns", "", "резолвер для доменов VK: yandex, cloudflare, google, doh-*, custom:IP, doh:URL")
-	datapath := fs.String("datapath", "", "как отдавать трафик: socks или external")
+	datapath := fs.String("datapath", "", "как отдавать трафик: socks, tun или external")
 	socksListen := fs.String("socks-listen", "", "адрес локального SOCKS5 при datapath=socks")
 	askPassword := fs.Bool("password", false, "спросить пароль подключения заново")
 	askHashes := fs.Bool("hashes", false, "спросить хеши звонков VK заново")
@@ -315,7 +315,8 @@ func runProfileSet(_ context.Context, e *env, args []string) error {
 		p.DNS = *dns
 	}
 	if named["datapath"] {
-		p.Datapath = *datapath
+		// Синоним wintun записывается уже как tun.
+		p.Datapath = config.NormalizeDatapath(*datapath)
 	}
 	if named["socks-listen"] {
 		p.Socks.Listen = *socksListen

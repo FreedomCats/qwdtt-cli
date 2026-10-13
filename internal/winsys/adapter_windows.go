@@ -97,7 +97,7 @@ func cleanupAddressesOnDisconnectedInterfaces(family winipcfg.AddressFamily, add
 			if ip, _ := netip.AddrFromSlice(address.Address.IP()); addrHash[ip.Unmap()] {
 				ip = ip.Unmap()
 				prefix := netip.PrefixFrom(ip, int(address.OnLinkPrefixLength))
-				logf("[WINTUN] снимаю устаревший адрес %s с интерфейса %q", prefix, iface.FriendlyName())
+				logf("[TUN] снимаю устаревший адрес %s с интерфейса %q", prefix, iface.FriendlyName())
 				iface.LUID.DeleteIPAddress(prefix)
 			}
 		}

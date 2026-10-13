@@ -127,8 +127,8 @@ func TestPlanConnectAllowDNSLeak(t *testing.T) {
 		args []string
 		want bool
 	}{
-		{[]string{"home", "-datapath", "wintun"}, false},
-		{[]string{"home", "-datapath", "wintun", "-allow-dns-leak"}, true},
+		{[]string{"home", "-datapath", "tun"}, false},
+		{[]string{"home", "-datapath", "tun", "-allow-dns-leak"}, true},
 	} {
 		plan, err := c.plan(tc.args...)
 		if err != nil {
@@ -138,7 +138,7 @@ func TestPlanConnectAllowDNSLeak(t *testing.T) {
 			t.Errorf("%v: allowDNSLeak = %v", tc.args, plan.allowDNSLeak)
 		}
 		if !plan.datapath(nil).Requires().DNSGuard {
-			t.Errorf("%v: wintun не просит защиту DNS", tc.args)
+			t.Errorf("%v: tun не просит защиту DNS", tc.args)
 		}
 	}
 }

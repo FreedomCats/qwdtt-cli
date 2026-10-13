@@ -12,14 +12,14 @@ import (
 
 // lockHelperEnv включает режим помощника: тестовый бинарь, запущенный самим
 // тестом, пробует занять мьютекс как «второй tt» и сообщает итог кодом выхода.
-const lockHelperEnv = "TT_WINTUN_LOCK_HELPER"
+const lockHelperEnv = "TT_TUN_LOCK_HELPER"
 
 func init() {
 	testHelpers = append(testHelpers, func() (int, bool) {
 		if os.Getenv(lockHelperEnv) != "1" {
 			return 0, false
 		}
-		release, err := acquireWintunLock()
+		release, err := acquireTunLock()
 		if err != nil {
 			os.Stderr.WriteString(err.Error())
 			return 3, true
@@ -46,18 +46,18 @@ func tryLockFromOtherProcess(t *testing.T) error {
 	return nil
 }
 
-// Второй tt с datapath wintun получает отказ, пока жив первый, и проходит,
+// Второй tt с datapath tun получает отказ, пока жив первый, и проходит,
 // когда первый отпустил мьютекс. Внутри одного процесса захваты считаются:
 // резерв CLI и Start попытки друг другу не мешают.
-func TestWintunLockExcludesOtherProcess(t *testing.T) {
-	session, err := acquireWintunLock()
+func TestTunLockExcludesOtherProcess(t *testing.T) {
+	session, err := acquireTunLock()
 	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
 		t.Skip("мьютекс в пространстве Global без прав не создать:", err)
 	}
 	if err != nil {
 		t.Fatalf("захват на сеанс: %v", err)
 	}
-	attempt, err := acquireWintunLock()
+	attempt, err := acquireTunLock()
 	if err != nil {
 		session()
 		t.Fatalf("повторный захват в том же процессе: %v", err)
