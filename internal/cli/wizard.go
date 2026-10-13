@@ -39,31 +39,57 @@ func (m *menu) wizard(path string, file *config.File) error {
 	fmt.Fprintln(w, "Новый профиль. Где в вопросе есть [значение], Enter выбирает его.")
 	fmt.Fprintln(w)
 
-	name, err := m.askProfileName(file)
+	link, err := m.askShareLink()
 	if err != nil {
 		return err
 	}
-	peer, err := m.askPeer()
+
+	suggested := ""
+	if link != nil {
+		suggested = config.ProfileName(link.Name)
+	}
+	if suggested == "" {
+		suggested = freeProfileName(file)
+	}
+	name, existed, err := m.askProfileName(file, suggested)
 	if err != nil {
 		return err
 	}
-	password, err := m.askPassword()
-	if err != nil {
+
+	p := &config.Profile{Name: name}
+	if existed {
+		p = file.Profiles[name]
+	}
+	var secrets profileSecrets
+	if link != nil {
+		applyShareLink(p, link)
+		secrets = profileSecrets{password: link.Password, hashes: link.Hashes}
+		if link.HashCount() == 0 {
+			secrets.hashes = ""
+		}
+	} else if p.Peer, err = m.askPeer(); err != nil {
 		return err
 	}
-	hashes, err := m.askCallLinks()
-	if err != nil {
-		return err
+
+	// Чего в ссылке не было, спрашивается так же, как при вводе вручную.
+	if secrets.password == "" {
+		if secrets.password, err = m.askPassword(); err != nil {
+			return err
+		}
 	}
-	mode, err := m.askMode()
-	if err != nil {
+	if secrets.hashes == "" {
+		if secrets.hashes, err = m.askCallLinks(); err != nil {
+			return err
+		}
+	}
+	if p.Datapath, err = m.askMode(); err != nil {
 		return err
 	}
 
 	// Первый профиль — профиль по умолчанию. Если профиль уже был один и
 	// default_profile не задан, умолчанием он был по правилу «единственный»;
 	// второй профиль это правило отменил бы, поэтому умолчание записывается.
-	if file.DefaultProfile == "" {
+	if file.DefaultProfile == "" && !existed {
 		switch names := file.Names(); len(names) {
 		case 0:
 			file.DefaultProfile = name
@@ -72,15 +98,47 @@ func (m *menu) wizard(path string, file *config.File) error {
 		}
 	}
 
-	p := &config.Profile{Name: name, Peer: peer, Datapath: mode}
 	fmt.Fprintln(w)
-	if err := storeProfile(m.e, path, file, p, false, profileSecrets{password: password, hashes: hashes}); err != nil {
+	if err := storeProfile(m.e, path, file, p, existed, secrets); err != nil {
 		return err
 	}
 
 	m.current = name
 	fmt.Fprintf(w, "Готово. Подключиться к %s — пункт 1 (Enter).\n", name)
 	return nil
+}
+
+// askShareLink — первый вопрос мастера: ссылка qwdtt://config или Enter для
+// ввода вручную (nil). Скрыто: в ссылке пароль.
+func (m *menu) askShareLink() (*config.ShareLink, error) {
+	fmt.Fprintln(m.e.stdout, "Если у вас есть ссылка qwdtt://config?… (из приложения qWDTT или от бота сервера),")
+	fmt.Fprintln(m.e.stdout, "вставьте её — остальное tt возьмёт из неё. Нет ссылки — нажмите Enter.")
+	for {
+		text, err := m.wizardSecret("Ссылка (при вводе не отображается) [ввести вручную]: ")
+		if err != nil {
+			return nil, err
+		}
+		if text == "" {
+			return nil, nil
+		}
+		link, err := config.ParseShareLink(text)
+		if err != nil {
+			fmt.Fprintf(m.e.stderr, "Ссылка не подошла: %v. Вставьте её ещё раз или нажмите Enter.\n", err)
+			continue
+		}
+
+		fmt.Fprintf(m.e.stdout, "Ссылка принята: сервер %s", link.Peer)
+		if link.Password == "" {
+			fmt.Fprint(m.e.stdout, ", пароля в ней нет")
+		}
+		if n := link.HashCount(); n > 0 {
+			fmt.Fprintf(m.e.stdout, ", ссылок на звонки: %d", n)
+		} else {
+			fmt.Fprint(m.e.stdout, ", ссылок на звонки в ней нет")
+		}
+		fmt.Fprintln(m.e.stdout, ".")
+		return link, nil
+	}
 }
 
 // wizardAsk — вопрос мастера обычной строкой. Конец ввода — отмена.
@@ -101,25 +159,34 @@ func (m *menu) wizardSecret(prompt string) (string, error) {
 	return value, err
 }
 
-func (m *menu) askProfileName(file *config.File) (string, error) {
-	suggested := freeProfileName(file)
+// askProfileName спрашивает имя профиля. Имя занято — предлагает заменить
+// тот профиль; existed — согласились заменить.
+func (m *menu) askProfileName(file *config.File, suggested string) (name string, existed bool, err error) {
 	for {
 		name, err := m.wizardAsk(fmt.Sprintf("Имя профиля [%s]: ", suggested))
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		if name == "" {
 			name = suggested
 		}
 		if err := config.CheckProfileName(name); err != nil {
-			fmt.Fprintf(m.e.stderr, "Такое имя не подойдёт: латинские буквы, цифры, дефис и подчёркивание, например %s.\n", suggested)
+			fmt.Fprintf(m.e.stderr, "Такое имя не подойдёт: латинские буквы, цифры, дефис и подчёркивание, например %s.\n",
+				freeProfileName(file))
 			continue
 		}
-		if _, taken := file.Profiles[name]; taken {
-			fmt.Fprintf(m.e.stderr, "Профиль %s уже есть. Назовите новый иначе.\n", name)
-			continue
+		if _, taken := file.Profiles[name]; !taken {
+			return name, false, nil
 		}
-		return name, nil
+
+		replace, err := m.e.confirm(fmt.Sprintf("Профиль %s уже есть. Заменить его?", name))
+		if err != nil {
+			return "", false, err
+		}
+		if replace {
+			return name, true, nil
+		}
+		fmt.Fprintln(m.e.stderr, "Назовите новый профиль иначе.")
 	}
 }
 

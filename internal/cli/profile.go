@@ -22,12 +22,13 @@ func profileCommand() *command {
 	return &command{
 		name:    "profile",
 		args:    "<подкоманда> [имя] [флаги]",
-		summary: "профили подключения: list, show, set, rm",
+		summary: "профили подключения: list, show, set, import, rm",
 		description: `Подкоманды:
-  list        перечислить профили из profiles.toml
-  show <имя>  показать настройки профиля; секреты — замаскированными
-  set <имя>   создать или изменить профиль; пароль и хеши читаются скрытым вводом
-  rm <имя>    удалить профиль вместе с его секретами
+  list          перечислить профили из profiles.toml
+  show <имя>    показать настройки профиля; секреты — замаскированными
+  set <имя>     создать или изменить профиль; пароль и хеши читаются скрытым вводом
+  import [имя]  профиль из ссылки qwdtt://config; ссылка читается скрытым вводом
+  rm <имя>      удалить профиль вместе с его секретами
 
 Флаги у каждой подкоманды свои: tt profile set -h.
 
@@ -45,6 +46,7 @@ func profileSubcommands() []*command {
 		profileListCommand(),
 		profileShowCommand(),
 		profileSetCommand(),
+		profileImportCommand(),
 		profileRmCommand(),
 	}
 }
@@ -423,6 +425,134 @@ func storeProfile(e *env, path string, file *config.File, p *config.Profile, exi
 		fmt.Fprintf(e.stdout, "Профиль по умолчанию: %s\n", p.Name)
 	}
 	return nil
+}
+
+// --- profile import ---
+
+func profileImportCommand() *command {
+	return &command{
+		name:    "profile import",
+		args:    "[имя] [флаги]",
+		summary: "профиль из ссылки qwdtt://config",
+		description: `Ссылку qwdtt://config?… (и QR-код с ней) выдают Android-приложение qWDTT
+и бот сервера: в ней адрес сервера, пароль и хеши звонков. Ссылка читается
+скрытым вводом или из stdin (tt profile import < файл): в ней пароль, и
+аргументом командной строки её передавать нельзя.
+
+Имя профиля — аргументом; без него — имя из ссылки латиницей. Профиль с таким
+именем уже есть — отказ; -replace заменяет в нём адрес, воркеры и секреты,
+остальные настройки остаются.
+
+Если в ссылке нет пароля или хешей, они спрашиваются скрытым вводом.`,
+		run: runProfileImport,
+	}
+}
+
+func runProfileImport(_ context.Context, e *env, args []string) error {
+	cmd := profileImportCommand()
+	fs := newFlagSet(cmd)
+	configPath := addConfigFlag(fs)
+	datapath := fs.String("datapath", "", "как отдавать трафик: socks, tun или external; без флага — умолчание профиля")
+	replace := fs.Bool("replace", false, "заменить профиль с тем же именем")
+	rest, err := parseWithArgs(e, fs, args)
+	if err != nil {
+		return err
+	}
+	if len(rest) > 1 {
+		return subUsagef(cmd, "лишний аргумент %q: профиль называется один", rest[1])
+	}
+	named := setFlags(fs)
+
+	text, err := e.askSecret("Ссылка qwdtt://config (при вводе не отображается): ")
+	if errors.Is(err, errNoInput) {
+		return errors.New("ссылка не введена")
+	}
+	if err != nil {
+		return err
+	}
+	link, err := config.ParseShareLink(text)
+	if err != nil {
+		return err
+	}
+
+	path, file, err := loadProfilesForWrite(*configPath)
+	if err != nil {
+		return err
+	}
+
+	name := ""
+	if len(rest) == 1 {
+		name = rest[0]
+	} else if name = config.ProfileName(link.Name); name == "" {
+		name = freeProfileName(file)
+	}
+	if err := config.CheckProfileName(name); err != nil {
+		return subUsagef(cmd, "%v", err)
+	}
+
+	p, existed := file.Profiles[name]
+	if existed && !*replace {
+		return fmt.Errorf("профиль %q уже есть: назовите новый иначе (tt profile import <имя>) или замените его (-replace)", name)
+	}
+	if !existed {
+		p = &config.Profile{Name: name}
+	}
+	applyShareLink(p, link)
+	if named["datapath"] {
+		p.Datapath = config.NormalizeDatapath(*datapath)
+	}
+	if err := checkBeforeAsking(name, p); err != nil {
+		return err
+	}
+
+	secrets := profileSecrets{password: link.Password, hashes: link.Hashes}
+	if secrets.password == "" {
+		if !e.interactive() {
+			return errors.New("в ссылке нет пароля подключения, а спросить его не у кого: запустите команду в терминале")
+		}
+		secrets.password, err = e.askNewSecret(
+			fmt.Sprintf("В ссылке нет пароля. Пароль подключения для профиля %q: ", name),
+			"Повторите пароль: ", "пароль подключения", true)
+		if err != nil {
+			return err
+		}
+	}
+	if link.HashCount() == 0 {
+		if !e.interactive() {
+			return errors.New("в ссылке нет хешей звонков VK, а спросить их не у кого: запустите команду в терминале")
+		}
+		secrets.hashes, err = e.askNewSecret(
+			fmt.Sprintf("В ссылке нет хешей. Хеши звонков VK для профиля %q (через запятую или пробел): ", name),
+			"", "хеши звонков VK", false)
+		if err != nil {
+			return err
+		}
+		if len(core.ParseHashes(secrets.hashes)) == 0 {
+			return errors.New("хеши звонков VK: во введённом ни одного хеша не разобрано")
+		}
+	}
+
+	if err := storeProfile(e, path, file, p, existed, secrets); err != nil {
+		return err
+	}
+	printImported(e, p, secrets.hashes)
+	return nil
+}
+
+// applyShareLink переносит в профиль то, что есть в ссылке, кроме секретов:
+// их записывает storeProfile.
+func applyShareLink(p *config.Profile, link *config.ShareLink) {
+	p.Peer = link.Peer
+	p.Workers = link.Workers
+}
+
+// printImported — сводка после записи профиля из ссылки. Пароль и хеши не
+// печатаются, только то, что они есть.
+func printImported(e *env, p *config.Profile, hashes string) {
+	fmt.Fprintf(e.stdout, "  сервер:  %s\n", p.Peer)
+	fmt.Fprintln(e.stdout, "  пароль:  записан")
+	fmt.Fprintf(e.stdout, "  хешей:   %d\n", len(core.ParseHashes(hashes)))
+	fmt.Fprintf(e.stdout, "  режим:   %s (%s)\n", modeText(p.Datapath), effective(p.Datapath, config.DatapathSocks))
 }
 
 // checkBeforeAsking проверяет настройки до того, как спрашивать секреты:

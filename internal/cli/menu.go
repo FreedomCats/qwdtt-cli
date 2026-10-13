@@ -163,12 +163,12 @@ func (m *menu) selected(file *config.File) string {
 // чтобы инструкция «выберите 3» оставалась верной при любом числе профилей.
 func (m *menu) items(name string) []menuItem {
 	if name == "" {
-		return []menuItem{{label: "Создать профиль", run: m.create}}
+		return []menuItem{{label: "Создать профиль (по ссылке qwdtt:// или вручную)", run: m.create}}
 	}
 	return []menuItem{
 		{label: fmt.Sprintf("Подключиться (%s)", name), run: m.connect},
 		{label: "Выбрать другой профиль", run: m.pick},
-		{label: "Создать новый профиль", run: m.create},
+		{label: "Создать новый профиль (по ссылке qwdtt:// или вручную)", run: m.create},
 		{label: "Заменить ссылки на звонки VK", run: m.replaceHashes},
 		{label: "Заменить пароль или адрес сервера", run: m.replacePasswordOrPeer},
 		{label: fmt.Sprintf("Удалить профиль %s", name), run: m.remove},

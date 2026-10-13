@@ -203,7 +203,7 @@ func TestMenuNumber(t *testing.T) {
 // трафик. Первый профиль становится профилем по умолчанию.
 func TestWizardCreatesFirstProfile(t *testing.T) {
 	p := newMenuEnv(t)
-	p.answer(testPassword, testPassword, testHashes)
+	p.answer("", testPassword, testPassword, testHashes)
 	p.input("\n\nexample.org\n\n0\n")
 
 	code, stdout, stderr := p.run("menu")
@@ -244,8 +244,9 @@ func TestWizardCreatesFirstProfile(t *testing.T) {
 func TestWizardCreatesSecondProfile(t *testing.T) {
 	p := newMenuEnv(t)
 	p.setHome()
-	p.answer(testPassword, testPassword, testHashes)
-	p.input("3\nhome\n\n198.51.100.7:56000\n2\n0\n")
+	p.answer("", testPassword, testPassword, testHashes)
+	// home занят: на «заменить?» Enter — нет, и мастер спрашивает имя снова.
+	p.input("3\nhome\n\n\n198.51.100.7:56000\n2\n0\n")
 
 	code, stdout, stderr := p.run("menu")
 	if code != exitOK {
@@ -274,14 +275,14 @@ func TestWizardCreatesSecondProfile(t *testing.T) {
 // пароль, ввод без единой ссылки, неверный режим.
 func TestWizardRepeatsBadAnswers(t *testing.T) {
 	p := newMenuEnv(t)
-	p.answer(testPassword, "другой", "", testPassword, testPassword, "https://example.org/", testHashes)
+	p.answer("qwdtt://config?name=x", "", testPassword, "другой", "", testPassword, testPassword, "https://example.org/", testHashes)
 	p.input("\nмой дом\nhome\n\nexample.org:порт\n203.0.113.5:443\n5\n1\n0\n")
 
 	code, _, stderr := p.run("menu")
 	if code != exitOK {
 		t.Fatalf("код возврата %d, stderr:\n%s", code, stderr)
 	}
-	for _, want := range []string{"Такое имя не подойдёт", "Адрес сервера нужен", "Не похоже на адрес",
+	for _, want := range []string{"Ссылка не подошла", "Такое имя не подойдёт", "Адрес сервера нужен", "Не похоже на адрес",
 		"Пароли не совпали", "Пароль не может быть пустым", "Не нашлось ни одной ссылки", "Введите 1 или 2"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("нет переспроса %q:\n%s", want, stderr)
@@ -303,7 +304,9 @@ func TestWizardRepeatsBadAnswers(t *testing.T) {
 // Конец ввода посреди мастера — отмена: файл настроек не появляется.
 func TestWizardCancelled(t *testing.T) {
 	p := newMenuEnv(t)
-	p.input("\n\n")
+	// Ссылки нет, и ввод кончается на вопросе об имени.
+	p.answer("")
+	p.input("\n")
 
 	code, stdout, stderr := p.run("menu")
 	if code != exitOK {

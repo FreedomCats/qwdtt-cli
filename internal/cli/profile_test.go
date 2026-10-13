@@ -27,6 +27,8 @@ type profileEnv struct {
 	stdin   string
 	// tty — притвориться терминалом: без него меню не открывается.
 	tty bool
+	// pipe — скрытого ввода нет: секреты читаются из stdin, как в конвейере.
+	pipe bool
 }
 
 func newProfileEnv(t *testing.T) *profileEnv {
@@ -77,6 +79,9 @@ func (p *profileEnv) run(args ...string) (code int, stdout, stderr string) {
 
 	if p.tty {
 		e.tty = func() bool { return true }
+	}
+	if p.pipe {
+		e.secrets = nil
 	}
 
 	args = append(args, "-config", p.configPath())
