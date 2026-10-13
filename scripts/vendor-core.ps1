@@ -8,7 +8,8 @@
     обновление сводится к запуску этого скрипта и просмотру диффа.
 
     Что делает:
-      1. Копирует *.go из <upstream>/go_client в internal/core.
+      1. Копирует *.go из <upstream>/go_client в internal/core, кроме файлов,
+         которые на десктопе не нужны вовсе (см. $excludedFiles).
       2. Меняет package main на package core.
       3. Применяет платформенные правки, без которых ядро не собирается
          под Windows и macOS (см. раздел "правки" ниже).
@@ -56,11 +57,14 @@ if (-not (Test-Path -LiteralPath $source -PathType Container)) {
 # =============================== правки =========================================
 # Всё, что меняется в апстримном коде, описано здесь и только здесь.
 
-# tun_fd.go получает TUN-дескриптор от Android через SCM_RIGHTS и использует
-# golang.org/x/sys/unix, которого нет под Windows. Ограничиваем файл Linux
-# и даём заглушку остальным платформам.
-$buildTags = @{
-    'tun_fd.go' = '//go:build linux'
+# Файлы апстрима, которые в десктопной сборке не нужны вовсе (задача B6).
+# Ключ — имя файла, значение — причина, она же попадает в сообщение проверки.
+#
+# Наличие файла в апстриме проверяется: если его переименуют, скрипт упадёт,
+# а не выбросит молча не то. Исключённый файл, оставшийся в internal/core,
+# удаляется при переносе и считается расхождением при -Check.
+$excludedFiles = [ordered]@{
+    'tun_fd.go' = 'приём TUN-дескриптора от Android по SCM_RIGHTS: режим rawtun на десктопе не поддерживается'
 }
 
 # listen.go задаёт SO_REUSEADDR через syscall.SetsockoptInt, а его сигнатура
@@ -85,23 +89,6 @@ func listenUDP(addr string) (net.PacketConn, error) {
 
 # Файлы, которых в апстриме нет вовсе — их создаёт этот скрипт.
 $generatedFiles = @{
-    'tun_fd_stub.go' = @'
-//go:build !linux
-
-package core
-
-import (
-	"fmt"
-	"os"
-)
-
-// recvTunFD существует только ради компиляции: режим rawtun работает через
-// передачу дескриптора по SCM_RIGHTS и доступен лишь на Linux и Android.
-func recvTunFD(sockPath string) (*os.File, error) {
-	return nil, fmt.Errorf("режим rawtun (передача TUN fd) доступен только на Linux/Android")
-}
-'@
-
     'listen_unix.go' = @'
 //go:build !windows
 
@@ -280,6 +267,51 @@ $replacements = @(
         InsertAfter = 'emitStage(StageWorkers, StageOK, sessionID, "")'
     }
 
+    # --- режим rawtun (задача B6) ---
+    # Режим принимал TUN-дескриптор от Android и на десктопе не поддерживается:
+    # Config его не выражает с B1, ветки в Run не появилось с B4. Здесь уходит
+    # то, что осталось от него внутри апстримного кода. Оставлять было нечем
+    # оправдать: код недостижим, а читающего он сбивает с толку — и первым
+    # делом заставляет искать, где же включается raw-режим.
+    #
+    # Диспетчер трогать не нужно: NewDispatcherPendingTUN и AttachTUN оставлены
+    # намеренно, raw-путь может пригодиться Э4 на Linux (см. doc/plan-e1.md).
+    @{
+        File    = 'group.go'
+        Count   = 1
+        Pattern = '(?m)^\t// RawMode: raw-IP без WireGuard \(см\. server/main\.go -listen-raw, handleConnRaw\)\.\n\t// Подразумевает NoDTLS — сервер на -listen-raw DTLS не понимает\.\n\tRawMode bool\n'
+        Replace = ''
+    }
+    @{
+        File    = 'session.go'
+        Count   = 1
+        Pattern = '(?m)^(\t+)if useWrap && \(tp\.NoDTLS \|\| tp\.RawMode\) \{$'
+        Replace = '${1}if useWrap && tp.NoDTLS {'
+    }
+    # Ветка raw-конфига уходит целиком; её else — обычный GETCONF — становится
+    # единственным условием.
+    @{
+        File    = 'session.go'
+        Count   = 1
+        Pattern = '(?ms)^(\t+)if getConfig && configCh != nil && tp\.RawMode \{\n.*?^\t\} else if getConfig && configCh != nil \{$'
+        Replace = '${1}if getConfig && configCh != nil {'
+    }
+    # Уведомление сервера о намеренном разрыве raw-сессии (DISCONNECT_RAW).
+    @{
+        File    = 'session.go'
+        Count   = 1
+        Pattern = '(?ms)^\n\tif tp\.RawMode \{\n.*?^\t\}\n'
+        Replace = ''
+    }
+    # Запрос raw-конфига у сервера (GETCONF_RAW / RAWCONF). Единственный
+    # вызывающий — ветка выше.
+    @{
+        File    = 'protocol.go'
+        Count   = 1
+        Pattern = '(?ms)^\n// RequestRawConfig запрашивает у сервера.*?^\}\n'
+        Replace = ''
+    }
+
     # --- счётчики трафика ---
     @{
         File        = 'stats.go'
@@ -302,16 +334,17 @@ $logReplacements = [ordered]@{
 }
 
 # Импорты, которые могут осиротеть после наших правок: вместе с func main()
-# уходят bufio, flag, net, os, os/signal, sync и syscall, а вместе с log.Printf —
-# сам log. Go на неиспользованный импорт не смотрит сквозь пальцы, поэтому
-# осиротевшие строки снимаются, а не оставляются на память.
+# уходят bufio, flag, net, os, os/signal, sync и syscall, вместе с log.Printf —
+# сам log, а вместе с RequestRawConfig — strconv. Go на неиспользованный импорт
+# не смотрит сквозь пальцы, поэтому осиротевшие строки снимаются, а не
+# оставляются на память.
 #
 # Список закрытый: снимается только то, что могли осиротить именно наши правки.
 # Ложно снять импорт нельзя — проверка идёт по имени пакета, и если оно в файле
 # встречается, строка остаётся. Так, socks5.go сохраняет "log": он отдаёт
 # *log.Logger чужой библиотеке SOCKS5, и это её собственный вывод — он проходит
 # через socksLogFilter и уже оттуда попадает в logln.
-$prunableImports = @('bufio', 'flag', 'log', 'net', 'os', 'os/signal', 'sync', 'syscall')
+$prunableImports = @('bufio', 'flag', 'log', 'net', 'os', 'os/signal', 'strconv', 'sync', 'syscall')
 
 # ================================================================================
 
@@ -405,21 +438,28 @@ function Convert-CoreFile {
         $Text = [regex]::Replace($Text, '(?m)^\t"' + [regex]::Escape($import) + '"\n', '')
     }
 
-    if ($buildTags.ContainsKey($Name)) {
-        $Text = $buildTags[$Name] + "`n`n" + $Text
-    }
-
     return $Text
 }
 
 # --- сборка нового содержимого --------------------------------------------------
 
 $version = Get-UpstreamVersion -Path $Upstream
-$sourceFiles = Get-ChildItem -LiteralPath $source -Filter '*.go' -File | Sort-Object Name
+$upstreamFiles = Get-ChildItem -LiteralPath $source -Filter '*.go' -File | Sort-Object Name
 
-if ($sourceFiles.Count -eq 0) {
+if ($upstreamFiles.Count -eq 0) {
     throw "В $source нет файлов *.go."
 }
+
+# Исключённый файл, пропавший из апстрима, — повод остановиться: скорее всего
+# его переименовали, и вместе с ним вернулось то, что мы выбрасывали.
+$upstreamNames = @($upstreamFiles | ForEach-Object { $_.Name })
+foreach ($name in @($excludedFiles.Keys)) {
+    if ($name -notin $upstreamNames) {
+        throw "Исключённого файла $name нет в $source — апстрим его переименовал или удалил."
+    }
+}
+
+$sourceFiles = @($upstreamFiles | Where-Object { $_.Name -notin @($excludedFiles.Keys) })
 
 # Проверка счётчиков внутри Convert-CoreFile не сработает, если апстрим просто
 # переименовал файл: правило тогда не выполнится ни разу и пропадёт молча.
@@ -468,7 +508,7 @@ foreach ($name in @($planned.Keys)) {
 }
 
 # Имена, которыми распоряжается скрипт. Всё остальное в internal/core — наше.
-$ownedNames = @($sourceFiles | ForEach-Object { $_.Name }) + @($generatedFiles.Keys)
+$ownedNames = @($sourceFiles | ForEach-Object { $_.Name }) + @($generatedFiles.Keys) + @($excludedFiles.Keys)
 
 # --- режим проверки -------------------------------------------------------------
 
@@ -484,6 +524,12 @@ if ($Check) {
         $current = (Get-Content -LiteralPath $path -Raw -Encoding UTF8) -replace "`r`n", "`n"
         if ($current -ne $planned[$name]) {
             $problems += "расходится: $name"
+        }
+    }
+
+    foreach ($name in @($excludedFiles.Keys)) {
+        if (Test-Path -LiteralPath (Join-Path $target $name) -PathType Leaf) {
+            $problems += "лишний файл: $name ($($excludedFiles[$name]))"
         }
     }
 
@@ -510,6 +556,14 @@ foreach ($file in $stale) {
     Write-Host "  не трогаю свой файл: $($file.Name)"
 }
 
+foreach ($name in @($excludedFiles.Keys)) {
+    $path = Join-Path $target $name
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+        Remove-Item -LiteralPath $path -Force
+        Write-Host "  удалён исключённый файл: $name"
+    }
+}
+
 foreach ($name in $planned.Keys) {
     $path = Join-Path $target $name
     # UTF8 без BOM и с LF: так дифф против апстрима не забивается концами строк.
@@ -518,6 +572,7 @@ foreach ($name in $planned.Keys) {
 
 Write-Host "Перенесено из апстрима: $($sourceFiles.Count)" -ForegroundColor Green
 Write-Host "Создано скриптом:       $($generatedFiles.Count)"
+Write-Host "Исключено:              $($excludedFiles.Count)"
 Write-Host "Апстрим: $($version.Commit) от $($version.Date)"
 if ($version.Dirty) {
     Write-Host 'ВНИМАНИЕ: в апстриме есть незакоммиченные правки go_client.' -ForegroundColor Yellow

@@ -314,9 +314,6 @@ type TurnParams struct {
 	// Требует сервер, который умеет принимать прямые (без DTLS) сессии на
 	// отдельном порту/слушателе — см. server/main.go -listen-direct.
 	NoDTLS bool
-	// RawMode: raw-IP без WireGuard (см. server/main.go -listen-raw, handleConnRaw).
-	// Подразумевает NoDTLS — сервер на -listen-raw DTLS не понимает.
-	RawMode bool
 	// TCPTransport: соединяться с TURN-relay по TCP вместо UDP (см.
 	// dialTURNConn в session.go). На некоторых сетях (замечено на
 	// Ростелекоме) UDP до TURN душится/дропается провайдером агрессивнее,

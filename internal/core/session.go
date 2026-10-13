@@ -294,7 +294,7 @@ func RunSession(
 	var activeConn net.Conn
 	var relayWg sync.WaitGroup
 
-	if useWrap && (tp.NoDTLS || tp.RawMode) {
+	if useWrap && tp.NoDTLS {
 		// ─── Прямой режим: RTP-obfs AEAD прямо поверх TURN relay, без DTLS ───
 		obfsCfg, obfsErr := NewObfsConfig(tp.ObfsMode)
 		if obfsErr != nil {
@@ -465,28 +465,7 @@ func RunSession(
 	defer stats.ActiveConnections.Add(-1)
 
 	// Запрос конфига
-	if getConfig && configCh != nil && tp.RawMode {
-		ip, dnsCSV, mtu, confErr := RequestRawConfig(activeConn, deviceID, password)
-		if confErr != nil {
-			errStr := confErr.Error()
-			if strings.Contains(errStr, "FATAL_AUTH") {
-				return false, confErr
-			}
-			logf("[ВОРКЕР #%d] Ошибка RAW-конфига: %v", sessionID, confErr)
-		} else if ip != "" {
-			conf := fmt.Sprintf("RAWCONF:%s|%s|%d", ip, dnsCSV, mtu)
-			select {
-			case configCh <- conf:
-				configDelivered = true
-				logf("[ВОРКЕР #%d] RAW-конфиг получен (ip=%s)", sessionID, ip)
-			default:
-				configDelivered = true
-				logf("[ВОРКЕР #%d] RAW-конфиг уже был доставлен другим воркером", sessionID)
-			}
-		} else {
-			logf("[ВОРКЕР #%d] Сервер ещё не назначил raw IP, повторим позже", sessionID)
-		}
-	} else if getConfig && configCh != nil {
+	if getConfig && configCh != nil {
 		conf, confErr := RequestConfig(activeConn, localPort, deviceID, password)
 		if confErr != nil {
 			errStr := confErr.Error()
@@ -533,23 +512,6 @@ func RunSession(
 		_ = activeConn.SetDeadline(time.Now())
 	})
 	defer stopConn()
-
-	if tp.RawMode {
-		// Транспорт — UDP через TURN, у сервера нет способа узнать о разрыве
-		// соединения кроме таймаута (см. handleConnRaw). Явно сообщаем о
-		// намеренном отключении, чтобы сервер сразу освободил слот в
-		// rawRouter вместо того чтобы ждать простоя — иначе "мёртвые"
-		// соединения от прошлого сеанса засоряют round-robin в downlinkLoop
-		// при быстром переподключении того же устройства.
-		go func() {
-			select {
-			case <-ctx.Done():
-				_ = activeConn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
-				_, _ = activeConn.Write([]byte("DISCONNECT_RAW:" + deviceID))
-			case <-sessCtx.Done():
-			}
-		}()
-	}
 
 	// Keepalive: prevents TURN allocation timeout and idle disconnect.
 	// Пакет не пишется напрямую в activeConn (это была бы вторая горутина,

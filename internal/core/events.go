@@ -298,18 +298,6 @@ type EventConfig struct {
 
 func (EventConfig) isCoreEvent() {}
 
-// EventRawConfig — параметры raw-IP туннеля вместо конфига WireGuard.
-//
-// Режим rawtun на десктопе не поддерживается и уезжает в задаче B6; событие
-// живёт ровно до тех пор, пока в ядре есть его ветка.
-type EventRawConfig struct {
-	IP  string
-	DNS string
-	MTU string
-}
-
-func (EventRawConfig) isCoreEvent() {}
-
 // ─────────────────────────── статистика ───────────────────────────
 
 // EventStats — счётчики трафика, снятые раз в несколько секунд.

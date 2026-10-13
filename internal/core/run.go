@@ -231,9 +231,6 @@ func applyGlobals(cfg *Config) error {
 }
 
 // turnParams собирает параметры транспорта, общие для всех воркеров.
-//
-// RawMode не выставляется: режим rawtun принимал TUN-дескриптор от Android и
-// на десктопе не поддерживается — Config его и не выражает (задача B6).
 func turnParams(cfg *Config) (*TurnParams, error) {
 	wrapKey, err := deriveWrapKey(cfg.Password)
 	if err != nil {
@@ -322,18 +319,18 @@ func startWorkers(
 // его нет, они остаются здесь; вынуть их должно быть не сложнее, чем удалить
 // нижнюю ветку целиком.
 func serveConfig(ctx context.Context, cfg *Config, configCh <-chan string) {
-	var rawConf string
+	var fromServer string
 	select {
 	case conf, ok := <-configCh:
 		if !ok || conf == "" {
 			return
 		}
-		rawConf = conf
+		fromServer = conf
 	case <-ctx.Done():
 		return
 	}
 
-	conf := withMTU(rawConf)
+	conf := withMTU(fromServer)
 	emit(EventConfig{WireGuard: conf})
 
 	if cfg.Mode != ModeSocks {
