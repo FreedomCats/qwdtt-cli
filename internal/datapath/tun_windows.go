@@ -3,8 +3,6 @@ package datapath
 import (
 	"errors"
 	"fmt"
-	"log"
-	"strings"
 	"sync"
 
 	"golang.org/x/sys/windows"
@@ -25,6 +23,9 @@ var wintunGUID = windows.GUID{
 
 // tunUnsupported — на Windows tun работает (см. tun_other.go).
 var tunUnsupported error
+
+// tunFiles — драйвер Wintun рядом с бинарём (см. WintunDLL).
+var tunFiles = []string{WintunDLL}
 
 // wintunTunnelType — тип адаптера у драйвера, виден в диспетчере устройств
 // («tt Tunnel»). Умолчание wireguard-go — «WireGuard», его легко спутать
@@ -125,8 +126,7 @@ func acquireTunLock() (release func(), err error) {
 		h, err := windows.CreateMutex(nil, false, name)
 		if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
 			windows.CloseHandle(h)
-			return nil, errors.New("адаптер уже занят: на этой машине работает другой tt с datapath tun; " +
-				"остановите его или подключитесь с -datapath socks")
+			return nil, errTunBusy
 		}
 		if err != nil {
 			return nil, fmt.Errorf("мьютекс адаптера: %w", err)
@@ -154,35 +154,4 @@ var tunLock struct {
 	mu     sync.Mutex
 	handle windows.Handle
 	refs   int
-}
-
-// captureStdLog направляет стандартный log в logf и возвращает функцию,
-// которая вернёт прежний вывод.
-//
-// Нужно ради wintun.dll: golang.zx2c4.com/wintun передаёт сообщения драйвера
-// в log.Default() (wintun.go, logMessage), а тот по умолчанию пишет прямо
-// в stderr — поверх статусной строки CLI. Перехват глобальный и живёт, пока
-// жив адаптер. Ядро в log не пишет (у него свой logf), но изредка пишут
-// библиотеки под ним — fhttp и x/net/http2 об ошибках протокола; их строки
-// на это время тоже идут в logf, поэтому тег у всех общий — [LOG], а строки
-// драйвера узнаются по тексту.
-func captureStdLog(logf func(string, ...any)) (restore func()) {
-	out, flags, prefix := log.Writer(), log.Flags(), log.Prefix()
-	log.SetOutput(stdLogWriter{logf: logf})
-	log.SetFlags(0)
-	log.SetPrefix("")
-	return func() {
-		log.SetOutput(out)
-		log.SetFlags(flags)
-		log.SetPrefix(prefix)
-	}
-}
-
-type stdLogWriter struct {
-	logf func(string, ...any)
-}
-
-func (w stdLogWriter) Write(p []byte) (int, error) {
-	w.logf("[LOG] %s", strings.TrimRight(string(p), "\r\n"))
-	return len(p), nil
 }

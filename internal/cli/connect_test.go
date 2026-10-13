@@ -7,6 +7,7 @@ import (
 	"io"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -244,8 +245,11 @@ func TestPlanConnectTun(t *testing.T) {
 		t.Errorf("datapath не tun: %T", plan.datapath(nil))
 	}
 	req := plan.datapath(nil).Requires()
-	if !req.Admin || !req.Netguard || len(req.Files) != 1 || req.Files[0] != "wintun.dll" {
+	if !req.Admin || !req.Netguard || !req.DNSGuard {
 		t.Errorf("требования tun не те: %+v", req)
+	}
+	if runtime.GOOS == "windows" && (len(req.Files) != 1 || req.Files[0] != "wintun.dll") {
+		t.Errorf("на Windows tun нужна wintun.dll: %+v", req)
 	}
 }
 
@@ -273,8 +277,8 @@ func TestRequirementProblemsAdmin(t *testing.T) {
 		}
 		return
 	}
-	if len(problems) != 1 || !strings.Contains(problems[0], "администратора") {
-		t.Errorf("без прав ожидалась одна проблема про администратора: %v", problems)
+	if len(problems) != 1 || problems[0] != elevationHint {
+		t.Errorf("без прав ожидалась одна проблема про права: %v", problems)
 	}
 }
 
@@ -301,24 +305,32 @@ func TestRequirementsErrorNone(t *testing.T) {
 	}
 }
 
-// tun и external пока работают только на Windows; на остальных системах план
-// строится, но запуск отказывает их собственной причиной.
+// tun работает на Windows и Linux, external — только на Windows; на
+// остальных системах план строится, но запуск отказывает их собственной
+// причиной.
 func TestPlanConnectUnsupportedElsewhere(t *testing.T) {
-	for _, dp := range []string{"tun", "external"} {
+	for _, tc := range []struct {
+		datapath string
+		systems  []string
+	}{
+		{"tun", []string{"windows", "linux"}},
+		{"external", []string{"windows"}},
+	} {
+		dp := tc.datapath
 		c := newConnectEnv(t)
 		plan, err := c.plan("home", "-datapath", dp)
 		if err != nil {
 			t.Fatalf("%s: planConnect: %v", dp, err)
 		}
 		err = requirementsError(plan.describe, plan.datapath(nil).Requires())
-		if runtime.GOOS == "windows" {
-			if err != nil && strings.Contains(err.Error(), "только на Windows") {
-				t.Errorf("%s: на Windows отказ «только на Windows»: %v", dp, err)
+		if slices.Contains(tc.systems, runtime.GOOS) {
+			if err != nil && strings.Contains(err.Error(), "поддерживается только") {
+				t.Errorf("%s: на %s отказ «не поддерживается»: %v", dp, runtime.GOOS, err)
 			}
 			continue
 		}
-		if err == nil || !strings.Contains(err.Error(), dp+" ") || !strings.Contains(err.Error(), "только на Windows") {
-			t.Errorf("%s: ждали отказ «только на Windows», получили %v", dp, err)
+		if err == nil || !strings.Contains(err.Error(), dp+" ") || !strings.Contains(err.Error(), "поддерживается только") {
+			t.Errorf("%s: ждали отказ «поддерживается только», получили %v", dp, err)
 		}
 	}
 }

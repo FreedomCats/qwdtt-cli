@@ -92,11 +92,14 @@ func TestTunRequires(t *testing.T) {
 	if !req.Admin || !req.Netguard || len(req.Programs) != 0 || req.Warning != "" {
 		t.Errorf("Requires = %+v, ждали Admin и Netguard без программ и предупреждений", req)
 	}
-	if len(req.Files) != 1 || req.Files[0] != "wintun.dll" {
-		t.Errorf("Files = %v, ждали [wintun.dll]", req.Files)
+	// wintun.dll нужна только на Windows: на Linux TUN даёт ядро.
+	wantFiles := runtime.GOOS == "windows"
+	if wantFiles && (len(req.Files) != 1 || req.Files[0] != "wintun.dll") || !wantFiles && len(req.Files) != 0 {
+		t.Errorf("Files = %v на %s", req.Files, runtime.GOOS)
 	}
-	if (req.Unsupported == nil) != (runtime.GOOS == "windows") {
-		t.Errorf("Unsupported = %v на %s: tun пока есть только на Windows", req.Unsupported, runtime.GOOS)
+	supported := runtime.GOOS == "windows" || runtime.GOOS == "linux"
+	if (req.Unsupported == nil) != supported {
+		t.Errorf("Unsupported = %v на %s: tun есть на Windows и Linux", req.Unsupported, runtime.GOOS)
 	}
 }
 
@@ -140,7 +143,7 @@ func TestTunStartClose(t *testing.T) {
 			f.released.Load(), f.releasedAfterTUN.Load())
 	}
 	if w.AdapterID() != 0 {
-		t.Error("LUID после Close не нулевой")
+		t.Error("AdapterID после Close не нулевой")
 	}
 	if err := w.Close(); err != nil || f.released.Load() != 1 {
 		t.Errorf("повторный Close: err=%v, release %d раз", err, f.released.Load())

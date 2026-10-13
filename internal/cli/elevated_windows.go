@@ -8,3 +8,6 @@ import "golang.org/x/sys/windows"
 func isElevated() bool {
 	return windows.GetCurrentProcessToken().IsElevated()
 }
+
+// elevationHint — что сказать, когда прав не хватает.
+const elevationHint = "нужны права администратора: запустите tt из консоли от имени администратора"

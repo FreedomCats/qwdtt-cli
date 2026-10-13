@@ -1,0 +1,155 @@
+package datapath
+
+import (
+	"context"
+	"net/netip"
+	"os"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
+)
+
+// netnsEnv включает проверки, которые создают настоящий TUN. Только в
+// отдельном сетевом пространстве (контейнер, plan-e4.md, «Где гонять живые
+// прогоны»), не на машине разработчика:
+//
+//	CGO_ENABLED=0 go test -c -o build/out/datapath.test ./internal/datapath
+//	docker run --rm --cap-add NET_ADMIN --device /dev/net/tun -e TT_TEST_NETNS=1 \
+//	  -v "$PWD/build/out":/tt:ro ubuntu:latest /tt/datapath.test -test.v -test.run Netns
+const netnsEnv = "TT_TEST_NETNS"
+
+func skipOutsideNetns(t *testing.T) {
+	t.Helper()
+	if os.Getenv(netnsEnv) != "1" || os.Geteuid() != 0 {
+		t.Skipf("создаёт TUN: только в контейнере, %s=1 и root", netnsEnv)
+	}
+}
+
+// linkAddrs — адреса глобальной области интерфейса name и его MTU.
+func linkAddrs(t *testing.T, name string) (addrs []netip.Addr, mtu int, up bool) {
+	t.Helper()
+	link, err := netlink.LinkByName(name)
+	if err != nil {
+		t.Fatalf("интерфейс %s: %v", name, err)
+	}
+	list, err := netlink.AddrList(link, netlink.FAMILY_ALL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range list {
+		if a.Scope == unix.RT_SCOPE_UNIVERSE {
+			ip, _ := netip.AddrFromSlice(a.IP)
+			addrs = append(addrs, ip.Unmap())
+		}
+	}
+	slices.SortFunc(addrs, netip.Addr.Compare)
+	return addrs, link.Attrs().MTU, link.Attrs().Flags&unix.IFF_UP != 0
+}
+
+func linkExists(name string) bool {
+	_, err := netlink.LinkByName(name)
+	return err == nil
+}
+
+// Настоящий адаптер: Start создаёт интерфейс с адресами и MTU из конфига,
+// повторный Start с другими адресами и MTU перенастраивает тот же интерфейс,
+// Close его убирает.
+func TestTunAdapterNetns(t *testing.T) {
+	skipOutsideNetns(t)
+	const name = "tttest0"
+	rec := &recorder{}
+	w := NewTun(TunOptions{Name: name, Logf: rec.logf})
+	defer w.Close()
+
+	conf := testWGConfig(t, "127.0.0.1:9")
+	conf.Addresses = []netip.Addr{netip.MustParseAddr("10.7.0.2"), netip.MustParseAddr("fd00::2")}
+	conf.MTU = 1380
+	if err := w.Start(context.Background(), conf); err != nil {
+		t.Fatalf("Start: %v\n%s", err, rec.dump())
+	}
+	addrs, mtu, up := linkAddrs(t, name)
+	if !slices.Equal(addrs, conf.Addresses) || mtu != 1380 || !up {
+		t.Errorf("после Start: адреса %v, MTU %d, up %v; ждали %v, 1380, up", addrs, mtu, up, conf.Addresses)
+	}
+	link, _ := netlink.LinkByName(name)
+	if w.AdapterID() != uint64(link.Attrs().Index) {
+		t.Errorf("AdapterID = %d, индекс интерфейса %d", w.AdapterID(), link.Attrs().Index)
+	}
+
+	next := testWGConfig(t, "127.0.0.1:10")
+	next.Addresses = []netip.Addr{netip.MustParseAddr("10.7.0.3")}
+	next.MTU = 1420
+	if err := w.Start(context.Background(), next); err != nil {
+		t.Fatalf("повторный Start: %v\n%s", err, rec.dump())
+	}
+	addrs, mtu, _ = linkAddrs(t, name)
+	if !slices.Equal(addrs, next.Addresses) || mtu != 1420 {
+		t.Errorf("после перенастройки: адреса %v, MTU %d; ждали %v, 1420", addrs, mtu, next.Addresses)
+	}
+	if link2, _ := netlink.LinkByName(name); link2 == nil || link2.Attrs().Index != link.Attrs().Index {
+		t.Error("перенастройка создала новый интерфейс")
+	}
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if linkExists(name) {
+		t.Error("интерфейс остался после Close")
+	}
+	t.Logf("лог:\n%s", rec.dump())
+}
+
+// MTU меньше 1280 ядро не совмещает с IPv6: адрес IPv6 не ставится, о чём
+// есть строка в логе, а подъём не падает.
+func TestTunAdapterSmallMTUNetns(t *testing.T) {
+	skipOutsideNetns(t)
+	const name = "tttest1"
+	rec := &recorder{}
+	w := NewTun(TunOptions{Name: name, Logf: rec.logf})
+	defer w.Close()
+
+	conf := testWGConfig(t, "127.0.0.1:9")
+	conf.Addresses = []netip.Addr{netip.MustParseAddr("10.7.0.2"), netip.MustParseAddr("fd00::2")}
+	conf.MTU = 1200
+	if err := w.Start(context.Background(), conf); err != nil {
+		t.Fatalf("Start: %v\n%s", err, rec.dump())
+	}
+	addrs, mtu, _ := linkAddrs(t, name)
+	if !slices.Equal(addrs, conf.Addresses[:1]) || mtu != 1200 {
+		t.Errorf("адреса %v, MTU %d; ждали только IPv4 и 1200", addrs, mtu)
+	}
+	if !strings.Contains(rec.dump(), "fd00::2 не поставлен") {
+		t.Errorf("в логе нет строки про IPv6:\n%s", rec.dump())
+	}
+}
+
+// Чужой интерфейс с именем адаптера не удаляется: Start отказывает и
+// называет его.
+func TestTunAdapterForeignLinkNetns(t *testing.T) {
+	skipOutsideNetns(t)
+	const name = "tttest2"
+	dummy := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: name}}
+	if err := netlink.LinkAdd(dummy); err != nil {
+		t.Fatal(err)
+	}
+	defer netlink.LinkDel(dummy)
+
+	w := NewTun(TunOptions{Name: name})
+	defer w.Close()
+	err := w.Start(context.Background(), testWGConfig(t, "127.0.0.1:9"))
+	if err == nil || !strings.Contains(err.Error(), "тип dummy") || !strings.Contains(err.Error(), "ip link del "+name) {
+		t.Errorf("Start при чужом интерфейсе: %v", err)
+	}
+	if !linkExists(name) {
+		t.Error("чужой интерфейс удалён")
+	}
+	// Отказ отпустил блокировку: следующая попытка её получит.
+	release, err := acquireTunLock()
+	if err != nil {
+		t.Fatalf("блокировка после отказа: %v", err)
+	}
+	release()
+}

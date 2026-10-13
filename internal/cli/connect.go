@@ -347,12 +347,12 @@ func requirementsError(describe string, req datapath.Requirements) error {
 }
 
 // requirementProblems проверяет то, что datapath просит для запуска: права
-// администратора, внешние программы и файлы рядом с бинарём.
+// администратора (root), внешние программы и файлы рядом с бинарём.
 func requirementProblems(req datapath.Requirements) []string {
 	var problems []string
 
 	if req.Admin && !isElevated() {
-		problems = append(problems, "нужны права администратора: запустите tt из консоли от имени администратора")
+		problems = append(problems, elevationHint)
 	}
 
 	for _, program := range req.Programs {

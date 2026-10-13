@@ -98,14 +98,18 @@ func NewTun(opts TunOptions) *Tun {
 	return &Tun{opts: opts, openAdapter: openTunAdapter}
 }
 
-// Requires: права администратора (адаптер создаёт драйвер), wintun.dll рядом
-// с бинарём, netguard — туннель забирает весь трафик системы — и защита DNS.
-// Вне Windows — Unsupported: Wintun там нет.
+// errTunBusy — отказ второму tt с datapath tun на той же машине.
+var errTunBusy = errors.New("адаптер уже занят: на этой машине работает другой tt с datapath tun; " +
+	"остановите его или подключитесь с -datapath socks")
+
+// Requires: права администратора (root на Linux), файлы платформы (на
+// Windows — wintun.dll рядом с бинарём), netguard — туннель забирает весь
+// трафик системы — и защита DNS. Где своего адаптера нет — Unsupported.
 func (w *Tun) Requires() Requirements {
 	return Requirements{
 		Unsupported: tunUnsupported,
 		Admin:       true,
-		Files:       []string{WintunDLL},
+		Files:       tunFiles,
 		Netguard:    true,
 		DNSGuard:    true,
 	}
