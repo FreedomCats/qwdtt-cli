@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"strings"
 	"testing"
@@ -191,9 +192,11 @@ type stepSolver struct {
 	token        string
 	err          error
 	lockedInside bool
+	called       bool
 }
 
 func (s *stepSolver) Solve(ctx context.Context, _ captcha.Request) (string, error) {
+	s.called = true
 	s.lockedInside = s.session.locked
 	if s.during != nil {
 		s.during()
@@ -368,5 +371,72 @@ func TestKillSwitchCaptchaFailures(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Внимание: kill-switch не встал: правило не встало") ||
 		strings.Contains(stdout.String(), "возвращён") {
 		t.Errorf("строки после отказа возврата: %q", stdout.String())
+	}
+}
+
+// Окно через прокси kill-switch не трогает. Прокси не поднялся — та же
+// капча в окне без прокси, со снятым kill-switch; другие ошибки окна —
+// ответ как есть, без второго окна.
+func TestProxiedCaptcha(t *testing.T) {
+	cases := []struct {
+		name       string
+		err        error
+		wantDirect bool
+	}{
+		{name: "ответ через прокси"},
+		{name: "окно закрыто", err: errors.New("окно капчи закрыто")},
+		{name: "прокси не поднялся", err: fmt.Errorf("%w: нет портов", captcha.ErrProxy), wantDirect: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &fakeLockdownSession{}
+			setup, stdout, _, err := setupKillSwitch(t, session, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			token := "токен"
+			if tc.err != nil {
+				token = ""
+			}
+			window := &stepSolver{session: session, token: token, err: tc.err}
+			direct := &stepSolver{session: session, token: "токен окна без прокси"}
+			var logged []string
+			solver := proxiedCaptcha{
+				Solver: window,
+				direct: killSwitchCaptcha{Solver: direct, guard: setup.killSwitch},
+				logf:   func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) },
+			}
+
+			got, err := solver.Solve(context.Background(), captcha.Request{})
+			if !window.lockedInside {
+				t.Error("окно через прокси сняло «закрыто»")
+			}
+			if direct.called != tc.wantDirect {
+				t.Errorf("окно без прокси открыто: %v, ожидалось: %v", direct.called, tc.wantDirect)
+			}
+			switch {
+			case tc.wantDirect:
+				if got != "токен окна без прокси" || err != nil || direct.lockedInside {
+					t.Errorf("Solve = %q, %v; «закрыто» в окне без прокси: %v", got, err, direct.lockedInside)
+				}
+				if len(logged) != 1 || !strings.Contains(logged[0], "окно капчи пойдёт в сеть само") {
+					t.Errorf("строки: %q", logged)
+				}
+			case tc.err != nil:
+				if !errors.Is(err, tc.err) {
+					t.Errorf("ошибка %v, ожидалась %v", err, tc.err)
+				}
+			default:
+				if got != token || err != nil {
+					t.Errorf("Solve = %q, %v", got, err)
+				}
+			}
+			if !session.locked {
+				t.Error("после капчи нет «закрыто»")
+			}
+			if !tc.wantDirect && strings.Contains(stdout.String(), "на время капчи") {
+				t.Errorf("kill-switch снимался: %q", stdout.String())
+			}
+		})
 	}
 }

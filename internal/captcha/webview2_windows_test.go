@@ -6,11 +6,13 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,7 +35,12 @@ import (
 // captchaNotRobot.check, ровно по нему перехватчик и узнаёт проверку.
 func stand(t *testing.T) *httptest.Server {
 	t.Helper()
+	srv := httptest.NewServer(standHandler())
+	t.Cleanup(srv.Close)
+	return srv
+}
 
+func standHandler() http.Handler {
 	page := func(script string) string {
 		return `<!doctype html><meta charset="utf-8"><title>стенд</title>` +
 			`<p>Стенд капчи tt</p><script>` + script + `</script>`
@@ -70,9 +77,7 @@ func stand(t *testing.T) *httptest.Server {
 		io.WriteString(w, page(``))
 	})
 
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return srv
+	return mux
 }
 
 func newStandSolver(t *testing.T) *WebView2 {
@@ -223,5 +228,70 @@ func TestWebView2ThroughDispatcher(t *testing.T) {
 
 	if got := answer(t, 15*time.Second); got != "token-fetch" {
 		t.Fatalf("ядро получило %q, ожидался токен со стенда", got)
+	}
+}
+
+// Окно через прокси tt (plan-e3.md, W2): страница грузится только через
+// него. Диалер уводит id.vk.com:443 на стенд с TLS — токен со стенда
+// значит, что окно ходило через прокси, а не к настоящей VK. Сертификат
+// стенда браузеру разрешается своим аргументом в той же переменной, что и
+// прокси, — заодно видно, что значение пользователя не затирается.
+func TestWebView2Proxy(t *testing.T) {
+	s := newStandSolver(t)
+	srv := httptest.NewTLSServer(standHandler())
+	t.Cleanup(srv.Close)
+	t.Setenv(browserArgsEnv, "--ignore-certificate-errors")
+
+	var mu sync.Mutex
+	var asked []string
+	s.opts.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		mu.Lock()
+		asked = append(asked, address)
+		mu.Unlock()
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", srv.Listener.Addr().String())
+	}
+	before := profilesNow()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	token, err := s.Solve(ctx, standRequest("https://id.vk.com/fetch", 30*time.Second))
+	if err != nil {
+		t.Fatalf("Solve: %v", err)
+	}
+	if token != "token-fetch" {
+		t.Fatalf("токен %q, ожидался со стенда", token)
+	}
+	mu.Lock()
+	if len(asked) == 0 || asked[0] != "id.vk.com:443" {
+		t.Errorf("через прокси: %q", asked)
+	}
+	mu.Unlock()
+	if got := os.Getenv(browserArgsEnv); got != "--ignore-certificate-errors" {
+		t.Errorf("%s после окна = %q", browserArgsEnv, got)
+	}
+	waitProfilesGone(t, before)
+}
+
+func TestSetBrowserArgs(t *testing.T) {
+	t.Setenv(browserArgsEnv, "")
+	os.Unsetenv(browserArgsEnv)
+	restore := setBrowserArgs("--proxy-server=http://127.0.0.1:1")
+	if got := os.Getenv(browserArgsEnv); got != "--proxy-server=http://127.0.0.1:1" {
+		t.Errorf("без своего значения: %q", got)
+	}
+	restore()
+	if _, ok := os.LookupEnv(browserArgsEnv); ok {
+		t.Error("переменная осталась после restore")
+	}
+
+	t.Setenv(browserArgsEnv, "--lang=ru")
+	restore = setBrowserArgs("--proxy-server=http://127.0.0.1:1")
+	if got := os.Getenv(browserArgsEnv); got != "--lang=ru --proxy-server=http://127.0.0.1:1" {
+		t.Errorf("со своим значением: %q", got)
+	}
+	restore()
+	if got := os.Getenv(browserArgsEnv); got != "--lang=ru" {
+		t.Errorf("своё значение после restore: %q", got)
 	}
 }

@@ -56,7 +56,23 @@ type WebView2Options struct {
 	// Out — куда уходит сообщение, что окно открыто. nil — os.Stderr.
 	// Как у консольного решателя, это stderr: stdout у CLI занят результатом.
 	Out io.Writer
+
+	// Dial, если задан, — окно ходит в сеть только через локальный прокси
+	// tt (proxy.go), а он соединяется этой функцией. Так при kill-switch
+	// страница грузится сокетами tt, которые он пропускает (plan-e3.md, W2).
+	// Прокси не поднялся — Solve отказывает с ErrProxy, окна не открыв.
+	Dial DialFunc
+
+	// Logf — строки прокси (отказы); nil — молчать.
+	Logf func(format string, args ...any)
 }
+
+// browserArgsEnv — переменная окружения, из которой WebView2 берёт
+// аргументы своего браузера. go-webview2 опций окружения не передаёт
+// (environmentOptions = 0), так что это единственный путь задать прокси.
+// Читается при создании окна: у окна свой профиль, значит, и свой экземпляр
+// msedgewebview2.exe, и аргументы действуют только на него.
+const browserArgsEnv = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
 
 // WebView2 — решатель с окном WebView2.
 type WebView2 struct {
@@ -102,8 +118,22 @@ type outcome struct {
 // Возвращается сразу, как только исход известен: токен ядру нужен сейчас,
 // а окно закрывается и профиль убирается уже без нас.
 func (s *WebView2) Solve(ctx context.Context, req Request) (string, error) {
+	var proxy *Proxy
+	if s.opts.Dial != nil {
+		var err error
+		if proxy, err = StartProxy(s.opts.Dial, s.opts.Logf); err != nil {
+			return "", err
+		}
+		if s.opts.Logf != nil {
+			s.opts.Logf("[CAPTCHA] окно капчи идёт в сеть через прокси tt %s", proxy.Addr())
+		}
+	}
+
 	profile, err := os.MkdirTemp("", profilePrefix+"*")
 	if err != nil {
+		if proxy != nil {
+			proxy.Close()
+		}
 		return "", fmt.Errorf("каталог профиля WebView2: %w", err)
 	}
 
@@ -130,6 +160,10 @@ func (s *WebView2) Solve(ctx context.Context, req Request) (string, error) {
 			return
 		}
 
+		var restoreArgs func()
+		if proxy != nil {
+			restoreArgs = setBrowserArgs("--proxy-server=http://" + proxy.Addr())
+		}
 		w := webview2.NewWithOptions(webview2.WebViewOptions{
 			DataPath: profile,
 			WindowOptions: webview2.WindowOptions{
@@ -139,6 +173,11 @@ func (s *WebView2) Solve(ctx context.Context, req Request) (string, error) {
 				Center: true,
 			},
 		})
+		// Браузер окна к этому моменту запущен со своей строкой: переменная
+		// больше не нужна, и детям tt её видеть незачем.
+		if restoreArgs != nil {
+			restoreArgs()
+		}
 		if w == nil {
 			report(outcome{err: errors.New("окно WebView2 не открылось")})
 			return
@@ -175,9 +214,13 @@ func (s *WebView2) Solve(ctx context.Context, req Request) (string, error) {
 	}()
 
 	// Профиль убирается, когда окно закрыто, и не раньше: до этого его файлы
-	// держит msedgewebview2.exe.
+	// держит msedgewebview2.exe. Прокси — тогда же: окну он нужен, пока оно
+	// открыто, а не пока ждём токен.
 	go func() {
 		<-done
+		if proxy != nil {
+			proxy.Close()
+		}
 		removeProfile(profile)
 	}()
 
@@ -205,6 +248,25 @@ func (s *WebView2) Solve(ctx context.Context, req Request) (string, error) {
 		return "", errors.New("окно капчи закрыто")
 	case <-ctx.Done():
 		return "", ctx.Err()
+	}
+}
+
+// setBrowserArgs добавляет args к аргументам браузера WebView2 и возвращает,
+// чем вернуть прежнее значение. Своё значение пользователя сохраняется: наши
+// аргументы идут после, а из повторов Chromium берёт последний.
+func setBrowserArgs(args string) (restore func()) {
+	before, had := os.LookupEnv(browserArgsEnv)
+	value := args
+	if strings.TrimSpace(before) != "" {
+		value = before + " " + args
+	}
+	_ = os.Setenv(browserArgsEnv, value)
+	return func() {
+		if had {
+			_ = os.Setenv(browserArgsEnv, before)
+		} else {
+			_ = os.Unsetenv(browserArgsEnv)
+		}
 	}
 }
 

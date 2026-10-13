@@ -15,7 +15,9 @@ import (
 
 // WebView2Options — настройки решателя с окном. См. webview2_windows.go.
 type WebView2Options struct {
-	Out io.Writer
+	Out  io.Writer
+	Dial DialFunc
+	Logf func(format string, args ...any)
 }
 
 // WebView2 — решатель с окном; вне Windows его не бывает.

@@ -13,6 +13,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"sync"
 
@@ -172,9 +173,8 @@ func (g *killSwitchGuard) BlockIPv6(block bool) {
 
 // killSwitchCaptcha — решатель капчи при kill-switch: на время Solve
 // правила сняты (plan-e3.md, решение 1). Решатель о сети не знает, поэтому
-// обёртка — здесь. Окно WebView2 пока оборачивается так же: его сеть
-// делает msedgewebview2.exe, и при «закрыто» страница не загрузится. С W2
-// оно пойдёт через прокси tt, и обёртка ему станет не нужна.
+// обёртка — здесь. Окно WebView2 так оборачивается, только если прокси tt
+// для него не поднялся (proxiedCaptcha).
 type killSwitchCaptcha struct {
 	captcha.Solver
 	guard *killSwitchGuard
@@ -184,4 +184,22 @@ func (s killSwitchCaptcha) Solve(ctx context.Context, req captcha.Request) (stri
 	s.guard.openForCaptcha()
 	defer s.guard.closeAfterCaptcha()
 	return s.Solver.Solve(ctx, req)
+}
+
+// proxiedCaptcha — окно WebView2 через прокси tt (plan-e3.md, W2): kill-switch
+// не снимается. Прокси не поднялся (captcha.ErrProxy, окно не открывалось) —
+// та же капча решается в direct: окне без прокси, со снятым kill-switch.
+type proxiedCaptcha struct {
+	captcha.Solver
+	direct captcha.Solver
+	logf   func(string, ...any)
+}
+
+func (s proxiedCaptcha) Solve(ctx context.Context, req captcha.Request) (string, error) {
+	token, err := s.Solver.Solve(ctx, req)
+	if !errors.Is(err, captcha.ErrProxy) {
+		return token, err
+	}
+	s.logf("Внимание: %v — окно капчи пойдёт в сеть само", err)
+	return s.direct.Solve(ctx, req)
 }

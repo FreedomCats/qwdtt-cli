@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
+	"net"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -397,34 +397,42 @@ func TestConnectStopsOnCancelledContext(t *testing.T) {
 }
 
 // windowSolver — подставной решатель с окном: captchaSolver должен отдать
-// именно его, а не консольный.
-type windowSolver struct{}
+// именно его, а не консольный. proxied — собран с Dial (окно через прокси).
+type windowSolver struct{ proxied bool }
 
 func (windowSolver) Solve(context.Context, captcha.Request) (string, error) { return "", nil }
 func (windowSolver) NeedsHuman() bool                                       { return true }
 
 func TestCaptchaSolverChoice(t *testing.T) {
-	window := func(io.Writer) (captcha.Solver, error) { return windowSolver{}, nil }
-	missing := func(io.Writer) (captcha.Solver, error) {
+	window := func(opts captcha.WebView2Options) (captcha.Solver, error) {
+		return windowSolver{proxied: opts.Dial != nil}, nil
+	}
+	missing := func(captcha.WebView2Options) (captcha.Solver, error) {
 		return nil, errors.New("WebView2 Runtime не установлен")
 	}
-	unsupported := func(io.Writer) (captcha.Solver, error) {
+	unsupported := func(captcha.WebView2Options) (captcha.Solver, error) {
 		return nil, fmt.Errorf("окно капчи есть только на Windows: %w", errors.ErrUnsupported)
 	}
+	dial := (&net.Dialer{}).DialContext
 
 	cases := []struct {
 		name       string
-		window     func(io.Writer) (captcha.Solver, error)
+		window     func(captcha.WebView2Options) (captcha.Solver, error)
 		ssh        bool
 		killSwitch bool
+		dial       captcha.DialFunc
 		wantWindow bool
+		wantProxy  bool
 		wantWarn   bool
 	}{
 		{name: "окно есть", window: window, wantWindow: true},
-		// До W2 окно WebView2 тоже снимает kill-switch на время капчи.
-		{name: "окно есть, kill-switch", window: window, killSwitch: true, wantWindow: true},
+		// Без kill-switch прокси не нужен, даже если есть чем соединяться.
+		{name: "окно есть, без kill-switch, диалер", window: window, dial: dial, wantWindow: true},
+		{name: "окно есть, kill-switch", window: window, killSwitch: true, dial: dial, wantWindow: true, wantProxy: true},
+		// Нечем соединяться — окно само, со снятием kill-switch.
+		{name: "окно есть, kill-switch, без диалера", window: window, killSwitch: true, wantWindow: true},
 		{name: "окна не заводили", window: nil},
-		{name: "окна не заводили, kill-switch", window: nil, killSwitch: true},
+		{name: "окна не заводили, kill-switch", window: nil, killSwitch: true, dial: dial},
 		{name: "нет Runtime", window: missing, wantWarn: true},
 		{name: "не Windows", window: unsupported},
 		{name: "по SSH", window: window, ssh: true},
@@ -443,7 +451,21 @@ func TestCaptchaSolverChoice(t *testing.T) {
 			if tc.killSwitch {
 				ks = &killSwitchGuard{session: &fakeLockdownSession{}, logf: func(string, ...any) {}}
 			}
-			solver := captchaSolver(e, newPrinter(&out, false), ks)
+			solver := captchaSolver(e, newPrinter(&out, false), ks, tc.dial)
+
+			// Окно через прокси kill-switch не снимает; снимает его запасное
+			// окно без прокси.
+			proxied, isProxied := solver.(proxiedCaptcha)
+			if isProxied != tc.wantProxy {
+				t.Fatalf("решатель %T, окно через прокси ожидалось: %v", solver, tc.wantProxy)
+			}
+			if isProxied {
+				if w, ok := proxied.Solver.(windowSolver); !ok || !w.proxied {
+					t.Errorf("окно через прокси: %#v", proxied.Solver)
+				}
+				solver = proxied.direct
+			}
+
 			if wrapped, ok := solver.(killSwitchCaptcha); ok {
 				if !tc.killSwitch || wrapped.guard != ks {
 					t.Errorf("обёртка kill-switch: %+v, kill-switch: %v", wrapped, tc.killSwitch)
@@ -453,9 +475,12 @@ func TestCaptchaSolverChoice(t *testing.T) {
 				t.Errorf("решатель %T не снимает kill-switch на время капчи", solver)
 			}
 
-			_, isWindow := solver.(windowSolver)
+			w, isWindow := solver.(windowSolver)
 			if isWindow != tc.wantWindow {
 				t.Errorf("решатель %T, окно ожидалось: %v", solver, tc.wantWindow)
+			}
+			if isWindow && w.proxied {
+				t.Error("окно без обёртки прокси собрано с Dial")
 			}
 			if _, isConsole := solver.(*captcha.Manual); !tc.wantWindow && !isConsole {
 				t.Errorf("решатель %T, ожидался консольный", solver)

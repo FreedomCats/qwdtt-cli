@@ -14,7 +14,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -410,10 +410,12 @@ func requirementProblems(req datapath.Requirements) []string {
 //
 // Сообщения обоих уходят в stderr через out.aside, чтобы статусная строка
 // не встала посреди приглашения; консольный читает ответ со stdin команды.
-// При kill-switch (ks не nil) оба снимают его на время капчи: страницу
-// открывает браузер пользователя или msedgewebview2.exe, а не tt
-// (plan-e3.md, K4; окно — до W2).
-func captchaSolver(e *env, out *printer, ks *killSwitchGuard) captcha.Solver {
+//
+// При kill-switch (ks не nil) консольный снимает его на время капчи: страницу
+// открывает браузер пользователя, а не tt (plan-e3.md, K4). Окно WebView2
+// ходит через прокси tt, соединяясь dial (сокетами tt мимо туннеля, W2), и
+// kill-switch не трогает; не поднялся прокси — окно без него, тоже со снятием.
+func captchaSolver(e *env, out *printer, ks *killSwitchGuard, dial captcha.DialFunc) captcha.Solver {
 	wrap := func(s captcha.Solver) captcha.Solver {
 		if ks == nil {
 			return s
@@ -431,7 +433,11 @@ func captchaSolver(e *env, out *printer, ks *killSwitchGuard) captcha.Solver {
 		return console
 	}
 
-	window, err := e.captchaWindow(out.aside(e.stderr))
+	opts := captcha.WebView2Options{Out: out.aside(e.stderr)}
+	if out.verbose {
+		opts.Logf = out.logf
+	}
+	window, err := e.captchaWindow(opts)
 	if err != nil {
 		// Вне Windows окна и не ждут — предупреждать не о чем.
 		if !errors.Is(err, errors.ErrUnsupported) {
@@ -439,13 +445,21 @@ func captchaSolver(e *env, out *printer, ks *killSwitchGuard) captcha.Solver {
 		}
 		return console
 	}
-	return wrap(window)
+	if ks == nil || dial == nil {
+		return wrap(window)
+	}
+	opts.Dial = dial
+	proxied, err := e.captchaWindow(opts)
+	if err != nil {
+		return wrap(window)
+	}
+	return proxiedCaptcha{Solver: proxied, direct: wrap(window), logf: out.logf}
 }
 
 // newCaptchaWindow — настоящий решатель с окном для env.captchaWindow.
 // Отдельной функцией, чтобы не вернуть типизированный nil в интерфейсе.
-func newCaptchaWindow(out io.Writer) (captcha.Solver, error) {
-	window, err := captcha.NewWebView2(captcha.WebView2Options{Out: out})
+func newCaptchaWindow(opts captcha.WebView2Options) (captcha.Solver, error) {
+	window, err := captcha.NewWebView2(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -506,13 +520,6 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 		plan.dnsGuard, killSwitch = setup.guard, setup.killSwitch
 	}
 
-	// Ручка ядра создаётся до запуска и раздаётся обоим, кому она нужна:
-	// циклу подключения и диспетчеру капчи, который отвечает через неё.
-	ctrl := core.NewControl()
-
-	dispatcher := captcha.New(captcha.Options{Solver: captchaSolver(e, out, killSwitch), Control: ctrl, Logf: out.logf})
-	defer dispatcher.Close()
-
 	cfg := plan.cfg
 	var guard *netguard.Guard
 	if req.Netguard || netguardForced() {
@@ -529,6 +536,20 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 		}
 		cfg.DialControl = guard.Control
 	}
+
+	// Ручка ядра создаётся до запуска и раздаётся обоим, кому она нужна:
+	// циклу подключения и диспетчеру капчи, который отвечает через неё.
+	ctrl := core.NewControl()
+
+	// Окно капчи при kill-switch ходит сокетами tt: тем же хуком netguard,
+	// что и ядро, и его же резолвером (net.DefaultResolver ядро подменяет
+	// при запуске, а Dialer без Resolver берёт его в момент соединения).
+	var captchaDial captcha.DialFunc
+	if killSwitch != nil && guard != nil {
+		captchaDial = (&net.Dialer{Control: guard.Control}).DialContext
+	}
+	dispatcher := captcha.New(captcha.Options{Solver: captchaSolver(e, out, killSwitch, captchaDial), Control: ctrl, Logf: out.logf})
+	defer dispatcher.Close()
 	var own ownAdapter
 	tun, err := supervisor.NewTunnel(supervisor.Options{
 		Config: cfg,

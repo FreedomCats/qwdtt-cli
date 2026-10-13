@@ -57,7 +57,7 @@ type env struct {
 	// captchaWindow собирает решатель капчи с окном. Пусто — только консольный;
 	// так в тестах, где окна не открывают. Ошибка — окна не будет, и это
 	// не повод не подключаться: см. captchaSolver.
-	captchaWindow func(out io.Writer) (captcha.Solver, error)
+	captchaWindow func(opts captcha.WebView2Options) (captcha.Solver, error)
 	// lines — буферизованный stdin. Заводится при первом чтении строки.
 	lines *bufio.Reader
 }
