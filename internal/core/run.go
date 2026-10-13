@@ -36,7 +36,12 @@ const pingStreamID = 999
 //
 // sink получает события из горутин воркеров, поэтому обязан быть безопасным для
 // параллельного вызова; см. Sink. Назначается он первым делом: до этого ядро немо.
-func Run(ctx context.Context, cfg Config, sink Sink) error {
+//
+// ctrl — ручка управления запущенным ядром: пауза, ответ на капчу, ответ на
+// запрос TURN-кредов (см. Control). Её создаёт вызывающий, потому что Run
+// возвращается только вместе с туннелем и отдать её сам не успел бы. nil
+// допустим и означает, что управлять ядром не понадобится.
+func Run(ctx context.Context, cfg Config, sink Sink, ctrl *Control) error {
 	setSink(sink)
 
 	cfg.Normalize()
@@ -104,13 +109,16 @@ func Run(ctx context.Context, cfg Config, sink Sink) error {
 		serveConfig(runCtx, &cfg, configCh)
 	}()
 
-	// pauseFlag читают все воркеры разом. В апстриме им управляли команды PAUSE
-	// и RESUME из stdin; в задаче B5 на его место встанет Control, и указатель
-	// обязан остаться тем же самым — воркерам он раздаётся один раз при старте.
-	var pauseFlag int32
+	// Флаг паузы читают все воркеры разом, и раздаётся он один раз, при старте
+	// групп. Поэтому он живёт в Control, а не здесь: указатель, который получат
+	// воркеры, и тот, которым управляет Pause, обязаны быть одним и тем же.
+	// Без Control флаг всё равно нужен — воркеры читают его безусловно.
+	if ctrl == nil {
+		ctrl = NewControl()
+	}
 
 	var wg sync.WaitGroup
-	startWorkers(runCtx, &wg, &cfg, tp, peer, disp, stats, localPort, configCh, &pauseFlag)
+	startWorkers(runCtx, &wg, &cfg, tp, peer, disp, stats, localPort, configCh, ctrl.pauseFlag())
 
 	wg.Wait()
 	close(configCh)

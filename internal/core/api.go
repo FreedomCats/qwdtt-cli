@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 )
 
 const (
@@ -253,4 +254,133 @@ func (c *Config) Validate() error {
 		return nil
 	}
 	return errors.New("настройки подключения: " + strings.Join(problems, "; "))
+}
+
+// ─────────────────────────── управление ───────────────────────────
+
+// Control — управление уже работающим ядром; заменяет команды stdin.
+//
+// Апстрим читал из stdin пять команд: PAUSE, RESUME, STOP, CAPTCHA_RESULT| и
+// TURN_CREDS|. STOP здесь нет намеренно — его роль играет отмена ctx, переданного
+// в Run. Остальные четыре стали методами.
+//
+// Control создаётся до запуска и передаётся в Run четвёртым аргументом. Так, а не
+// возвратом из Run: Run возвращается вместе с туннелем, то есть за ручкой
+// управления было бы поздно приходить. И не полем Config: Config — настройки,
+// его копируют, приводят к канону и в задаче C1 будут читать из профиля, а
+// Control — живая ручка с состоянием, общим у нескольких горутин.
+//
+// Все методы безопасны для параллельного вызова и не блокируются: ни один из них
+// не ждёт, пока ядро прочитает переданное. Вызов на nil-ручке — не падение, а
+// ничего: Run без Control работает, просто управлять им нечем.
+//
+// Один Control — один Run. Ограничение идёт не от него, а от ядра: канал капчи и
+// креды VK живут пакетными переменными, поэтому и Run в процессе может быть
+// только один (см. applyGlobals).
+type Control struct {
+	// pause читают все воркеры разом через atomic.LoadInt32, поэтому Run
+	// раздаёт им указатель на это поле, а не значение.
+	pause int32
+}
+
+// NewControl возвращает ручку управления для будущего запуска.
+//
+// Пауза, выставленная до Run, действует с самого старта: группа проверяет флаг
+// прежде, чем идти за кредами.
+func NewControl() *Control { return &Control{} }
+
+// Pause придерживает группы воркеров, которые ещё не пошли за кредами VK.
+//
+// Уже поднятый туннель пауза не рвёт и трафик через него не останавливает —
+// в апстриме эта команда приходила от Android при уходе в doze-режим, где
+// незачем начинать новые сессии, а старым никто не мешает. Обещать большее
+// было бы неправдой: флаг проверяется в одном месте, перед запросом кредов
+// (group.go).
+//
+// Вызов повторной паузы ничего не меняет.
+func (c *Control) Pause() {
+	if c == nil {
+		return
+	}
+	atomic.StoreInt32(&c.pause, 1)
+}
+
+// Resume снимает паузу: придержанные группы пойдут за кредами в течение секунды
+// (интервал проверки флага). Снятие непоставленной паузы ничего не меняет.
+func (c *Control) Resume() {
+	if c == nil {
+		return
+	}
+	atomic.StoreInt32(&c.pause, 0)
+}
+
+// pauseFlag отдаёт Run указатель, который тот раздаёт воркерам. Указатель, а не
+// значение: флаг раздаётся один раз при старте групп и дальше только читается.
+func (c *Control) pauseFlag() *int32 { return &c.pause }
+
+// SubmitCaptcha отдаёт ядру токен решённой капчи — ответ на EventCaptchaRequired.
+//
+// Пустой токен означает «решить не удалось»: ядро засчитает попытку провальной
+// и пойдёт дальше своей цепочкой (captchaPlan) или сдастся. Молчание тоже
+// работает — ядро ждёт ответа с таймаутом, — но стоит минуты ожидания.
+//
+// Токен, которого никто не ждёт, остаётся в канале и будет выброшен перед
+// следующим запросом капчи. Так же вёл себя и апстрим: перед каждым ожиданием
+// он чистит канал от несвежих ответов.
+func (c *Control) SubmitCaptcha(token string) {
+	if c == nil {
+		return
+	}
+	if strings.TrimSpace(token) == "" {
+		token = "error:cancelled"
+	}
+	drainCaptchaResult()
+	select {
+	case CaptchaResultChan <- token:
+	default:
+	}
+}
+
+// TurnCreds — учётные данные TURN, добытые живым аккаунтом VK. Нужны только
+// в режиме VkAuthAccount, где ядро само их получить не может.
+type TurnCreds struct {
+	// Link — ссылка на звонок, для которого креды добыты; та же, что пришла
+	// в EventVkAuthRequired. Под ней ядро их и запомнит.
+	Link string
+	// Username и Password — учётные данные TURN-relay.
+	Username string
+	Password string
+	// URLs — адреса relay в виде turn:host:port или host:port.
+	URLs []string
+}
+
+// SubmitTurnCreds отдаёт ядру TURN-креды — ответ на EventVkAuthRequired.
+//
+// Креды запоминаются под ссылкой на звонок и живут accountCredsLifetime, поэтому
+// отданные заранее пригодятся и той группе, которая спросит их позже.
+//
+// Неполные креды (нет ссылки, логина, пароля или адресов) читаются как отказ:
+// ожидающая группа сразу получит ошибку вместо того, чтобы стоять до таймаута
+// в пять минут. Апстрим различал отказ и мусор — на отказ у него была отдельная
+// строка stdin, TURN_CREDS|error:, а мусор он молча выбрасывал; здесь такого
+// различия нет, потому что отдаёт креды не Android, а наш же CLI.
+func (c *Control) SubmitTurnCreds(creds TurnCreds) {
+	if c == nil {
+		return
+	}
+
+	link := strings.TrimSpace(creds.Link)
+	urls := turnURLsToAddresses(creds.URLs)
+
+	payload := turnCredsPayload{}
+	if link != "" && creds.Username != "" && creds.Password != "" && len(urls) > 0 {
+		injectTurnCreds(link, creds.Username, creds.Password, urls)
+		payload = turnCredsPayload{User: creds.Username, Pass: creds.Password, URLs: urls}
+	}
+
+	drainTurnCredsResult()
+	select {
+	case TurnCredsResultChan <- payload:
+	default:
+	}
 }

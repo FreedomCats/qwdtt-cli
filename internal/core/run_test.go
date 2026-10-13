@@ -13,7 +13,7 @@ import (
 func TestRunRejectsInvalidConfig(t *testing.T) {
 	rec := install(t)
 
-	err := Run(context.Background(), Config{}, rec)
+	err := Run(context.Background(), Config{}, rec, nil)
 	if err == nil {
 		t.Fatal("Run с пустыми настройками вернул nil")
 	}
@@ -62,7 +62,7 @@ func TestRunSetsSinkBeforeAnythingElse(t *testing.T) {
 	t.Cleanup(func() { setSink(nil) })
 
 	rec := &recorder{}
-	if err := Run(context.Background(), Config{}, rec); err == nil {
+	if err := Run(context.Background(), Config{}, rec, nil); err == nil {
 		t.Fatal("Run с пустыми настройками вернул nil")
 	}
 
