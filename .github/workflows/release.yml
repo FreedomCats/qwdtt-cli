@@ -1,0 +1,140 @@
+# Релиз: тесты на Windows, сборка scripts/build-release.ps1 и черновик
+# GitHub Release с архивами и SHA256SUMS.txt.
+#
+# Тег v* — сборка и черновик релиза с этим тегом; опубликовать черновик —
+# вручную, на странице Releases. Ручной запуск (workflow_dispatch) только
+# собирает: архивы остаются артефактом прогона, релиз не создаётся.
+#
+# Сборка идёт на Windows: там fetch-wintun.ps1 проверяет и хеш архива Wintun,
+# и подпись wintun.dll (Get-AuthenticodeSignature есть только на Windows).
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/windows.yml
+
+  build:
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      # Вся история с тегами: без неё git describe в build-release.ps1
+      # не найдёт тег при ручном запуске.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: build-release.ps1
+        shell: pwsh
+        run: |
+          $params = @{}
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { $params.Version = $env:GITHUB_REF_NAME }
+          ./scripts/build-release.ps1 @params
+
+      # В архиве — всё, что нужно для запуска у пользователя: без wintun.dll
+      # не работает режим tun, без README не понять, с чего начать. Список
+      # тот же, что в build-release.ps1; выпал файл — релиза нет. tt.exe из
+      # распакованного zip запускается, у tt в tar.gz — право на исполнение.
+      - name: Состав архивов
+        shell: pwsh
+        run: |
+          $docs = 'THIRD_PARTY_NOTICES.txt', 'tt.example.toml', 'LICENSE', 'README.md'
+          $failed = $false
+          function Test-Files([string] $Archive, [string[]] $Got, [string[]] $Want) {
+              $missing = $Want | Where-Object { $Got -notcontains $_ }
+              if ($missing) {
+                  Write-Host "::error::$Archive — нет файлов: $($missing -join ', ')"
+                  $script:failed = $true
+              }
+              else { Write-Host "$Archive — $($Got -join ', ')" }
+          }
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          foreach ($zip in Get-ChildItem dist -Filter *.zip) {
+              $z = [System.IO.Compression.ZipFile]::OpenRead($zip.FullName)
+              try { $names = @($z.Entries.FullName) } finally { $z.Dispose() }
+              Test-Files $zip.Name $names (@('tt.exe', 'wintun.dll', 'wintun-LICENSE.txt') + $docs)
+
+              $unpacked = Join-Path $env:RUNNER_TEMP $zip.BaseName
+              Expand-Archive -Force $zip.FullName $unpacked
+              & (Join-Path $unpacked 'tt.exe') version
+              if ($LASTEXITCODE -ne 0) {
+                  Write-Host "::error::$($zip.Name) — tt.exe version завершился с кодом $LASTEXITCODE"
+                  $failed = $true
+              }
+          }
+
+          # Путь к архиву — относительный: GNU tar прочёл бы «C:\…» как хост:файл.
+          Set-Location dist
+          foreach ($tgz in Get-ChildItem -Filter *.tar.gz) {
+              $prefix = $tgz.Name -replace '\.tar\.gz$', ''
+              $listing = & tar -tvzf $tgz.Name
+              if ($LASTEXITCODE -ne 0) { throw "tar не прочитал $($tgz.Name)" }
+              $names = @(& tar -tzf $tgz.Name | ForEach-Object { $_ -replace "^$([regex]::Escape($prefix))/", '' } | Where-Object { $_ })
+              Test-Files $tgz.Name $names (@('tt') + $docs)
+              if (-not ($listing | Where-Object { $_ -match '^-rwxr-xr-x' -and $_ -match "/tt$" })) {
+                  Write-Host "::error::$($tgz.Name) — у tt нет права на исполнение"
+                  $failed = $true
+              }
+          }
+
+          if ($failed) { exit 1 }
+
+      # Переводы строк — LF: так файл проверяет и `sha256sum -c` на Linux.
+      - name: SHA256SUMS.txt
+        shell: pwsh
+        run: |
+          $lines = Get-ChildItem dist -File | Sort-Object Name | ForEach-Object {
+              '{0}  {1}' -f (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant(), $_.Name
+          }
+          [System.IO.File]::WriteAllText((Join-Path $PWD 'dist/SHA256SUMS.txt'), ($lines -join "`n") + "`n")
+          Get-Content dist/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+  # Право на запись — только у этого задания: оно не запускает ни кода
+  # репозитория, ни скачанного, только выкладывает готовые архивы.
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+
+      - name: Черновик релиза
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --verify-tag \
+            --title "$TAG" \
+            --generate-notes
