@@ -55,6 +55,10 @@ type Socks struct {
 	// done закрывается в Close и снимает сторожа отмены ctx: без него горутина
 	// сторожа жила бы до конца процесса, если ctx не отменяют вовсе.
 	done chan struct{}
+
+	// closeOnce и closeErr — уборка один раз, ожидание всеми (см. Close).
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // NewSocks готовит datapath. Сеть не трогается до Start.
@@ -170,13 +174,15 @@ func (s *Socks) Start(ctx context.Context, conf *WGConfig) error {
 }
 
 // Close останавливает SOCKS5 и WireGuard. Безопасен до Start и при повторном
-// вызове: супервизор зовёт его из defer.
+// вызове: супервизор зовёт его из defer. Одновременный вызов ждёт конца
+// первого (контракт Datapath.Close).
 func (s *Socks) Close() error {
+	s.closeOnce.Do(func() { s.closeErr = s.close() })
+	return s.closeErr
+}
+
+func (s *Socks) close() error {
 	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return nil
-	}
 	s.closed = true
 	ln, dev := s.ln, s.dev
 	s.ln, s.dev = nil, nil

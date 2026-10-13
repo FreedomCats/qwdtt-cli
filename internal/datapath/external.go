@@ -79,6 +79,10 @@ type External struct {
 
 	// done закрывается в Close и снимает сторожа отмены ctx.
 	done chan struct{}
+
+	// closeOnce и closeErr — снятие один раз, ожидание всеми (см. Close).
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // NewExternal готовит datapath. Программа ищется сразу, сеть и служба
@@ -205,12 +209,26 @@ func (e *External) Start(ctx context.Context, conf *WGConfig) error {
 //
 // Служба обязана быть снята, иначе после выхода tt в системе останется
 // туннель в никуда; поэтому снятие идёт со своим сроком (см. uninstall).
+//
+// Снятие делается один раз, а все вызовы ждут его конца и возвращают его
+// ошибку. Иначе была гонка (найдена живым прогоном N4 Э2): по отмене ctx
+// первым в Close входит сторож из Start, defer супервизора получал nil
+// сразу, процесс выходил, а горутина сторожа гибла между снятием службы
+// и удалением файла — служба снята, а файл с приватным ключом остался.
+// Ошибку Close пишет в лог сам: супервизор её отбрасывает, а человеку
+// нужна подсказка, что снимать вручную.
 func (e *External) Close() error {
+	e.closeOnce.Do(func() {
+		e.closeErr = e.close()
+		if e.closeErr != nil {
+			e.logf("[WG-EXT] ошибка остановки: %v", e.closeErr)
+		}
+	})
+	return e.closeErr
+}
+
+func (e *External) close() error {
 	e.mu.Lock()
-	if e.closed {
-		e.mu.Unlock()
-		return nil
-	}
 	e.closed = true
 	installed := e.installed
 	e.installed = false

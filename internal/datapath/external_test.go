@@ -21,6 +21,7 @@ const (
 	ttFakeWireGuard = "TT_FAKE_WIREGUARD" // журнал вызовов; непусто — работать подставным wireguard.exe
 	ttFakeExit      = "TT_FAKE_EXIT"      // код возврата подставной программы
 	ttFakeHang      = "TT_FAKE_HANG"      // непусто — зависнуть, чтобы проверить срок ожидания
+	ttFakeSlowStop  = "TT_FAKE_SLOW_STOP" // непусто — снимать службу полсекунды, как настоящий
 )
 
 func TestMain(m *testing.M) {
@@ -39,6 +40,9 @@ func fakeWireGuard(journal string) int {
 		time.Sleep(10 * time.Second)
 	}
 	args := os.Args[1:]
+	if os.Getenv(ttFakeSlowStop) != "" && len(args) > 0 && args[0] == "/uninstalltunnelservice" {
+		time.Sleep(500 * time.Millisecond)
+	}
 	line := strings.Join(args, " ")
 	if len(args) == 2 && args[0] == "/installtunnelservice" {
 		data, err := os.ReadFile(args[1])
@@ -342,6 +346,35 @@ func TestExternalRequires(t *testing.T) {
 	}
 	if err := missing.Start(context.Background(), parsedServerConfig(t)); err == nil {
 		t.Error("Start без программы прошёл")
+	}
+}
+
+// Отмена ctx и defer супервизора зовут Close одновременно, и сторож из Start
+// успевает первым. Второй вызов обязан дождаться конца уборки: раньше он
+// сразу возвращал nil, процесс выходил, и файл с приватным ключом оставался
+// на диске при уже снятой службе (живой прогон N4 Э2).
+func TestExternalConcurrentCloseWaits(t *testing.T) {
+	x := newExternalEnv(t)
+	t.Setenv(ttFakeSlowStop, "1")
+	dp := x.datapath(ExternalOptions{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := dp.Start(ctx, parsedServerConfig(t)); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	cancel()
+	// Сторож входит в Close и запускает медленное снятие службы.
+	time.Sleep(100 * time.Millisecond)
+
+	if err := dp.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if _, err := os.Stat(x.confPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Close вернулся до конца уборки — файл конфига на месте: %v", err)
+	}
+	calls := x.calls()
+	if len(calls) != 2 || calls[1] != "/uninstalltunnelservice tt" {
+		t.Errorf("Close вернулся до снятия службы или снял её дважды:\n%s", strings.Join(calls, "\n"))
 	}
 }
 
