@@ -42,6 +42,11 @@ const pingStreamID = 999
 // возвращается только вместе с туннелем и отдать её сам не успел бы. nil
 // допустим и означает, что управлять ядром не понадобится.
 func Run(ctx context.Context, cfg Config, sink Sink, ctrl *Control) error {
+	// Готовый канал принадлежит Run целиком: закрыть его нужно и тогда, когда
+	// до запуска дело не дошло, — иначе он висит до следующей попытки.
+	if cfg.PacketConn != nil {
+		defer func() { _ = cfg.PacketConn.Close() }()
+	}
 	setSink(sink)
 
 	cfg.Normalize()
@@ -67,10 +72,9 @@ func Run(ctx context.Context, cfg Config, sink Sink, ctrl *Control) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Слушаем локально (SO_REUSEADDR — быстрый перезапуск без «address already in use»).
-	localConn, err := listenUDP(cfg.Listen)
+	localConn, err := openLocal(&cfg)
 	if err != nil {
-		return fmt.Errorf("локальный слушатель %s: %w", cfg.Listen, err)
+		return err
 	}
 	// Закрытий два, и оба нужны. AfterFunc обрывает чтение, которое иначе
 	// висело бы на пустом сокете до конца света; defer гарантирует, что к
@@ -78,11 +82,6 @@ func Run(ctx context.Context, cfg Config, sink Sink, ctrl *Control) error {
 	// Повторное закрытие безвредно.
 	context.AfterFunc(runCtx, func() { _ = localConn.Close() })
 	defer func() { _ = localConn.Close() }()
-
-	if uc, ok := localConn.(*net.UDPConn); ok {
-		_ = uc.SetReadBuffer(socketBufSize)
-		_ = uc.SetWriteBuffer(socketBufSize)
-	}
 
 	_, localPort, _ := net.SplitHostPort(cfg.Listen)
 	if localPort == "" {
@@ -332,6 +331,23 @@ func serveConfig(ctx context.Context, configCh <-chan string) {
 	emit(EventConfig{WireGuard: withMTU(fromServer)})
 }
 
+// openLocal — канал к datapath: готовый PacketConn или UDP на Listen
+// (SO_REUSEADDR — быстрый перезапуск без «address already in use»).
+func openLocal(cfg *Config) (net.PacketConn, error) {
+	if cfg.PacketConn != nil {
+		return cfg.PacketConn, nil
+	}
+	conn, err := listenUDP(cfg.Listen)
+	if err != nil {
+		return nil, fmt.Errorf("локальный слушатель %s: %w", cfg.Listen, err)
+	}
+	if uc, ok := conn.(*net.UDPConn); ok {
+		_ = uc.SetReadBuffer(socketBufSize)
+		_ = uc.SetWriteBuffer(socketBufSize)
+	}
+	return conn, nil
+}
+
 // withMTU дописывает MTU в секцию [Interface], если сервер его не прислал.
 // 1280 — минимум, гарантированный IPv6, и запас под все заголовки туннеля.
 func withMTU(conf string) string {
@@ -363,7 +379,11 @@ func logStartup(cfg *Config) {
 	}
 	logf("[КЛИЕНТ] Воркеров: %d (групп: %d, по %d)", cfg.Workers, numGroups, workersPerGroup)
 	logf("[КЛИЕНТ] Хешей: %d", len(cfg.Hashes))
-	logf("[КЛИЕНТ] Слушаю: %s | Пир: %s", cfg.Listen, cfg.Peer)
+	if cfg.PacketConn != nil {
+		logf("[КЛИЕНТ] Datapath: в памяти, без сокета | Пир: %s", cfg.Peer)
+	} else {
+		logf("[КЛИЕНТ] Слушаю: %s | Пир: %s", cfg.Listen, cfg.Peer)
+	}
 
 	if cfg.TurnTCP {
 		logln("[КЛИЕНТ] TURN-транспорт: TCP")

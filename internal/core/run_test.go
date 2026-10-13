@@ -30,6 +30,47 @@ func TestRunRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
+// closeRecorder — готовый канал datapath, который помнит, закрыли ли его.
+type closeRecorder struct {
+	net.PacketConn
+	closed bool
+}
+
+func (c *closeRecorder) Close() error {
+	c.closed = true
+	return nil
+}
+
+// Готовый канал принадлежит Run: закрывается, даже если до запуска не дошло.
+func TestRunClosesPacketConnOnInvalidConfig(t *testing.T) {
+	rec := install(t)
+	pc := &closeRecorder{}
+
+	if err := Run(context.Background(), Config{PacketConn: pc}, rec, nil); err == nil {
+		t.Fatal("Run с пустыми настройками вернул nil")
+	}
+	if !pc.closed {
+		t.Error("Run вернулся, не закрыв PacketConn")
+	}
+}
+
+func TestOpenLocal(t *testing.T) {
+	pc := &closeRecorder{}
+	got, err := openLocal(&Config{Listen: "127.0.0.1:1", PacketConn: pc})
+	if err != nil || got != pc {
+		t.Fatalf("openLocal с PacketConn = %v, %v; ожидался тот же канал", got, err)
+	}
+
+	got, err = openLocal(&Config{Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatalf("openLocal без PacketConn: %v", err)
+	}
+	defer got.Close()
+	if _, ok := got.(*net.UDPConn); !ok {
+		t.Fatalf("openLocal без PacketConn = %T, ожидался UDP", got)
+	}
+}
+
 func TestRunPingRejectsInvalidConfig(t *testing.T) {
 	rec := install(t)
 

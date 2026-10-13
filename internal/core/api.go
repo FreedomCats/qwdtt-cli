@@ -10,6 +10,7 @@ package core
 
 import (
 	"errors"
+	"net"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -89,6 +90,15 @@ type Config struct {
 	// UDP и отдаёт наружу конфиг событием EventConfig. Выбор и настройки
 	// datapath живут в internal/datapath (architecture.md §04).
 	Listen string
+
+	// PacketConn — готовый канал к datapath вместо UDP на Listen: свой
+	// conn.Bind у wireguard-go (datapath.Pipe, plan-e3.md, блок B). Задан —
+	// ядро сокета не открывает, а из Listen берёт только номер порта для
+	// GETCONF: сервер возвращает его в Endpoint конфига. Run закрывает
+	// PacketConn при любом возврате. nil — UDP на Listen, как раньше: так
+	// работает external, wireguard.exe — чужой процесс. Из профиля не
+	// читается.
+	PacketConn net.PacketConn
 
 	// --- обход туннеля ---
 
