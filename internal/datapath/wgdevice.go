@@ -21,8 +21,7 @@ import (
 // например "[WG-SOCKS]"; logf обязан быть непустым.
 //
 // Конфиг применяется к свежему устройству, поэтому replace_peers не нужен.
-// Перенастройка живого устройства (S1) — отдельная функция: IPCRequest его
-// не пишет, и второй IpcSet добавил бы пира к старому, а не заменил.
+// Перенастройка живого устройства — reconfigureDevice.
 func startDevice(tunDev tun.Device, conf *WGConfig, tag string, logf func(format string, args ...any)) (*device.Device, error) {
 	// Свой Logger вместо device.NewLogger: тот пишет прямо в stdout, а вывод
 	// принадлежит CLI. Verbosef — DiscardLogf: это тот же уровень, что был
@@ -44,4 +43,15 @@ func startDevice(tunDev tun.Device, conf *WGConfig, tag string, logf func(format
 		return nil, fmt.Errorf("Up: %w", err)
 	}
 	return dev, nil
+}
+
+// reconfigureDevice применяет к живому устройству новый конфиг сервера —
+// ключ, пира и endpoint на loopback ядра, которые на каждое подключение
+// бывают новыми. replace_peers убирает прежнего пира: без него IpcSet
+// добавил бы нового рядом со старым. TUN, а с ним и адаптер, остаётся.
+func reconfigureDevice(dev *device.Device, conf *WGConfig) error {
+	if err := dev.IpcSet("replace_peers=true\n" + conf.IPCRequest()); err != nil {
+		return fmt.Errorf("IpcSet: %w", err)
+	}
+	return nil
 }

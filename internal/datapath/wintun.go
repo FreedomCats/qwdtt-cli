@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 
@@ -28,13 +29,17 @@ type WintunOptions struct {
 	Logf func(format string, args ...any)
 
 	// DNSGuard — защита от утечки DNS: включается, когда маршруты стоят,
-	// выключается в Close. nil — без неё (CLI с -allow-dns-leak, тесты).
+	// выключается в Suspend и Close. nil — без неё (CLI с -allow-dns-leak, тесты).
 	DNSGuard DNSGuard
 }
 
 // Wintun — datapath с собственным адаптером: wireguard-go в процессе поверх
 // TUN от драйвера Wintun. От socks отличается только TUN (architecture.md
 // §04), общая часть — startDevice.
+//
+// Wintun — Persistent: адаптер живёт весь tt connect. Первый Start создаёт
+// его, следующие перенастраивают устройство конфигом новой попытки, Suspend
+// между попытками снимает маршруты и запрет утечки DNS (plan-e2.md, решение 3).
 //
 // Адаптер живёт, пока открыт его дескриптор: Close убирает его штатно, а при
 // падении процесса систему чистит сам драйвер (plan-e2.md, врезка N1, п. 3).
@@ -48,14 +53,14 @@ type Wintun struct {
 	openAdapter func(name string, conf *WGConfig, logf func(string, ...any)) (*wintunAdapter, error)
 
 	mu       sync.Mutex
-	started  bool
+	starting bool
 	closed   bool
 	dev      *device.Device
 	adapter  *wintunAdapter
+	// conf — конфиг, которым настроен адаптер: по нему перенастройка решает,
+	// трогать ли адреса, MTU и DNS адаптера.
+	conf     *WGConfig
 	endpoint netip.AddrPort
-
-	// done закрывается в Close и снимает сторожа отмены ctx.
-	done chan struct{}
 
 	// closeOnce и closeErr — уборка один раз, ожидание всеми (см. Close).
 	closeOnce sync.Once
@@ -67,6 +72,9 @@ type Wintun struct {
 type wintunAdapter struct {
 	tun  tun.Device
 	luid uint64
+	// configure заново задаёт адаптеру адреса, MTU и DNS из конфига —
+	// когда сервер на новой попытке выдал другие.
+	configure func(conf *WGConfig) error
 	// addRoutes и removeRoutes ставят и снимают fullTunnelRoutes через
 	// адаптер; оба безвредны повторно. Сам адаптер при этом остаётся.
 	addRoutes    func() error
@@ -82,7 +90,7 @@ func NewWintun(opts WintunOptions) *Wintun {
 	if strings.TrimSpace(opts.Name) == "" {
 		opts.Name = DefaultTunnelName
 	}
-	return &Wintun{opts: opts, openAdapter: openWintunAdapter, done: make(chan struct{})}
+	return &Wintun{opts: opts, openAdapter: openWintunAdapter}
 }
 
 // Requires: права администратора (адаптер создаёт драйвер), wintun.dll рядом
@@ -99,8 +107,8 @@ func (w *Wintun) Requires() Requirements {
 // Reserve занимает адаптер на машине до подключения (Reserver): второй tt
 // с datapath wintun узнаёт о первом сразу, а не после похода в VK за кредами,
 // и не уходит в переподключения (найдено живым прогоном W2). Держать
-// резерв — весь сеанс; Start каждой попытки берёт ту же блокировку ещё раз,
-// внутри процесса это не конфликт.
+// резерв — весь сеанс; первый Start берёт ту же блокировку ещё раз, внутри
+// процесса это не конфликт.
 func (w *Wintun) Reserve() (release func(), err error) {
 	release, err = acquireWintunLock()
 	if err != nil {
@@ -128,11 +136,18 @@ func (w *Wintun) LUID() uint64 {
 	return w.adapter.luid
 }
 
-// Start создаёт адаптер, задаёт ему адреса, MTU и DNS, поднимает над ним
-// wireguard-go, ставит маршруты fullTunnelRoutes — с этого момента через
-// туннель идёт весь трафик системы — и включает защиту DNS. Возвращается,
-// когда всё это сделано.
-func (w *Wintun) Start(ctx context.Context, conf *WGConfig) error {
+// Start поднимает туннель по конфигу попытки и возвращается, когда через
+// него идёт весь трафик системы: стоят маршруты fullTunnelRoutes и включена
+// защита DNS.
+//
+// Первый вызов создаёт адаптер (адреса, MTU, DNS) и wireguard-go над ним.
+// Следующие — перенастройка (Persistent): устройство получает ключ, пира и
+// endpoint новой попытки, адаптер — новые адреса и DNS, если сервер их
+// сменил. Отказ перенастройки адаптер не снимает: это отказ попытки, а
+// следующая попробует снова.
+//
+// ctx Start не хранит: адаптер переживает попытку и снимается только Close.
+func (w *Wintun) Start(_ context.Context, conf *WGConfig) error {
 	if conf == nil {
 		return errors.New("wintun: пустой конфиг WireGuard")
 	}
@@ -142,16 +157,32 @@ func (w *Wintun) Start(ctx context.Context, conf *WGConfig) error {
 		w.mu.Unlock()
 		return errors.New("wintun: datapath уже остановлен")
 	}
-	if w.started {
+	if w.starting {
+		// Попытки идут по одной, и супервизор не зовёт Start дважды разом.
 		w.mu.Unlock()
-		return errors.New("wintun: datapath уже запущен")
+		return errors.New("wintun: Start уже идёт")
 	}
-	w.started = true
+	w.starting = true
+	dev, adapter, prev := w.dev, w.adapter, w.conf
 	w.mu.Unlock()
 
+	defer func() {
+		w.mu.Lock()
+		w.starting = false
+		w.mu.Unlock()
+	}()
+
+	if dev == nil {
+		return w.open(conf)
+	}
+	return w.reconfigure(dev, adapter, prev, conf)
+}
+
+// open — первый Start: адаптер, устройство, маршруты, защита DNS. На отказе
+// адаптер снимается: следующей попытке ничего не мешает.
+func (w *Wintun) open(conf *WGConfig) error {
 	adapter, err := w.openAdapter(w.opts.Name, conf, w.logf)
 	if err != nil {
-		w.startFailed()
 		return fmt.Errorf("wintun: %w", err)
 	}
 
@@ -159,31 +190,16 @@ func (w *Wintun) Start(ctx context.Context, conf *WGConfig) error {
 	if err != nil {
 		// startDevice уже закрыл TUN, а с ним и адаптер.
 		adapter.release()
-		w.startFailed()
 		return fmt.Errorf("wintun: %w", err)
 	}
 
-	endpoint, ok := conf.EndpointAddrPort()
-	if !ok {
-		w.logf("[WINTUN] endpoint %q — не адрес с портом", conf.Endpoint)
-	}
-
-	for _, warning := range allowedIPsWarnings(conf) {
-		w.logf("[WINTUN] Внимание: %s", warning)
-	}
-	if err := adapter.addRoutes(); err != nil {
+	if err := w.route(adapter, conf); err != nil {
 		dev.Close()
 		adapter.release()
-		w.startFailed()
-		return fmt.Errorf("wintun: маршруты: %w", err)
-	}
-	if err := w.enableDNSGuard(conf.DNS); err != nil {
-		dev.Close()
-		adapter.release()
-		w.startFailed()
-		return fmt.Errorf("wintun: %w", err)
+		return err
 	}
 
+	endpoint := w.endpointOf(conf)
 	w.mu.Lock()
 	if w.closed {
 		// Close пришёл, пока адаптер создавался, и убирать ему было нечего:
@@ -194,56 +210,91 @@ func (w *Wintun) Start(ctx context.Context, conf *WGConfig) error {
 		w.disableDNSGuard()
 		return errors.New("wintun: datapath остановлен во время запуска")
 	}
-	w.dev, w.adapter, w.endpoint = dev, adapter, endpoint
+	w.dev, w.adapter, w.conf = dev, adapter, conf
+	w.endpoint = endpoint
 	w.mu.Unlock()
 
 	w.logf("[WINTUN] адаптер %q поднят (addr=%v mtu=%d endpoint=%s routes=%v dns=%v)",
 		w.opts.Name, conf.Addresses, conf.MTU, conf.Endpoint, fullTunnelRoutes, conf.DNS)
-
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = w.Close()
-		case <-w.done:
-		}
-	}()
 	return nil
 }
 
-// AddRoutes возвращает маршруты fullTunnelRoutes через адаптер после
-// RemoveRoutes. Start ставит их сам; отдельный вызов нужен супервизору,
-// который снимает маршруты на время переподключения (plan-e2.md, S1).
-func (w *Wintun) AddRoutes() error {
-	adapter, err := w.runningAdapter()
-	if err != nil {
+// reconfigure — повторный Start: тот же адаптер и то же устройство, конфиг
+// новой попытки.
+func (w *Wintun) reconfigure(dev *device.Device, adapter *wintunAdapter, prev, conf *WGConfig) error {
+	if adapterSettingsChanged(prev, conf) {
+		if err := adapter.configure(conf); err != nil {
+			return fmt.Errorf("wintun: %w", err)
+		}
+		w.mu.Lock()
+		w.conf = conf
+		w.mu.Unlock()
+		w.logf("[WINTUN] сервер выдал другие адрес, MTU или DNS — адаптер перенастроен (addr=%v mtu=%d dns=%v)",
+			conf.Addresses, conf.MTU, conf.DNS)
+	}
+
+	if err := reconfigureDevice(dev, conf); err != nil {
+		return fmt.Errorf("wintun: %w", err)
+	}
+	if err := w.route(adapter, conf); err != nil {
 		return err
+	}
+
+	endpoint := w.endpointOf(conf)
+	w.mu.Lock()
+	if w.closed {
+		// Close уже снял адаптер и защиту DNS, а route включил её снова.
+		w.mu.Unlock()
+		w.disableDNSGuard()
+		return errors.New("wintun: datapath остановлен во время запуска")
+	}
+	w.endpoint = endpoint
+	w.mu.Unlock()
+
+	w.logf("[WINTUN] адаптер %q перенастроен (endpoint=%s)", w.opts.Name, conf.Endpoint)
+	return nil
+}
+
+// route пускает трафик системы в туннель: маршруты fullTunnelRoutes и
+// защита DNS. На отказе защиты маршруты снимаются, чтобы не оставить туннель
+// без неё.
+func (w *Wintun) route(adapter *wintunAdapter, conf *WGConfig) error {
+	for _, warning := range allowedIPsWarnings(conf) {
+		w.logf("[WINTUN] Внимание: %s", warning)
 	}
 	if err := adapter.addRoutes(); err != nil {
 		return fmt.Errorf("wintun: маршруты: %w", err)
 	}
-	return nil
-}
-
-// RemoveRoutes снимает маршруты, оставляя адаптер: трафик системы идёт мимо
-// туннеля, пока их не вернёт AddRoutes.
-func (w *Wintun) RemoveRoutes() error {
-	adapter, err := w.runningAdapter()
-	if err != nil {
-		return err
-	}
-	if err := adapter.removeRoutes(); err != nil {
-		return fmt.Errorf("wintun: снятие маршрутов: %w", err)
+	if err := w.enableDNSGuard(conf.DNS); err != nil {
+		_ = adapter.removeRoutes()
+		return fmt.Errorf("wintun: %w", err)
 	}
 	return nil
 }
 
-func (w *Wintun) runningAdapter() (*wintunAdapter, error) {
+// Suspend снимает маршруты и защиту DNS, оставляя адаптер (Persistent):
+// трафик системы идёт мимо туннеля, пока следующий Start их не вернёт.
+// Заодно у устройства убирается пир — иначе wireguard-go стучался бы
+// рукопожатиями в порт ядра, которого после попытки уже нет.
+func (w *Wintun) Suspend() error {
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.adapter == nil {
-		return nil, errors.New("wintun: адаптер не поднят")
+	dev, adapter := w.dev, w.adapter
+	w.mu.Unlock()
+	if adapter == nil {
+		return nil
 	}
-	return w.adapter, nil
+
+	dev.RemoveAllPeers()
+	var err error
+	if rerr := adapter.removeRoutes(); rerr != nil {
+		err = fmt.Errorf("wintun: снятие маршрутов: %w", rerr)
+	}
+	if w.opts.DNSGuard != nil {
+		if derr := w.opts.DNSGuard.Disable(); derr != nil {
+			err = errors.Join(err, fmt.Errorf("wintun: %w", derr))
+		}
+	}
+	return err
 }
 
 // Close останавливает wireguard-go и убирает адаптер. Безопасен до Start
@@ -258,8 +309,7 @@ func (w *Wintun) close() error {
 	w.mu.Lock()
 	w.closed = true
 	dev, adapter := w.dev, w.adapter
-	w.dev, w.adapter = nil, nil
-	close(w.done)
+	w.dev, w.adapter, w.conf = nil, nil, nil
 	w.mu.Unlock()
 
 	if dev == nil {
@@ -272,6 +322,23 @@ func (w *Wintun) close() error {
 	w.disableDNSGuard()
 	w.logf("[WINTUN] адаптер %q снят", w.opts.Name)
 	return nil
+}
+
+// adapterSettingsChanged — выдал ли сервер на новой попытке другие адреса,
+// MTU или DNS, то есть нужно ли перенастраивать адаптер.
+func adapterSettingsChanged(prev, conf *WGConfig) bool {
+	return prev == nil || prev.MTU != conf.MTU ||
+		!slices.Equal(prev.Addresses, conf.Addresses) || !slices.Equal(prev.DNS, conf.DNS)
+}
+
+// endpointOf — Endpoint конфига адресом с портом; не адрес — строка в лог
+// и нулевое значение.
+func (w *Wintun) endpointOf(conf *WGConfig) netip.AddrPort {
+	endpoint, ok := conf.EndpointAddrPort()
+	if !ok {
+		w.logf("[WINTUN] endpoint %q — не адрес с портом", conf.Endpoint)
+	}
+	return endpoint
 }
 
 // enableDNSGuard включает защиту DNS, если она дана: DNS системы — только
@@ -292,14 +359,6 @@ func (w *Wintun) disableDNSGuard() {
 	if err := w.opts.DNSGuard.Disable(); err != nil {
 		w.logf("[WINTUN] %v", err)
 	}
-}
-
-// startFailed возвращает datapath в исходное состояние: неудачный Start не
-// должен закрывать дорогу повторной попытке.
-func (w *Wintun) startFailed() {
-	w.mu.Lock()
-	w.started = false
-	w.mu.Unlock()
 }
 
 func (w *Wintun) logf(format string, args ...any) {

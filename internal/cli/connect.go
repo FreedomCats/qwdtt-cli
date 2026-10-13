@@ -477,6 +477,7 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 			dispatcher.Observe(ev)
 		},
 		OnTransition: out.transition,
+		Logf:         out.logf,
 	})
 	if err != nil {
 		return err

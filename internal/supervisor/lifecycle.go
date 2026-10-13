@@ -51,6 +51,10 @@ type Options struct {
 	// Start у неё зовётся один раз, Close закрывает её навсегда, — а конфиг
 	// WireGuard сервер выдаёт новый на каждое подключение. Проверить Requires
 	// и объяснить нехватку прав нужно до входа в цикл, и это дело CLI.
+	//
+	// Исключение — datapath.Persistent (wintun): такой экземпляр цикл
+	// строит один раз, на первой попытке, зовёт его Start на каждую
+	// попытку, Suspend — после каждой неудачной и Close — при выходе из Run.
 	NewDatapath func() (datapath.Datapath, error)
 
 	// DatapathStage — какой шаг закрывает подъём datapath: core.StageSocks
@@ -86,6 +90,12 @@ type Options struct {
 	// её строкой. nil — молчать.
 	OnTransition func(Transition)
 
+	// Logf получает строки самого цикла, которые не события ядра и не смена
+	// состояния: что маршруты сняты на время переподключения и что они
+	// возвращены (plan-e2.md, решение 3). Сериализован с OnEvent и
+	// OnTransition. nil — молчать.
+	Logf func(format string, args ...any)
+
 	// StallWindow — сколько молчания терпит watchdog, прежде чем объявить
 	// туннель деградировавшим. 0 — DefaultStallWindow (25 с).
 	StallWindow time.Duration
@@ -119,10 +129,24 @@ type Tunnel struct {
 	watchdog  *Watchdog
 	restarter *Restarter
 
-	// outMu сериализует OnEvent и OnTransition: события приходят из горутин
-	// воркеров, переходы watchdog'а — из горутины тикера, а получатель у них
-	// один — вывод в терминал.
+	// outMu сериализует OnEvent, OnTransition и Logf: события приходят из
+	// горутин воркеров, переходы watchdog'а — из горутины тикера, а получатель
+	// у них один — вывод в терминал.
 	outMu sync.Mutex
+
+	// dpMu охраняет то, что переживает попытку: долгоживущий datapath
+	// и состояние маршрутов. Пишут сюда горутина ядра (подъём datapath)
+	// и горутина Run (конец попытки).
+	dpMu sync.Mutex
+	// persistent — datapath.Persistent, построенный первой попыткой; живёт
+	// до конца Run. nil — datapath строится на каждую попытку.
+	persistent datapath.Datapath
+	// routed — трафик системы сейчас идёт в туннель: поднят datapath,
+	// который забирает весь трафик (Requirements.Netguard).
+	routed bool
+	// bypassed — маршруты сняты на время переподключения, и об этом сказано
+	// строкой; когда datapath поднимется снова, нужно сказать, что вернулись.
+	bypassed bool
 
 	// runCore и sleep подменяются в тестах: без первого понадобился бы живой
 	// сервер VK, без второго тест на последовательность задержек шёл бы минуту.
@@ -192,6 +216,9 @@ func (t *Tunnel) Run(ctx context.Context) error {
 	// Остановка отмечается в любом случае: по Ctrl+C, по исчерпанным хешам
 	// и по панике, которую цикл не удержал.
 	defer func() { t.report(t.machine.Stop()) }()
+	// Долгоживущий datapath снимается при любом выходе — после последней
+	// попытки, как одноразовый снимается в конце своей.
+	defer t.closePersistent()
 
 	for {
 		if ctx.Err() != nil {
@@ -203,6 +230,9 @@ func (t *Tunnel) Run(ctx context.Context) error {
 			// Остановку попросили — не отказ, и следующей попытки не будет.
 			return nil
 		}
+		// До задержки, а не после: пока маршруты ведут в мёртвый туннель,
+		// капча следующей попытки не загрузится.
+		t.suspend()
 
 		decision := t.restarter.Failed(err)
 		t.reportAll(decision.Transitions)
@@ -228,14 +258,17 @@ func (t *Tunnel) attempt(parent context.Context) (err error) {
 	t.report(t.machine.BeginAttempt())
 	t.watchdog.Reset()
 
-	dp, derr := t.opts.NewDatapath()
+	dp, persistent, derr := t.datapath()
 	if derr != nil {
 		return fmt.Errorf("datapath: %w", derr)
 	}
 	// Первым отложенным вызовом — то есть последним исполняемым: снятие
 	// datapath обязано пережить и обычный возврат, и панику в ядре.
 	// Close у реализаций безопасен до Start и при повторном вызове (D1).
-	defer func() { _ = dp.Close() }()
+	// Долгоживущий снимает Run, а после неудачной попытки — suspend.
+	if !persistent {
+		defer func() { _ = dp.Close() }()
+	}
 
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
@@ -283,6 +316,95 @@ func (t *Tunnel) attempt(parent context.Context) (err error) {
 	default:
 		return errors.New("ядро остановилось само, без ошибки")
 	}
+}
+
+// datapath — datapath для попытки: долгоживущий, если он уже есть, иначе
+// новый. Второе значение — datapath долгоживущий, и закрывать его в конце
+// попытки нельзя.
+func (t *Tunnel) datapath() (datapath.Datapath, bool, error) {
+	t.dpMu.Lock()
+	defer t.dpMu.Unlock()
+	if t.persistent != nil {
+		return t.persistent, true, nil
+	}
+	dp, err := t.opts.NewDatapath()
+	if err != nil {
+		return nil, false, err
+	}
+	if _, ok := dp.(datapath.Persistent); ok {
+		t.persistent = dp
+		return dp, true, nil
+	}
+	return dp, false, nil
+}
+
+// datapathUp отмечает, что datapath поднят. Если до этого маршруты сняли на
+// время переподключения, говорит, что они вернулись.
+func (t *Tunnel) datapathUp(dp datapath.Datapath) {
+	if !dp.Requires().Netguard {
+		// socks трафик системы не забирает: снимать и возвращать нечего.
+		return
+	}
+	t.dpMu.Lock()
+	t.routed = true
+	returned := t.bypassed
+	t.bypassed = false
+	t.dpMu.Unlock()
+	if returned {
+		t.logf("маршруты возвращены — трафик системы снова идёт через туннель")
+	}
+}
+
+// suspend — конец неудачной попытки: у долгоживущего datapath снимаются
+// маршруты и защита DNS (одноразовый к этому моменту уже закрыт целиком),
+// и пользователь видит строку о том, что трафик пошёл мимо туннеля
+// (plan-e2.md, решение 3: окно нужно видеть, а не узнавать из README).
+func (t *Tunnel) suspend() {
+	t.dpMu.Lock()
+	dp := t.persistent
+	t.dpMu.Unlock()
+
+	if p, ok := dp.(datapath.Persistent); ok {
+		if err := p.Suspend(); err != nil {
+			// Снять маршруты не вышло — снимаем datapath целиком: с маршрутами
+			// на мёртвом туннеле не загрузится капча. Следующая попытка
+			// построит новый.
+			t.logf("маршруты не снялись: %v — datapath снимается целиком, следующая попытка поднимет его заново", err)
+			t.closePersistent()
+		}
+	}
+
+	t.dpMu.Lock()
+	wasRouted := t.routed
+	t.routed = false
+	if wasRouted {
+		t.bypassed = true
+	}
+	t.dpMu.Unlock()
+	if wasRouted {
+		t.logf("маршруты сняты на время переподключения — трафик и DNS системы идут мимо туннеля")
+	}
+}
+
+// closePersistent снимает долгоживущий datapath, если он есть.
+func (t *Tunnel) closePersistent() {
+	t.dpMu.Lock()
+	dp := t.persistent
+	t.persistent = nil
+	t.dpMu.Unlock()
+	if dp != nil {
+		_ = dp.Close()
+	}
+}
+
+// logf отдаёт наружу строку самого цикла.
+func (t *Tunnel) logf(format string, args ...any) {
+	if t.opts.Logf == nil {
+		return
+	}
+	t.outMu.Lock()
+	defer t.outMu.Unlock()
+	t.opts.Logf(format, args...)
 }
 
 // watchTraffic заводит тикер watchdog'а и возвращает функцию его снятия.
@@ -455,6 +577,7 @@ func (a *attempt) startDatapath(ev core.EventConfig) {
 		return
 	}
 
+	a.tunnel.datapathUp(a.dp)
 	a.stage(stage, core.StageOK, "")
 	a.stage(core.StageDone, core.StageOK, "")
 }

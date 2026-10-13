@@ -35,7 +35,8 @@ const wintunTunnelType = "tt"
 const wintunLockName = `Global\qwdtt-cli-wintun`
 
 // openWintunAdapter создаёт адаптер и задаёт ему адреса, MTU и DNS из конфига;
-// маршруты ставит и снимает вызывающий (addRoutes, removeRoutes).
+// перенастройку и маршруты делает вызывающий (configure, addRoutes,
+// removeRoutes).
 // На отказе за собой убирает всё.
 //
 // Адаптер от упавшего прошлого запуска убирать не нужно: он исчезает, как
@@ -67,22 +68,27 @@ func openWintunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (
 	}
 	luid := native.LUID()
 
-	if err := winsys.ConfigureAdapter(luid, conf.Addresses, conf.MTU, logf); err != nil {
-		tunDev.Close()
-		release()
-		return nil, fmt.Errorf("адаптер %q: %w", name, err)
+	configure := func(conf *WGConfig) error {
+		if err := winsys.ConfigureAdapter(luid, conf.Addresses, conf.MTU, logf); err != nil {
+			return fmt.Errorf("адаптер %q: %w", name, err)
+		}
+		// DNS — свойство адаптера и держится, пока он жив. На время
+		// переподключения (S1) снимаются маршруты /1 и запрет утечки (DNSGuard),
+		// а не DNS: весь трафик и так идёт мимо туннеля (решение 3).
+		if err := winsys.SetAdapterDNS(luid, conf.DNS); err != nil {
+			return fmt.Errorf("адаптер %q: %w", name, err)
+		}
+		return nil
 	}
-	// DNS — свойство адаптера и держится, пока он жив. На время
-	// переподключения (S1) снимаются маршруты /1 и запрет утечки (DNSGuard),
-	// а не DNS: весь трафик и так идёт мимо туннеля (решение 3).
-	if err := winsys.SetAdapterDNS(luid, conf.DNS); err != nil {
+	if err := configure(conf); err != nil {
 		tunDev.Close()
 		release()
-		return nil, fmt.Errorf("адаптер %q: %w", name, err)
+		return nil, err
 	}
 	return &wintunAdapter{
-		tun:  tunDev,
-		luid: luid,
+		tun:       tunDev,
+		luid:      luid,
+		configure: configure,
 		addRoutes: func() error {
 			return winsys.SetTunnelRoutes(luid, fullTunnelRoutes, logf)
 		},
@@ -98,7 +104,7 @@ func openWintunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (
 // уже работает tt с datapath wintun.
 //
 // Внутри процесса захваты считаются: CLI держит мьютекс весь tt connect
-// (Wintun.Reserve), а Start каждой попытки берёт его ещё раз. Повторный
+// (Wintun.Reserve), а первый Start берёт его ещё раз. Повторный
 // CreateMutex с тем же именем вернул бы ERROR_ALREADY_EXISTS и своему же
 // процессу, поэтому дескриптор один и закрывается с последним захватом.
 func acquireWintunLock() (release func(), err error) {

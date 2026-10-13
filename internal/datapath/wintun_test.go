@@ -2,6 +2,7 @@ package datapath
 
 import (
 	"context"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,8 @@ type fakeWintun struct {
 	// routed — стоят ли маршруты; routesErr — отказ их постановки.
 	routed    atomic.Bool
 	routesErr error
+	// configured — сколько раз адаптер перенастраивался (без создания).
+	configured atomic.Int32
 }
 
 func (f *fakeWintun) open(name string, conf *WGConfig, logf func(string, ...any)) (*wintunAdapter, error) {
@@ -42,6 +45,10 @@ func (f *fakeWintun) open(name string, conf *WGConfig, logf func(string, ...any)
 	return &wintunAdapter{
 		tun:  f.tun,
 		luid: 42,
+		configure: func(*WGConfig) error {
+			f.configured.Add(1)
+			return nil
+		},
 		addRoutes: func() error {
 			if f.routesErr != nil {
 				return f.routesErr
@@ -109,10 +116,6 @@ func TestWintunStartClose(t *testing.T) {
 	if w.LUID() != 42 {
 		t.Errorf("LUID = %d, ждали 42", w.LUID())
 	}
-	if err := w.Start(context.Background(), conf); err == nil {
-		t.Error("второй Start принят")
-	}
-
 	if err := w.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -137,10 +140,14 @@ func TestWintunStartClose(t *testing.T) {
 	}
 }
 
-func TestWintunRoutes(t *testing.T) {
+// Persistent: Suspend снимает маршруты и защиту DNS, адаптер остаётся;
+// следующий Start — перенастройка того же адаптера, а не новый.
+func TestWintunSuspendAndRestart(t *testing.T) {
 	w, f, rec := newTestWintun(t)
-	if err := w.AddRoutes(); err == nil {
-		t.Error("AddRoutes до Start принят")
+	guard := &fakeDNSGuard{}
+	w.opts.DNSGuard = guard
+	if err := w.Suspend(); err != nil {
+		t.Errorf("Suspend до Start: %v", err)
 	}
 
 	if err := w.Start(context.Background(), testWGConfig(t, "127.0.0.1:9")); err != nil {
@@ -149,24 +156,98 @@ func TestWintunRoutes(t *testing.T) {
 	if !f.routed.Load() {
 		t.Fatal("Start не поставил маршруты")
 	}
-	if err := w.RemoveRoutes(); err != nil || f.routed.Load() {
-		t.Errorf("RemoveRoutes: err=%v, маршруты стоят=%v", err, f.routed.Load())
+
+	for range 2 { // повторный Suspend безвреден
+		if err := w.Suspend(); err != nil {
+			t.Fatalf("Suspend: %v", err)
+		}
 	}
-	if err := w.AddRoutes(); err != nil || !f.routed.Load() {
-		t.Errorf("AddRoutes: err=%v, маршруты стоят=%v", err, f.routed.Load())
+	if on, _, _, _ := guard.state(); f.routed.Load() || on {
+		t.Errorf("после Suspend: маршруты стоят=%v, защита DNS=%v", f.routed.Load(), on)
 	}
-	if f.tun.closed.Load() != 0 {
-		t.Error("снятие маршрутов закрыло адаптер")
+	if f.tun.closed.Load() != 0 || w.LUID() != 42 {
+		t.Fatal("Suspend снял адаптер")
 	}
-	if log := rec.dump(); strings.Contains(log, "Внимание") {
-		t.Errorf("предупреждение при AllowedIPs = 0.0.0.0/0:\n%s", log)
+
+	next := testWGConfig(t, "127.0.0.1:10")
+	if err := w.Start(context.Background(), next); err != nil {
+		t.Fatalf("Start после Suspend: %v", err)
+	}
+	if !f.routed.Load() {
+		t.Error("перенастройка не вернула маршруты")
+	}
+	if on, _, _, _ := guard.state(); !on {
+		t.Error("перенастройка не вернула защиту DNS")
+	}
+	if f.opened.Load() != 1 || f.tun.closed.Load() != 0 {
+		t.Errorf("адаптер создавался %d раз, TUN закрыт %d раз; ждали один и ни разу",
+			f.opened.Load(), f.tun.closed.Load())
+	}
+	if f.configured.Load() != 0 {
+		t.Error("адаптер перенастроен, хотя адрес, MTU и DNS те же")
+	}
+	if got := w.Endpoint().String(); got != "127.0.0.1:10" {
+		t.Errorf("Endpoint после перенастройки = %s", got)
+	}
+	if log := rec.dump(); !strings.Contains(log, `[WINTUN] адаптер "tt" перенастроен (endpoint=127.0.0.1:10)`) {
+		t.Errorf("в логе нет строки о перенастройке:\n%s", log)
 	}
 
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.RemoveRoutes(); err == nil {
-		t.Error("RemoveRoutes после Close принят")
+	if f.released.Load() != 1 {
+		t.Errorf("release %d раз, ждали один", f.released.Load())
+	}
+	if err := w.Suspend(); err != nil {
+		t.Errorf("Suspend после Close: %v", err)
+	}
+}
+
+// Сервер выдал на новой попытке другой адрес — адаптер перенастраивается.
+func TestWintunRestartReconfiguresAdapter(t *testing.T) {
+	w, f, _ := newTestWintun(t)
+	if err := w.Start(context.Background(), testWGConfig(t, "127.0.0.1:9")); err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	_ = w.Suspend()
+
+	next := testWGConfig(t, "127.0.0.1:9")
+	next.Addresses = []netip.Addr{netip.MustParseAddr("10.7.0.3")}
+	if err := w.Start(context.Background(), next); err != nil {
+		t.Fatal(err)
+	}
+	if f.configured.Load() != 1 {
+		t.Errorf("адаптер перенастроен %d раз, ждали один", f.configured.Load())
+	}
+}
+
+// Отказ перенастройки — отказ попытки, но адаптер остаётся, маршрутов нет,
+// и следующий Start работает.
+func TestWintunRestartFailureKeepsAdapter(t *testing.T) {
+	w, f, _ := newTestWintun(t)
+	conf := testWGConfig(t, "127.0.0.1:9")
+	if err := w.Start(context.Background(), conf); err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	_ = w.Suspend()
+
+	f.routesErr = errorString("доступ запрещён")
+	if err := w.Start(context.Background(), conf); err == nil {
+		t.Fatal("перенастройка с отказом маршрутов принята")
+	}
+	if f.tun.closed.Load() != 0 || f.released.Load() != 0 {
+		t.Error("отказ перенастройки снял адаптер")
+	}
+
+	f.routesErr = nil
+	if err := w.Start(context.Background(), conf); err != nil {
+		t.Fatalf("Start после отказа: %v", err)
+	}
+	if !f.routed.Load() || f.opened.Load() != 1 {
+		t.Errorf("маршруты стоят=%v, адаптер создавался %d раз", f.routed.Load(), f.opened.Load())
 	}
 }
 
@@ -245,19 +326,21 @@ func TestWintunDeviceFailureReleases(t *testing.T) {
 	}
 }
 
-func TestWintunStopsOnContext(t *testing.T) {
+// Адаптер переживает попытку: отмена ctx, с которым звали Start, его не
+// снимает (Persistent) — снимает только Close.
+func TestWintunOutlivesStartContext(t *testing.T) {
 	w, f, _ := newTestWintun(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	if err := w.Start(ctx, testWGConfig(t, "127.0.0.1:9")); err != nil {
 		t.Fatal(err)
 	}
 	cancel()
-	deadline := time.Now().Add(5 * time.Second)
-	for f.released.Load() == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("отмена ctx не сняла адаптер")
-		}
-		time.Sleep(10 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
+	if f.released.Load() != 0 || f.tun.closed.Load() != 0 {
+		t.Fatal("отмена ctx попытки сняла адаптер")
+	}
+	if err := w.Close(); err != nil || f.released.Load() != 1 {
+		t.Errorf("Close: err=%v, release %d раз", err, f.released.Load())
 	}
 }
 

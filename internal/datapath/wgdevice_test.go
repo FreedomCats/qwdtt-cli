@@ -70,3 +70,34 @@ func TestStartDeviceFailureClosesTUN(t *testing.T) {
 		t.Errorf("строки лога без префикса:\n%s", log)
 	}
 }
+
+// Перенастройка живого устройства заменяет пира, а не добавляет второго:
+// иначе после переподключения wireguard-go слал бы и в старый порт ядра.
+func TestReconfigureDeviceReplacesPeer(t *testing.T) {
+	conf := testWGConfig(t, "127.0.0.1:9")
+	dev, err := startDevice(newTestTUN(t, conf), conf, "[WG-TEST]", (&recorder{}).logf)
+	if err != nil {
+		t.Fatalf("startDevice: %v", err)
+	}
+	defer dev.Close()
+
+	next := *conf
+	next.PeerPublicHex = strings.Repeat("ab", 32)
+	next.Endpoint = "127.0.0.1:10"
+	if err := reconfigureDevice(dev, &next); err != nil {
+		t.Fatalf("reconfigureDevice: %v", err)
+	}
+
+	state, err := dev.IpcGet()
+	if err != nil {
+		t.Fatalf("IpcGet: %v", err)
+	}
+	if n := strings.Count(state, "public_key="); n != 1 {
+		t.Errorf("пиров после перенастройки %d, ждали одного:\n%s", n, state)
+	}
+	for _, want := range []string{"public_key=" + next.PeerPublicHex, "endpoint=127.0.0.1:10"} {
+		if !strings.Contains(state, want) {
+			t.Errorf("в состоянии устройства нет %q:\n%s", want, state)
+		}
+	}
+}
