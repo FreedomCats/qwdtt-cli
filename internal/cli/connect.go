@@ -295,7 +295,12 @@ func (plan *connectPlan) chooseDatapath() error {
 		return nil
 
 	case config.DatapathExternal:
-		return todo("D3", "datapath external")
+		plan.datapath = func(logf func(string, ...any)) datapath.Datapath {
+			return datapath.NewExternal(datapath.ExternalOptions{Logf: logf})
+		}
+		plan.stage = core.StageVPN
+		plan.describe = "штатный WireGuard, туннель " + datapath.DefaultTunnelName
+		return nil
 
 	default:
 		// Validate уже отверг всё остальное, включая wintun, с объяснением.
@@ -303,11 +308,14 @@ func (plan *connectPlan) chooseDatapath() error {
 	}
 }
 
-// requirementProblems проверяет то, что datapath просит для запуска: внешние
-// программы и файлы рядом с бинарём. Проверка прав администратора — вместе
-// с datapath external (D3): socks их не просит, а угадывать нечего.
+// requirementProblems проверяет то, что datapath просит для запуска: права
+// администратора, внешние программы и файлы рядом с бинарём.
 func requirementProblems(req datapath.Requirements) []string {
 	var problems []string
+
+	if req.Admin && !isElevated() {
+		problems = append(problems, "нужны права администратора: запустите tt из консоли от имени администратора")
+	}
 
 	for _, program := range req.Programs {
 		if _, err := exec.LookPath(program); err != nil {

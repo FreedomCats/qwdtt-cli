@@ -433,9 +433,3 @@ func runHelp(ctx context.Context, e *env, args []string) error {
 	// успехом — см. report.
 	return cmd.run(ctx, e, []string{"-h"})
 }
-
-// todo — заглушка на время, пока за командой ничего не стоит. Называет задачу,
-// в которой она появится, чтобы сообщение не выглядело поломкой.
-func todo(task, what string) error {
-	return fmt.Errorf("%s появится в задаче %s (см. doc/plan-e1.md)", what, task)
-}

@@ -8,6 +8,7 @@ import (
 
 	"qwdtt-cli/internal/config"
 	"qwdtt-cli/internal/core"
+	"qwdtt-cli/internal/datapath"
 )
 
 // Живого сервера в тестах нет, поэтому проверяется сборка плана: профиль,
@@ -199,16 +200,41 @@ func TestPlanConnectRejectsBadFlagValue(t *testing.T) {
 	}
 }
 
-// Datapath external — задача D3; до неё команда говорит об этом, а не падает.
-func TestPlanConnectExternalNotYet(t *testing.T) {
+// Datapath external: шаг vpn, права администратора и предупреждение о петле
+// в требованиях. Сам wireguard.exe здесь не ищется по-настоящему — план
+// только строит конструктор.
+func TestPlanConnectExternal(t *testing.T) {
 	c := newConnectEnv(t)
 
-	_, err := c.plan("home", "-datapath", "external")
-	if err == nil {
-		t.Fatal("план собрался с datapath external")
+	plan, err := c.plan("home", "-datapath", "external")
+	if err != nil {
+		t.Fatalf("planConnect: %v", err)
 	}
-	if !strings.Contains(err.Error(), "D3") {
-		t.Errorf("ошибка не называет задачу D3: %v", err)
+	if plan.stage != core.StageVPN {
+		t.Errorf("шаг datapath = %q, ожидался vpn", plan.stage)
+	}
+	if !strings.Contains(plan.describe, "WireGuard") {
+		t.Errorf("описание datapath не про WireGuard: %q", plan.describe)
+	}
+	req := plan.datapath(nil).Requires()
+	if !req.Admin || req.Warning == "" || len(req.Programs) != 1 {
+		t.Errorf("требования external не те: %+v", req)
+	}
+}
+
+// Права администратора проверяются до подключения: без них external
+// объясняет, что делать, одной строкой.
+func TestRequirementProblemsAdmin(t *testing.T) {
+	req := datapath.Requirements{Admin: true}
+	problems := requirementProblems(req)
+	if isElevated() {
+		if len(problems) != 0 {
+			t.Errorf("процесс повышен, а проблемы есть: %v", problems)
+		}
+		return
+	}
+	if len(problems) != 1 || !strings.Contains(problems[0], "администратора") {
+		t.Errorf("без прав ожидалась одна проблема про администратора: %v", problems)
 	}
 }
 
