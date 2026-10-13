@@ -96,16 +96,9 @@ func TestValidateProfileProblems(t *testing.T) {
 			want:  []string{"doh", "https"},
 		},
 		{
-			// Режим есть в архитектуре, но не в этом этапе: сказать про Э2
-			// полезнее, чем назвать значение неизвестным.
-			name:  "wintun ещё не готов",
-			patch: func(p *Profile) { p.Datapath = DatapathWintun },
-			want:  []string{"wintun", "Э2", `"socks"`, `"external"`},
-		},
-		{
 			name:  "неизвестный datapath",
 			patch: func(p *Profile) { p.Datapath = "tun" },
-			want:  []string{"datapath", `"socks"`, `"external"`},
+			want:  []string{"datapath", `"socks"`, `"wintun"`, `"external"`},
 		},
 		{
 			name:  "адрес SOCKS5 без порта",

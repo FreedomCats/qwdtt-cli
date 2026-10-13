@@ -226,6 +226,28 @@ func TestPlanConnectExternal(t *testing.T) {
 	}
 }
 
+func TestPlanConnectWintun(t *testing.T) {
+	c := newConnectEnv(t)
+
+	plan, err := c.plan("home", "-datapath", "wintun")
+	if err != nil {
+		t.Fatalf("planConnect: %v", err)
+	}
+	if plan.stage != core.StageVPN {
+		t.Errorf("шаг datapath = %q, ожидался vpn", plan.stage)
+	}
+	if !strings.Contains(plan.describe, "адаптер tt") || !strings.Contains(plan.describe, "весь трафик") {
+		t.Errorf("описание datapath не про свой адаптер: %q", plan.describe)
+	}
+	if _, ok := plan.datapath(nil).(*datapath.Wintun); !ok {
+		t.Errorf("datapath не wintun: %T", plan.datapath(nil))
+	}
+	req := plan.datapath(nil).Requires()
+	if !req.Admin || !req.Netguard || len(req.Files) != 1 || req.Files[0] != "wintun.dll" {
+		t.Errorf("требования wintun не те: %+v", req)
+	}
+}
+
 // Права администратора проверяются до подключения: без них external
 // объясняет, что делать, одной строкой.
 func TestRequirementProblemsAdmin(t *testing.T) {

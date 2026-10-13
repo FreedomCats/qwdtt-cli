@@ -87,7 +87,7 @@ func addConnectFlags(fs *flag.FlagSet) *connectOptions {
 	fs.StringVar(&o.turnTransport, "turn-transport", "", "транспорт до TURN-relay: udp или tcp")
 	fs.BoolVar(&o.dtls, "dtls", true, "поднимать DTLS поверх TURN; -dtls=false — прямой RTP-obfs AEAD")
 	fs.StringVar(&o.dns, "dns", "", "резолвер для доменов VK: yandex, cloudflare, google, doh-*, custom:IP, doh:URL")
-	fs.StringVar(&o.datapath, "datapath", "", "как отдавать трафик: socks или external")
+	fs.StringVar(&o.datapath, "datapath", "", "как отдавать трафик: socks, wintun или external")
 	fs.StringVar(&o.socksListen, "socks-listen", "", "адрес локального SOCKS5 при datapath=socks")
 	fs.StringVar(&o.listen, "listen", "", "локальный UDP-адрес, куда datapath отдаёт трафик")
 
@@ -295,6 +295,14 @@ func (plan *connectPlan) chooseDatapath() error {
 		plan.describe = "SOCKS5 на " + listen
 		return nil
 
+	case config.DatapathWintun:
+		plan.datapath = func(logf func(string, ...any)) datapath.Datapath {
+			return datapath.NewWintun(datapath.WintunOptions{Logf: logf})
+		}
+		plan.stage = core.StageVPN
+		plan.describe = "адаптер " + datapath.DefaultTunnelName + ", весь трафик системы"
+		return nil
+
 	case config.DatapathExternal:
 		plan.datapath = func(logf func(string, ...any)) datapath.Datapath {
 			return datapath.NewExternal(datapath.ExternalOptions{Logf: logf})
@@ -304,7 +312,7 @@ func (plan *connectPlan) chooseDatapath() error {
 		return nil
 
 	default:
-		// Validate уже отверг всё остальное, включая wintun, с объяснением.
+		// Validate уже отверг всё остальное с объяснением.
 		return fmt.Errorf("datapath %q не поддерживается", plan.profile.Datapath)
 	}
 }
@@ -393,7 +401,10 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	// экземпляр без Start сети не трогает.
 	req := plan.datapath(nil).Requires()
 	if problems := requirementProblems(req); len(problems) > 0 {
-		return errors.New("datapath " + plan.describe + ": " + strings.Join(problems, "; "))
+		// socks не требует ничего, так что проблемы бывают только у остальных,
+		// и у них всегда есть выход попроще (architecture.md §09).
+		return errors.New("datapath " + plan.describe + ": " + strings.Join(problems, "; ") +
+			"; без прав и установленных файлов работает -datapath socks")
 	}
 	if req.Warning != "" {
 		fmt.Fprintf(e.stderr, "Предупреждение: %s\n", req.Warning)

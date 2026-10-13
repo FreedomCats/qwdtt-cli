@@ -34,8 +34,8 @@ const (
 	// DatapathExternal — конфиг отдаётся штатному WireGuard, тот поднимает
 	// туннель сам. Нужны права администратора и установленный WireGuard.
 	DatapathExternal = "external"
-	// DatapathWintun — свой адаптер поверх wintun.dll. Появится в Э2;
-	// в профиле принимается только затем, чтобы сказать об этом внятно.
+	// DatapathWintun — свой адаптер поверх wintun.dll, весь трафик системы
+	// (Э2). Нужны права администратора и wintun.dll рядом с tt.
 	DatapathWintun = "wintun"
 )
 

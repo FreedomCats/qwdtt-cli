@@ -179,15 +179,11 @@ func oneOfProblem(key, value string, allowed ...string) string {
 
 func datapathProblem(value string) string {
 	switch strings.TrimSpace(value) {
-	case "", DatapathSocks, DatapathExternal:
+	case "", DatapathSocks, DatapathWintun, DatapathExternal:
 		return ""
-	case DatapathWintun:
-		return fmt.Sprintf(
-			"datapath = %q: свой адаптер появится в Э2; сейчас доступны %q (без прав администратора) и %q",
-			DatapathWintun, DatapathSocks, DatapathExternal)
 	default:
 		return fmt.Sprintf("datapath = %q: допустимы %s",
-			value, quotedList([]string{DatapathSocks, DatapathExternal}))
+			value, quotedList([]string{DatapathSocks, DatapathWintun, DatapathExternal}))
 	}
 }
 
