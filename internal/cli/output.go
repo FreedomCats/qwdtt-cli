@@ -306,7 +306,31 @@ func (p *printer) event(ev core.Event) {
 
 	case core.EventCaptchaRequired:
 		// О капче говорит диспетчер решателя — он знает, возьмётся ли за неё.
+
+	case core.EventHashCheck:
+		p.hashCheck(ev)
+
+	case core.EventPing:
+		// Неудача не печатается: RunPing возвращает ту же ошибку, и её
+		// печатает общий обработчик команды — в stderr, с кодом возврата 1.
+		if ev.Err == nil {
+			p.line("задержка до сервера через TURN: %d мс", ev.RTT.Milliseconds())
+		}
 	}
+}
+
+// hashCheck печатает строку таблицы `tt hashes`: номер, хеш (обрезанный —
+// целиком он секрет), статус словом из ядра и пояснение. Столбцы выровнены,
+// чтобы статусы читались сверху вниз; начало проверки — только с -v.
+func (p *printer) hashCheck(ev core.EventHashCheck) {
+	short := supervisor.ShortHash(ev.Hash)
+	if ev.Status == core.HashCheckRunning {
+		if p.verbose {
+			p.line("хеш %d/%d %s: проверяется", ev.Index, ev.Total, short)
+		}
+		return
+	}
+	p.line("хеш %d/%d %-9s %-8s %s", ev.Index, ev.Total, short, ev.Status, strings.TrimSpace(ev.Msg))
 }
 
 func (p *printer) stage(ev core.EventStage) {

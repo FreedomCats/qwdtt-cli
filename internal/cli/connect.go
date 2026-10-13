@@ -140,17 +140,8 @@ type connectPlan struct {
 // planConnect собирает план: профиль с флагами поверх, секреты из хранилища,
 // настройки ядра и datapath.
 func planConnect(opts *connectOptions, name string) (*connectPlan, error) {
-	path, file, err := loadProfiles(opts.common.config)
+	path, p, err := profileWithFlags(opts, name)
 	if err != nil {
-		return nil, err
-	}
-	base, err := file.Profile(name)
-	if err != nil {
-		return nil, err
-	}
-
-	p := overrideProfile(base, opts)
-	if err := p.Validate(); err != nil {
 		return nil, err
 	}
 
@@ -171,6 +162,27 @@ func planConnect(opts *connectOptions, name string) (*connectPlan, error) {
 		return nil, err
 	}
 	return plan, nil
+}
+
+// profileWithFlags читает файл настроек, выбирает профиль и кладёт поверх
+// названные флаги. Общая часть connect, ping и hashes: у диагностических
+// команд флагов меньше, но действуют они так же — один запуск, файл не
+// трогается. Возвращает путь к файлу: по нему открывается хранилище секретов.
+func profileWithFlags(opts *connectOptions, name string) (string, *config.Profile, error) {
+	path, file, err := loadProfiles(opts.common.config)
+	if err != nil {
+		return "", nil, err
+	}
+	base, err := file.Profile(name)
+	if err != nil {
+		return "", nil, err
+	}
+
+	p := overrideProfile(base, opts)
+	if err := p.Validate(); err != nil {
+		return "", nil, err
+	}
+	return path, p, nil
 }
 
 // overrideProfile кладёт названные флаги поверх профиля и возвращает копию:
@@ -212,29 +224,51 @@ func overrideProfile(base *config.Profile, opts *connectOptions) *config.Profile
 // coreConfig переводит профиль в настройки ядра и разворачивает ссылки на
 // секреты. Profile.Core оставляет пароль и хеши пустыми намеренно (C1):
 // хранилище открывает тот, кто знает, где лежит файл настроек.
+//
+// Секреты разворачиваются по отдельности: `tt hashes` (G3) обходится одними
+// хешами, и отсутствие пароля ему не помеха.
 func coreConfig(p *config.Profile, store config.SecretStore) (core.Config, error) {
 	cfg := p.Core()
 
-	password, err := store.Get(p.PasswordRef)
+	password, err := secretPassword(p, store)
 	if err != nil {
-		return cfg, secretError("пароль подключения", p.Name, "-password", err)
+		return cfg, err
 	}
-	raw, err := store.Get(p.VkHashesRef)
+	hashes, err := secretHashes(p, store)
 	if err != nil {
-		return cfg, secretError("хеши звонков VK", p.Name, "-hashes", err)
-	}
-
-	// Хеши лежат одной строкой, как их ввёл пользователь; режет её ядро —
-	// тем же разбором, что применяется к флагу апстрима.
-	hashes := core.ParseHashes(raw)
-	if len(hashes) == 0 {
-		return cfg, fmt.Errorf("в хранилище нет ни одного хеша звонка для профиля %q; "+
-			"запишите их заново: tt profile set %s -hashes", p.Name, p.Name)
+		return cfg, err
 	}
 
 	cfg.Password = password
 	cfg.Hashes = hashes
 	return cfg, nil
+}
+
+// secretPassword разворачивает ссылку на пароль подключения.
+func secretPassword(p *config.Profile, store config.SecretStore) (string, error) {
+	password, err := store.Get(p.PasswordRef)
+	if err != nil {
+		return "", secretError("пароль подключения", p.Name, "-password", err)
+	}
+	return password, nil
+}
+
+// secretHashes разворачивает ссылку на хеши звонков VK и режет их списком.
+//
+// Хеши лежат одной строкой, как их ввёл пользователь; режет её ядро — тем же
+// разбором, что применяется к флагу апстрима.
+func secretHashes(p *config.Profile, store config.SecretStore) ([]string, error) {
+	raw, err := store.Get(p.VkHashesRef)
+	if err != nil {
+		return nil, secretError("хеши звонков VK", p.Name, "-hashes", err)
+	}
+
+	hashes := core.ParseHashes(raw)
+	if len(hashes) == 0 {
+		return nil, fmt.Errorf("в хранилище нет ни одного хеша звонка для профиля %q; "+
+			"запишите их заново: tt profile set %s -hashes", p.Name, p.Name)
+	}
+	return hashes, nil
 }
 
 // secretError объясняет, что секрет не развернулся и как это починить. Само

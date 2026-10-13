@@ -160,37 +160,6 @@ func TestUsageErrors(t *testing.T) {
 	}
 }
 
-// Команды, за которыми ещё ничего не стоит, обязаны сказать это словами
-// и назвать задачу — а не притвориться, что отработали.
-func TestNotImplementedCommands(t *testing.T) {
-	cases := []struct {
-		args []string
-		task string
-	}{
-		{[]string{"ping"}, "G3"},
-		{[]string{"hashes"}, "G3"},
-	}
-
-	for _, tc := range cases {
-		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
-			code, stdout, stderr := runCLI(tc.args...)
-
-			if code != exitError {
-				t.Errorf("код возврата = %d, ожидался %d", code, exitError)
-			}
-			if stdout != "" {
-				t.Errorf("ошибка ушла в stdout: %q", stdout)
-			}
-			if !strings.Contains(stderr, tc.task) {
-				t.Errorf("в сообщении не названа задача %s:\n%s", tc.task, stderr)
-			}
-			if strings.Contains(stderr, "Помощь: tt ") {
-				t.Errorf("незаконченная команда выдана за ошибку в аргументах:\n%s", stderr)
-			}
-		})
-	}
-}
-
 func TestVersion(t *testing.T) {
 	code, stdout, stderr := runCLI("version")
 
