@@ -27,17 +27,14 @@
 // Команда ничего не меняет в системе. Без прав администратора часть разделов
 // (WFP) печатает ошибку вместо данных; остальное работает.
 //
-// Только Windows: снимок под Linux и macOS — в Э4.
+// Снимок Linux — main_linux.go, общие разделы — common.go; macOS — в Э4.
 package main
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"net"
-	"net/http"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -71,9 +68,6 @@ const (
 	nrptPolicyKey = `SOFTWARE\Policies\Microsoft\Windows NT\DNSClient\DnsPolicyConfig`
 	tcpipKey      = `SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\`
 	tcpip6Key     = `SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters\Interfaces\`
-
-	myaddrName = "o-o.myaddr.l.google.com"
-	ipURL      = "https://ifconfig.me/ip"
 )
 
 type options struct {
@@ -111,11 +105,7 @@ func defaultConfDir() string {
 // run печатает снимок. Ошибка одного раздела печатается в нём же и не
 // мешает остальным.
 func run(w io.Writer, o options) {
-	title := "снимок " + time.Now().Format("2006-01-02 15:04:05")
-	if o.label != "" {
-		title += " — " + o.label
-	}
-	fmt.Fprintf(w, "=== %s ===\n", title)
+	header(w, o.label)
 
 	section(w, "Процессы tt.exe", func(w io.Writer) error { return printProcesses(w) })
 	var guids []windows.GUID
@@ -125,13 +115,7 @@ func run(w io.Writer, o options) {
 	})
 	section(w, "Маршруты /0 и /1", func(w io.Writer) error { return printRoutes(w) })
 	if !o.offline {
-		section(w, "Внешний адрес (без прокси)", func(w io.Writer) error {
-			printExternalIP(w, o.timeout)
-			return nil
-		})
-		section(w, "Резолвер ("+myaddrName+")", func(w io.Writer) error {
-			return printResolver(w, o.timeout)
-		})
+		printNetwork(w, o.timeout)
 	}
 	section(w, "WFP: защита DNS", func(w io.Writer) error { return printWFP(w) })
 	section(w, "Реестр", func(w io.Writer) error {
@@ -142,13 +126,6 @@ func run(w io.Writer, o options) {
 		printExternal(w, o.name, o.confDir)
 		return nil
 	})
-}
-
-func section(w io.Writer, name string, f func(io.Writer) error) {
-	fmt.Fprintf(w, "\n-- %s\n", name)
-	if err := f(w); err != nil {
-		fmt.Fprintf(w, "   ошибка: %v\n", err)
-	}
 }
 
 func printProcesses(w io.Writer) error {
@@ -251,15 +228,6 @@ func interfaceMetric(luid winipcfg.LUID, family winipcfg.AddressFamily) string {
 	return fmt.Sprint(row.Metric)
 }
 
-type route struct {
-	prefix  netip.Prefix
-	nextHop netip.Addr
-	iface   string
-	index   uint32
-	metric  uint32 // маршрута
-	ifMet   string // интерфейса
-}
-
 func printRoutes(w io.Writer) error {
 	names := interfaceNames()
 	var routes []route
@@ -288,36 +256,10 @@ func printRoutes(w io.Writer) error {
 		fmt.Fprintln(w, "   нет")
 	}
 	for _, r := range routes {
-		hop := "on-link"
-		if r.nextHop.IsValid() && !r.nextHop.IsUnspecified() {
-			hop = "через " + r.nextHop.String()
-		}
 		fmt.Fprintf(w, "   %-14s %-22s %s (индекс %d), метрика %d + интерфейс %s\n",
-			r.prefix, hop, r.iface, r.index, r.metric, r.ifMet)
+			r.prefix, hopString(r.nextHop), r.iface, r.index, r.metric, r.ifMet)
 	}
 	return nil
-}
-
-// interestingRoute — маршрут по умолчанию или половина полного туннеля.
-func interestingRoute(p netip.Prefix) bool {
-	return p.IsValid() && p.Bits() <= 1
-}
-
-// sortRoutes — IPv4 перед IPv6, затем по префиксу и индексу интерфейса.
-func sortRoutes(rs []route) {
-	sort.SliceStable(rs, func(i, j int) bool {
-		a, b := rs[i], rs[j]
-		if a.prefix.Addr().Is4() != b.prefix.Addr().Is4() {
-			return a.prefix.Addr().Is4()
-		}
-		if c := a.prefix.Addr().Compare(b.prefix.Addr()); c != 0 {
-			return c < 0
-		}
-		if a.prefix.Bits() != b.prefix.Bits() {
-			return a.prefix.Bits() < b.prefix.Bits()
-		}
-		return a.index < b.index
-	})
 }
 
 func interfaceNames() map[winipcfg.LUID]string {
@@ -330,71 +272,6 @@ func interfaceNames() map[winipcfg.LUID]string {
 		names[a.LUID] = a.FriendlyName()
 	}
 	return names
-}
-
-func printExternalIP(w io.Writer, timeout time.Duration) {
-	for _, network := range []string{"tcp4", "tcp6"} {
-		ip, err := externalIP(network, timeout)
-		label := "IPv4"
-		if network == "tcp6" {
-			label = "IPv6"
-		}
-		if err != nil {
-			fmt.Fprintf(w, "   %s: нет (%v)\n", label, shortErr(err))
-			continue
-		}
-		fmt.Fprintf(w, "   %s: %s\n", label, ip)
-	}
-}
-
-// externalIP спрашивает ifconfig.me по заданному семейству и мимо прокси
-// из окружения.
-func externalIP(network string, timeout time.Duration) (string, error) {
-	d := &net.Dialer{Timeout: timeout}
-	client := &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			Proxy: nil,
-			DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
-				return d.DialContext(ctx, network, addr)
-			},
-		},
-	}
-	req, err := http.NewRequest(http.MethodGet, ipURL, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "curl/8")
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 256))
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("HTTP %s", resp.Status)
-	}
-	ip, err := netip.ParseAddr(strings.TrimSpace(string(body)))
-	if err != nil {
-		return "", fmt.Errorf("ответ не адрес: %q", body)
-	}
-	return ip.String(), nil
-}
-
-func printResolver(w io.Writer, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	txt, err := net.DefaultResolver.LookupTXT(ctx, myaddrName)
-	if err != nil {
-		return errors.New(shortErr(err))
-	}
-	for _, t := range txt {
-		fmt.Fprintf(w, "   %s\n", t)
-	}
-	return nil
 }
 
 func printWFP(w io.Writer) error {
@@ -570,39 +447,4 @@ func guidString(g *windows.GUID) string {
 		return "GUID неизвестен"
 	}
 	return g.String()
-}
-
-func listOrNone(xs []string) string {
-	if len(xs) == 0 {
-		return "нет"
-	}
-	return strings.Join(xs, ", ")
-}
-
-// shortErr обрезает длинные сетевые ошибки Go до сути: «dial tcp6 …: connect:
-// …» превращается в последнюю часть после двоеточия, если она не пустая.
-func shortErr(err error) string {
-	var dnsErr *net.DNSError
-	if errors.As(err, &dnsErr) {
-		if dnsErr.IsNotFound {
-			return "имя не найдено"
-		}
-		if dnsErr.IsTimeout {
-			return "таймаут DNS"
-		}
-		return dnsErr.Err
-	}
-	if errors.Is(err, context.DeadlineExceeded) || isTimeout(err) {
-		return "таймаут"
-	}
-	s := err.Error()
-	if i := strings.LastIndex(s, ": "); i >= 0 && i+2 < len(s) {
-		return s[i+2:]
-	}
-	return s
-}
-
-func isTimeout(err error) bool {
-	var ne net.Error
-	return errors.As(err, &ne) && ne.Timeout()
 }

@@ -1,6 +1,6 @@
-//go:build !windows
+//go:build !windows && !linux
 
-// Обрыв через WFP есть только под Windows.
+// Обрыв есть только под Windows (WFP) и Linux (nftables, netlink).
 package main
 
 import (
@@ -9,6 +9,6 @@ import (
 )
 
 func main() {
-	fmt.Fprintln(os.Stderr, "outage: только для Windows")
+	fmt.Fprintln(os.Stderr, "outage: только для Windows и Linux")
 	os.Exit(2)
 }

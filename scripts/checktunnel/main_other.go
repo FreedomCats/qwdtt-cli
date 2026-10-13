@@ -1,6 +1,6 @@
-//go:build !windows
+//go:build !windows && !linux
 
-// Снимок состояния пока только для Windows; под Linux и macOS — в Э4.
+// Снимок состояния — только для Windows и Linux; под macOS — в Э4.
 package main
 
 import (
@@ -9,6 +9,6 @@ import (
 )
 
 func main() {
-	fmt.Fprintln(os.Stderr, "checktunnel: пока только для Windows")
+	fmt.Fprintln(os.Stderr, "checktunnel: только для Windows и Linux")
 	os.Exit(2)
 }

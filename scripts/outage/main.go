@@ -18,7 +18,7 @@
 // стоят, весь трафик машины идёт в никуда — и сеть того, кто запустил
 // проверку, тоже; снять обрыв руками в этот момент может быть нечем.
 //
-// Нужны права администратора. Только Windows.
+// Нужны права администратора. Linux — main_linux.go, общее — common.go.
 package main
 
 import (
@@ -27,7 +27,6 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
-	"strings"
 	"time"
 
 	"github.com/tailscale/wf"
@@ -58,25 +57,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, "outage:", err)
 		os.Exit(1)
 	}
-}
-
-func parseAddrs(s string) ([]netip.Addr, error) {
-	var out []netip.Addr
-	for _, f := range strings.Split(s, ",") {
-		f = strings.TrimSpace(f)
-		if f == "" {
-			continue
-		}
-		a, err := netip.ParseAddr(f)
-		if err != nil {
-			return nil, fmt.Errorf("адрес %q: %w", f, err)
-		}
-		out = append(out, a.Unmap())
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("нет адресов")
-	}
-	return out, nil
 }
 
 // layersFor — слои IP-пакетов семейства адреса: входящие и исходящие.
