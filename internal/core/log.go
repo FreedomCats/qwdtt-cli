@@ -14,7 +14,6 @@ package core
 
 import (
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -29,30 +28,18 @@ func logln(args ...any) {
 	emitLog(strings.TrimRight(fmt.Sprintln(args...), "\n"))
 }
 
-// fatalf — замена log.Fatalf.
+// Пары для log.Fatal здесь нет, и это не пробел.
 //
-// Библиотеке останавливать процесс нельзя, и os.Exit отсюда уйдёт в задаче B4
-// вместе с самими вызовами: все они сидят в main() и проверяют аргументы, а
-// это работа CLI. До тех пор поведение сохранено дословно — менять его заодно
-// с механической заменой логов было бы способом получить сюрприз.
-func fatalf(format string, args ...any) {
-	emitFatal(fmt.Sprintf(format, args...))
-}
-
-// fatalln — замена log.Fatal и log.Fatalln.
-func fatalln(args ...any) {
-	emitFatal(strings.TrimRight(fmt.Sprintln(args...), "\n"))
-}
+// Все восемь вызовов сидели в func main() и проверяли аргументы: эта работа
+// уехала в Config.Validate и в cmd/tt вместе с самой main() (задача B4).
+// Останавливать процесс библиотека не вправе, а превратить log.Fatal в обычную
+// запись в лог нельзя тем более: код после такого вызова писали в расчёте на
+// то, что до него не дойдут. Если апстрим заведёт новый log.Fatal, перенос
+// ядра упадёт с объяснением — проверка стоит в scripts/vendor-core.ps1.
 
 func emitLog(msg string) {
 	tag, text := splitLogTag(msg)
 	emit(EventLog{Level: guessLogLevel(text), Tag: tag, Msg: text})
-}
-
-func emitFatal(msg string) {
-	tag, text := splitLogTag(msg)
-	emit(EventLog{Level: LevelError, Tag: tag, Msg: text})
-	os.Exit(1)
 }
 
 // splitLogTag отрезает от сообщения ведущий тег в квадратных скобках.

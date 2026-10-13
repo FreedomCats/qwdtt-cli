@@ -14,6 +14,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -263,19 +264,25 @@ type EventPing struct {
 func (EventPing) isCoreEvent() {}
 
 // emitPing отправляет удачный замер. Значение приходит в миллисекундах — так
-// его считает RunPing.
+// его считает runPing.
 func emitPing(rttMillis int64) {
 	emit(EventPing{RTT: time.Duration(rttMillis) * time.Millisecond})
 }
 
-// emitPingError отправляет неудачу. lastErr бывает нулевым: если хешей не было
-// вовсе, ни одной попытки не делалось и ошибке взяться неоткуда.
-func emitPingError(lastErr error) {
+// emitPingError отправляет неудачу и возвращает ту же ошибку: RunPing отдаёт
+// её наружу, чтобы CLI мог выставить код возврата, не разбирая события.
+//
+// lastErr бывает нулевым: если хешей не было вовсе, ни одной попытки не
+// делалось и ошибке взяться неоткуда.
+func emitPingError(lastErr error) error {
+	var err error
 	if lastErr == nil {
-		emit(EventPing{Err: fmt.Errorf("не проверено ни одного хеша звонка")})
-		return
+		err = errors.New("не проверено ни одного хеша звонка")
+	} else {
+		err = fmt.Errorf("все хеши провалились, последняя ошибка: %w", lastErr)
 	}
-	emit(EventPing{Err: fmt.Errorf("все хеши провалились, последняя ошибка: %w", lastErr)})
+	emit(EventPing{Err: err})
+	return err
 }
 
 // ──────────────────────────── конфиг ────────────────────────────

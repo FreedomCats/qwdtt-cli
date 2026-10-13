@@ -12,7 +12,9 @@
       2. Меняет package main на package core.
       3. Применяет платформенные правки, без которых ядро не собирается
          под Windows и macOS (см. раздел "правки" ниже).
-      4. Записывает internal/core/CORE_VERSION с коммитом апстрима.
+      4. Превращает ядро в библиотеку: вырезает func main(), заменяет маркеры
+         stdout на события, а log.Printf — на logf, и снимает осиротевшие импорты.
+      5. Записывает internal/core/CORE_VERSION с коммитом апстрима.
 
     Скрипт идемпотентен: повторный запуск на том же апстриме даёт тот же результат.
     Файлы, которых нет ни в апстриме, ни в списке генерируемых, не трогаются —
@@ -138,8 +140,8 @@ func setReuseAddr(network, address string, c syscall.RawConn) error {
 '@
 }
 
-# Замены в апстримном коде (задача B2): маркеры stdout и рамки с конфигом
-# становятся событиями из events.go.
+# Замены в апстримном коде: маркеры stdout становятся событиями из events.go
+# (задача B2), а func main() уезжает в наш run.go (задача B4).
 #
 # Правила ниже — единственное место, где эти правки живут. Прямая правка
 # internal/core/*.go будет затёрта при следующем переносе ядра.
@@ -155,7 +157,38 @@ func setReuseAddr(network, address string, c syscall.RawConn) error {
 # Count проверяется: если апстрим перепишет строку и шаблон перестанет совпадать,
 # скрипт упадёт. Молча потерять правку хуже, чем упасть.
 $replacements = @(
-    # --- шесть маркеров stdout ---
+    # --- func main() уезжает в cmd/tt ---
+    # Разбор флагов, сигналы, чтение stdin и os.Exit принадлежат программе,
+    # а не библиотеке; то, что осталось от main() по существу, переписано
+    # руками в internal/core/run.go (задача B4). Механической правкой такое
+    # не выразить, поэтому функция вырезается целиком.
+    #
+    # Count здесь работает так же, как везде: если апстрим переименует main
+    # или сменит её сигнатуру, скрипт упадёт и правку придётся пересмотреть —
+    # вместе с run.go, который повторяет её содержимое.
+    #
+    # Шаблон опирается на gofmt: тело функции отбито табами, поэтому первая
+    # строка, начинающаяся со скобки в нулевой колонке, и есть её конец.
+    # Пустая строка перед объявлением съедается вместе с ним, иначе файл
+    # заканчивался бы ею и gofmt считал бы его неотформатированным.
+    @{
+        File    = 'main.go'
+        Count   = 1
+        Pattern = '(?ms)^\nfunc main\(\) \{\n.*?^\}\n'
+        Replace = ''
+    }
+
+    # RunPing из session.go — не точка входа, а один замер поверх готовых кредов.
+    # Экспортированной она была ради main(); публичный замер теперь называется
+    # так же и живёт в run.go, поэтому апстримную функцию делаем внутренней.
+    @{
+        File    = 'session.go'
+        Count   = 1
+        Pattern = '(?m)^func RunPing\($'
+        Replace = 'func runPing('
+    }
+
+    # --- четыре маркера stdout ---
     @{
         File    = 'main.go'
         Count   = 1
@@ -167,18 +200,6 @@ $replacements = @(
         Count   = 1
         Pattern = '(?m)^(\t+)fmt\.Printf\("HASH_CHECK\|%d\|%s\|%s\|%s\\n", i\+1, hash, status, sanitizeHashCheckMessage\(message\)\)$'
         Replace = '${1}emitHashCheck(i+1, len(hashes), hash, HashCheckStatus(status), sanitizeHashCheckMessage(message))'
-    }
-    @{
-        File    = 'main.go'
-        Count   = 1
-        Pattern = '(?m)^(\t+)fmt\.Printf\("PING_RESULT\|%d\\n", rtt\)$'
-        Replace = '${1}emitPing(rtt)'
-    }
-    @{
-        File    = 'main.go'
-        Count   = 1
-        Pattern = '(?m)^(\t+)fmt\.Printf\("PING_ERROR\|All hashes failed\. Last error: %v\\n", lastErr\)$'
-        Replace = '${1}emitPingError(lastErr)'
     }
     @{
         File    = 'creds.go'
@@ -193,29 +214,9 @@ $replacements = @(
         Replace = '${1}emit(EventVkAuthRequired{Link: link})'
     }
 
-    # --- рамки с конфигом, которые ядро рисовало в stdout ---
-    @{
-        File    = 'main.go'
-        Count   = 1
-        Pattern = '(?m)^(\t+)fmt\.Println\(\)\n\t+fmt\.Println\("╔[^"]*RAW Конфиг[^"]*╗"\)\n(?:[^\n]*\n){3}\t+fmt\.Println\("╚[^"]*╝"\)$'
-        Replace = '${1}emit(EventRawConfig{IP: ip, DNS: dnsCSV, MTU: mtuStr})'
-    }
-    @{
-        File    = 'main.go'
-        Count   = 1
-        Pattern = '(?m)^(\t+)fmt\.Println\(\)\n\t+fmt\.Println\("╔[^"]*WireGuard Конфиг[^"]*╗"\)\n(?:[^\n]*\n){3}\t+fmt\.Println\("╚[^"]*╝"\)$'
-        Replace = '${1}emit(EventConfig{WireGuard: finalConf})'
-    }
-
     # --- шаги подключения ---
     # Ядро отправляет только середину схемы: DNS проверяется до его запуска,
     # а VPN/SOCKS/DONE закрывает супервизор по EventConfig (см. events.go).
-    @{
-        File        = 'main.go'
-        Count       = 1
-        Pattern     = '(?m)^(\t+)log\.Printf\("\[WRAP\] Ключ выведен из пароля, режим RTP AEAD активен"\)$'
-        InsertAfter = 'emitStage(StageWrap, StageOK, 0, "")'
-    }
     @{
         File        = 'group.go'
         Count       = 1
@@ -279,16 +280,6 @@ $replacements = @(
         InsertAfter = 'emitStage(StageWorkers, StageOK, sessionID, "")'
     }
 
-    # --- формат вывода перестаёт быть делом ядра ---
-    # Библиотека не вправе переставлять флаги глобального логгера: как выглядит
-    # строка лога, решает CLI, который получает EventLog (задача B3).
-    @{
-        File    = 'main.go'
-        Count   = 1
-        Pattern = '(?m)^\t+log\.SetFlags\(log\.Ldate \| log\.Ltime \| log\.Lmicroseconds\)\n\n'
-        Replace = ''
-    }
-
     # --- счётчики трафика ---
     @{
         File        = 'stats.go'
@@ -302,15 +293,25 @@ $replacements = @(
 # и они во всех файлах, поэтому она идёт отдельным проходом, а не правилами
 # со счётчиком: ноль совпадений в конкретном файле здесь норма.
 #
-# Тела logf, logln, fatalf и fatalln — в internal/core/log.go.
+# Тела logf и logln — в internal/core/log.go. Пары для log.Fatal здесь нет
+# намеренно: см. проверку в Convert-CoreFile.
 $logReplacements = [ordered]@{
     '\blog\.Printf\('  = 'logf('
     '\blog\.Println\(' = 'logln('
     '\blog\.Print\('   = 'logln('
-    '\blog\.Fatalf\('  = 'fatalf('
-    '\blog\.Fatalln\(' = 'fatalln('
-    '\blog\.Fatal\('   = 'fatalln('
 }
+
+# Импорты, которые могут осиротеть после наших правок: вместе с func main()
+# уходят bufio, flag, net, os, os/signal, sync и syscall, а вместе с log.Printf —
+# сам log. Go на неиспользованный импорт не смотрит сквозь пальцы, поэтому
+# осиротевшие строки снимаются, а не оставляются на память.
+#
+# Список закрытый: снимается только то, что могли осиротить именно наши правки.
+# Ложно снять импорт нельзя — проверка идёт по имени пакета, и если оно в файле
+# встречается, строка остаётся. Так, socks5.go сохраняет "log": он отдаёт
+# *log.Logger чужой библиотеке SOCKS5, и это её собственный вывод — он проходит
+# через socksLogFilter и уже оттуда попадает в logln.
+$prunableImports = @('bufio', 'flag', 'log', 'net', 'os', 'os/signal', 'sync', 'syscall')
 
 # ================================================================================
 
@@ -378,15 +379,30 @@ function Convert-CoreFile {
         $Text = [regex]::Replace($Text, $rule.Pattern, $replacement)
     }
 
+    # log.Fatal останавливает процесс, а библиотека этого делать не вправе.
+    # В апстриме все восемь вызовов сидели в func main() и проверяли аргументы;
+    # эту работу делают теперь Config.Validate и cmd/tt. Если апстрим заведёт
+    # новый log.Fatal, разбираться с ним нужно осознанно: молча превратить его
+    # в запись в лог нельзя — код после такого вызова писали в расчёте на то,
+    # что до него не дойдут.
+    if ($Text -match '\blog\.Fatal') {
+        throw @"
+В $Name есть log.Fatal, а библиотека не вправе останавливать процесс.
+Перенесите проверку в cmd/tt или опишите замену правилом в `$replacements.
+"@
+    }
+
     foreach ($pattern in $logReplacements.Keys) {
         $Text = [regex]::Replace($Text, $pattern, $logReplacements[$pattern])
     }
 
-    # Импорт "log" остаётся только там, где ядро всё ещё им пользуется:
-    # socks5.go отдаёт *log.Logger чужой библиотеке SOCKS5, и это не наш вывод,
-    # а её собственный — он проходит через фильтр и уже оттуда попадает в logln.
-    if ($Text -notmatch '\blog\.') {
-        $Text = [regex]::Replace($Text, '(?m)^\t"log"\n', '')
+    # Осиротевшие импорты — см. $prunableImports. Имя пакета берётся последним
+    # сегментом пути: "os/signal" даёт signal. Импорты с псевдонимом и пустые
+    # (_ "…") под шаблон не попадают намеренно — в ядре их нет.
+    foreach ($import in $prunableImports) {
+        $alias = ($import -split '/')[-1]
+        if ($Text -match ('\b' + [regex]::Escape($alias) + '\.')) { continue }
+        $Text = [regex]::Replace($Text, '(?m)^\t"' + [regex]::Escape($import) + '"\n', '')
     }
 
     if ($buildTags.ContainsKey($Name)) {

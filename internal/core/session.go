@@ -717,7 +717,7 @@ func RunSession(
 	return configDelivered, nil
 }
 
-func RunPing(
+func runPing(
 	ctx context.Context,
 	tp *TurnParams,
 	peer *net.UDPAddr,
