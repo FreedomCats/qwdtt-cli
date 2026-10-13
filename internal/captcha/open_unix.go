@@ -13,18 +13,24 @@ import (
 	"github.com/FreedomCats/qwdtt-cli/internal/sudo"
 )
 
-// asInvoker настраивает cmd на запуск от имени того, кто вызвал sudo: его uid,
-// группы и окружение его сеанса. Без sudo ничего не меняет. Ошибка — sudo
-// есть, а пользователя найти нельзя: тогда браузер не открывается вовсе (капча
-// остаётся ручной, ссылка уже напечатана), а не открывается от имени root.
-func asInvoker(cmd *exec.Cmd) error {
+// prepareCommand настраивает запуск программы, открывающей ссылку.
+//
+// Своя группа процессов (Setpgid): Ctrl+C в терминале получает вся группа
+// переднего плана, и браузер, которого до капчи не было и которого запустил
+// сам tt, закрылся бы вместе с tt.
+//
+// Под sudo — запуск от имени того, кто вызвал sudo: его uid, группы и
+// окружение его сеанса. Ошибка — sudo есть, а пользователя найти нельзя: тогда
+// браузер не открывается вовсе (капча остаётся ручной, ссылка уже напечатана),
+// а не открывается от имени root.
+func prepareCommand(cmd *exec.Cmd) error {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
 	u, err := sudo.Invoker()
 	if err != nil || u == nil {
 		return err
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Credential: &syscall.Credential{Uid: u.Uid, Gid: u.Gid, Groups: u.Groups},
-	}
+	cmd.SysProcAttr.Credential = &syscall.Credential{Uid: u.Uid, Gid: u.Gid, Groups: u.Groups}
 	cmd.Env = invokerEnv(os.Environ(), u, exists)
 	return nil
 }

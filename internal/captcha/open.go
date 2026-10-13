@@ -40,11 +40,13 @@ func OpenInBrowser(rawURL string) error {
 // зомби, пока жив tt (найдено первым прогоном на Linux). Код возврата не
 // важен — ссылку человеку уже напечатали.
 //
-// Под sudo программа запускается от имени того, кто вызвал sudo (asInvoker):
-// браузер root'а — не тот браузер, и окно его сеанса root может не получить.
+// На unix программа уходит в свою группу процессов, чтобы Ctrl+C для tt не
+// закрыл браузер, а под sudo запускается от имени того, кто вызвал sudo:
+// браузер root'а — не тот браузер, и окно его сеанса root может не получить
+// (prepareCommand).
 func startDetached(name string, args []string) error {
 	cmd := exec.Command(name, args...)
-	if err := asInvoker(cmd); err != nil {
+	if err := prepareCommand(cmd); err != nil {
 		return fmt.Errorf("%s: %w", name, err)
 	}
 	if err := cmd.Start(); err != nil {

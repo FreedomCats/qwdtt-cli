@@ -4,6 +4,7 @@ package captcha
 
 import "os/exec"
 
-// asInvoker — на Windows sudo нет, браузер и так запускается от имени того, кто
-// запустил tt. См. open_unix.go.
-func asInvoker(*exec.Cmd) error { return nil }
+// prepareCommand — на Windows sudo нет, браузер и так запускается от имени
+// того, кто запустил tt, а открывает его rundll32 вне консоли tt, так что
+// Ctrl+C его не задевает. См. open_unix.go.
+func prepareCommand(*exec.Cmd) error { return nil }
