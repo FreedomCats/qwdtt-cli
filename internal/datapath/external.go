@@ -57,9 +57,12 @@ type ExternalOptions struct {
 // записывается в файл, wireguard.exe ставит по нему службу туннеля, при
 // остановке служба снимается.
 //
-// Файл с приватным ключом живёт ровно столько, сколько идёт установка:
-// wireguard.exe копирует конфиг в своё хранилище, и после возврата наш файл
-// удаляется. Снятие службы удаляет и копию.
+// Файл с приватным ключом живёт столько же, сколько служба: служба хранит
+// путь к нему и читает его при каждом запуске, копии у себя не делает.
+// Удаляется файл в Close, после снятия службы, и при любом отказе Start.
+// (Первая версия D3 удаляла файл сразу после установки — служба падала
+// с «файл не найден», а туннель числился работающим; найдено живой
+// проверкой H2.)
 type External struct {
 	opts ExternalOptions
 
@@ -67,6 +70,13 @@ type External struct {
 	// Ищется в конструкторе, чтобы Requires мог назвать точный путь.
 	program    string
 	programErr error
+
+	// serviceRunning ждёт, пока служба туннеля дойдёт до «работает», и
+	// отвечает ошибкой, если она остановилась. /installtunnelservice
+	// возвращается сразу после запуска службы, не дожидаясь её: без этой
+	// проверки упавшая служба выглядит успешной установкой. Поле — ради
+	// тестов, где настоящей службы нет.
+	serviceRunning func(ctx context.Context, name string) error
 
 	mu        sync.Mutex
 	started   bool
@@ -87,7 +97,7 @@ func NewExternal(opts ExternalOptions) *External {
 	if opts.Timeout <= 0 {
 		opts.Timeout = DefaultProgramTimeout
 	}
-	e := &External{opts: opts, done: make(chan struct{})}
+	e := &External{opts: opts, done: make(chan struct{}), serviceRunning: waitTunnelService}
 	if opts.Program != "" {
 		e.program = opts.Program
 	} else {
@@ -119,8 +129,8 @@ func (e *External) Endpoint() netip.AddrPort {
 	return e.endpoint
 }
 
-// Start записывает конфиг и ставит службу туннеля. Возвращается, когда
-// wireguard.exe отчитался об установке; файл конфига к этому моменту удалён.
+// Start записывает конфиг, ставит службу туннеля и ждёт, пока она заработает.
+// При любом отказе служба снимается, а файл удаляется: следов не остаётся.
 func (e *External) Start(ctx context.Context, conf *WGConfig) error {
 	if conf == nil {
 		return errors.New("external: пустой конфиг WireGuard")
@@ -149,13 +159,22 @@ func (e *External) Start(ctx context.Context, conf *WGConfig) error {
 		e.startFailed()
 		return err
 	}
-	// Файл нужен только на время установки: wireguard.exe забирает конфиг
-	// в своё хранилище. Удаляется при любом исходе.
-	defer func() { _ = os.Remove(path) }()
 
 	if err := e.run(ctx, "/installtunnelservice", path); err != nil {
+		_ = os.Remove(path)
 		e.startFailed()
 		return fmt.Errorf("external: установка службы туннеля %q: %w", e.opts.Name, err)
+	}
+
+	if err := e.serviceRunning(ctx, e.opts.Name); err != nil {
+		// Служба стоит, но не работает: снять её и убрать файл, иначе
+		// следующая попытка наткнётся на занятое имя, а ключ останется
+		// на диске.
+		_ = e.uninstall()
+		_ = os.Remove(path)
+		e.startFailed()
+		return fmt.Errorf("external: служба туннеля %q не запустилась: %w; подробности — wireguard.exe /dumplog",
+			e.opts.Name, err)
 	}
 
 	endpoint, ok := conf.EndpointAddrPort()
@@ -184,12 +203,11 @@ func (e *External) Start(ctx context.Context, conf *WGConfig) error {
 	return nil
 }
 
-// Close снимает службу туннеля. Безопасен до Start и при повторном вызове:
-// супервизор зовёт его из defer.
+// Close снимает службу туннеля и удаляет файл конфига. Безопасен до Start
+// и при повторном вызове: супервизор зовёт его из defer.
 //
-// Снятие идёт со своим сроком, а не с ctx туннеля: к этому моменту ctx обычно
-// уже отменён, а служба обязана быть снята — иначе после выхода tt в системе
-// останется туннель в никуда.
+// Служба обязана быть снята, иначе после выхода tt в системе останется
+// туннель в никуда; поэтому снятие идёт со своим сроком (см. uninstall).
 func (e *External) Close() error {
 	e.mu.Lock()
 	if e.closed {
@@ -202,19 +220,33 @@ func (e *External) Close() error {
 	close(e.done)
 	e.mu.Unlock()
 
-	// Файл мог уцелеть, если процесс умер между записью и удалением.
-	_ = os.Remove(e.confPath())
-
 	if !installed {
+		// Файл мог уцелеть, если прошлый процесс умер, не дойдя до Close.
+		_ = os.Remove(e.confPath())
 		return nil
 	}
+
+	// Сначала служба, потом файл: служба читает его, пока работает.
+	err := e.uninstall()
+	if rerr := os.Remove(e.confPath()); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+		err = errors.Join(err, fmt.Errorf("external: удаление конфига %s: %w", e.confPath(), rerr))
+	}
+	if err != nil {
+		return err
+	}
+	e.logf("[WG-EXT] служба туннеля %q снята, конфиг удалён", e.opts.Name)
+	return nil
+}
+
+// uninstall снимает службу туннеля со своим сроком, а не с ctx туннеля: к
+// этому моменту ctx обычно уже отменён, а служба обязана быть снята.
+func (e *External) uninstall() error {
 	ctx, cancel := context.WithTimeout(context.Background(), e.opts.Timeout)
 	defer cancel()
 	if err := e.run(ctx, "/uninstalltunnelservice", e.opts.Name); err != nil {
 		return fmt.Errorf("external: снятие службы туннеля %q: %w; снимите её вручную: wireguard.exe /uninstalltunnelservice %s",
 			e.opts.Name, err, e.opts.Name)
 	}
-	e.logf("[WG-EXT] служба туннеля %q снята", e.opts.Name)
 	return nil
 }
 

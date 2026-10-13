@@ -170,6 +170,13 @@ const (
 	StallNoDownlink StallReason = "нет ответа от сервера"
 	// StallNoStats — ядро перестало присылать счётчики, хотя работает.
 	StallNoStats StallReason = "ядро не присылает статистику"
+	// StallNoUplink — datapath поднят, а в ядро от него не пришло ни байта.
+	// Здоровый WireGuard так не молчит: сразу после подъёма он шлёт
+	// рукопожатие, дальше keepalive раз в 25 секунд. Найдено живой проверкой
+	// H2: служба штатного WireGuard упала при запуске, а туннель числился
+	// работающим — неотвеченной отправки, по которой судит StallNoDownlink,
+	// не было, потому что не было отправки вовсе.
+	StallNoUplink StallReason = "datapath не передал в туннель ни байта"
 )
 
 // Watchdog следит, что туннель не только поднят, но и работает.
@@ -199,6 +206,16 @@ type Watchdog struct {
 	// Нулевое значение означает, что долга нет: либо не отправляли, либо
 	// всё отвеченное, либо отправлено слишком мало, чтобы ждать ответа.
 	unansweredAt time.Time
+
+	// readyAt — когда пришёл шаг «туннель готов», то есть datapath поднят.
+	// Отсчёт StallNoUplink идёт от него, а не от первой статистики: до
+	// подъёма datapath ядро может минутами ждать креды или капчу, и
+	// восходящего трафика там нет законно. Нулевое значение — ещё не готов.
+	readyAt time.Time
+	// upAtReady — восходящий счётчик в момент готовности; uplinkSeen — вырос
+	// ли он с тех пор хоть на байт.
+	upAtReady  int64
+	uplinkSeen bool
 }
 
 // NewWatchdog заводит watchdog с окном терпения. Ноль означает
@@ -210,8 +227,18 @@ func NewWatchdog(window time.Duration) *Watchdog {
 	return &Watchdog{window: window, minBytes: DefaultStallBytes}
 }
 
-// Observe применяет событие ядра. События, кроме core.EventStats, он не трогает.
+// Observe применяет событие ядра. Нужны ему два: core.EventStats и шаг
+// «туннель готов» (core.StageDone), который отправляет сам супервизор;
+// остальные события он не трогает.
 func (w *Watchdog) Observe(ev core.Event, now time.Time) {
+	if stage, ok := ev.(core.EventStage); ok {
+		if stage.Stage == core.StageDone && stage.Status == core.StageOK {
+			w.mu.Lock()
+			w.readyAt, w.upAtReady, w.uplinkSeen = now, w.up, false
+			w.mu.Unlock()
+		}
+		return
+	}
 	stats, ok := ev.(core.EventStats)
 	if !ok {
 		return
@@ -240,6 +267,9 @@ func (w *Watchdog) Observe(ev core.Event, now time.Time) {
 		if w.unansweredAt.IsZero() && w.unansweredBytes >= w.minBytes {
 			w.unansweredAt = now
 		}
+	}
+	if !w.readyAt.IsZero() && stats.BytesUp > w.upAtReady {
+		w.uplinkSeen = true
 	}
 	w.workers = stats.ActiveWorkers
 	w.statsAt = now
@@ -277,6 +307,11 @@ func (w *Watchdog) Stall(now time.Time) StallReason {
 	if !w.unansweredAt.IsZero() && now.Sub(w.unansweredAt) > w.window {
 		return StallNoDownlink
 	}
+	if !w.readyAt.IsZero() && !w.uplinkSeen && now.Sub(w.readyAt) > w.window {
+		// Простаивающий туннель здоров, но «простой» у WireGuard — это
+		// keepalive, а не ноль: ноль значит, что datapath в ядро не пишет.
+		return StallNoUplink
+	}
 	return StallNone
 }
 
@@ -289,6 +324,7 @@ func (w *Watchdog) Reset() {
 	w.seen, w.workers, w.up, w.down = false, 0, 0, 0
 	w.unansweredBytes = 0
 	w.statsAt, w.unansweredAt = time.Time{}, time.Time{}
+	w.readyAt, w.upAtReady, w.uplinkSeen = time.Time{}, 0, false
 }
 
 // ─────────────────────────── перезапуск ───────────────────────────

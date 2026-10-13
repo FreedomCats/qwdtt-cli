@@ -68,7 +68,10 @@ type externalEnv struct {
 	t       *testing.T
 	dir     string
 	journal string
-	env     []string
+
+	// service подменяет проверку службы: настоящей службы в тестах нет.
+	// По умолчанию служба «работает».
+	service func(ctx context.Context, name string) error
 }
 
 func newExternalEnv(t *testing.T) *externalEnv {
@@ -76,7 +79,8 @@ func newExternalEnv(t *testing.T) *externalEnv {
 	dir := t.TempDir()
 	journal := filepath.Join(dir, "journal.txt")
 	t.Setenv(ttFakeWireGuard, journal)
-	return &externalEnv{t: t, dir: dir, journal: journal}
+	return &externalEnv{t: t, dir: dir, journal: journal,
+		service: func(context.Context, string) error { return nil }}
 }
 
 func (x *externalEnv) datapath(opts ExternalOptions) *External {
@@ -89,7 +93,13 @@ func (x *externalEnv) datapath(opts ExternalOptions) *External {
 	if opts.Dir == "" {
 		opts.Dir = filepath.Join(x.dir, "conf")
 	}
-	return NewExternal(opts)
+	dp := NewExternal(opts)
+	dp.serviceRunning = x.service
+	return dp
+}
+
+func (x *externalEnv) confPath() string {
+	return filepath.Join(x.dir, "conf", "tt.conf")
 }
 
 func (x *externalEnv) calls() []string {
@@ -114,7 +124,8 @@ func parsedServerConfig(t *testing.T) *WGConfig {
 }
 
 // Полный круг: Start пишет файл с исходным текстом и ставит службу по его
-// полному пути, после установки файла нет; Close снимает службу по имени.
+// полному пути; файл живёт, пока стоит служба, — она читает его при каждом
+// запуске (живая проверка H2). Close снимает службу и только потом удаляет файл.
 func TestExternalInstallsAndUninstalls(t *testing.T) {
 	x := newExternalEnv(t)
 	var logs []string
@@ -123,9 +134,9 @@ func TestExternalInstallsAndUninstalls(t *testing.T) {
 	if err := dp.Start(context.Background(), parsedServerConfig(t)); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	confPath := filepath.Join(x.dir, "conf", "tt.conf")
-	if _, err := os.Stat(confPath); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("файл конфига с приватным ключом остался после установки: %v", err)
+	confPath := x.confPath()
+	if _, err := os.Stat(confPath); err != nil {
+		t.Errorf("файла конфига нет, пока стоит служба, а она читает его при запуске: %v", err)
 	}
 	if got, want := dp.Endpoint().String(), "127.0.0.1:51820"; got != want {
 		t.Errorf("Endpoint = %s, ожидался %s", got, want)
@@ -133,6 +144,9 @@ func TestExternalInstallsAndUninstalls(t *testing.T) {
 
 	if err := dp.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
+	}
+	if _, err := os.Stat(confPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("файл конфига с приватным ключом остался после Close: %v", err)
 	}
 	if err := dp.Close(); err != nil {
 		t.Errorf("повторный Close: %v", err)
@@ -191,7 +205,7 @@ func TestExternalInstallFailure(t *testing.T) {
 			t.Errorf("в ошибке нет %q: %v", want, err)
 		}
 	}
-	if _, serr := os.Stat(filepath.Join(x.dir, "conf", "tt.conf")); !errors.Is(serr, os.ErrNotExist) {
+	if _, serr := os.Stat(x.confPath()); !errors.Is(serr, os.ErrNotExist) {
 		t.Errorf("файл конфига остался после отказа: %v", serr)
 	}
 
@@ -200,6 +214,47 @@ func TestExternalInstallFailure(t *testing.T) {
 	}
 	if calls := x.calls(); len(calls) != 1 {
 		t.Errorf("после отказа установки ожидался один вызов, а не %d: %v", len(calls), calls)
+	}
+}
+
+// Служба поставилась, но не заработала — так было на живой проверке H2,
+// когда файл удалялся раньше, чем служба его читала. Start обязан это
+// заметить: снять службу, убрать файл и вернуть ошибку с причиной.
+func TestExternalServiceDidNotStart(t *testing.T) {
+	x := newExternalEnv(t)
+	x.service = func(_ context.Context, name string) error {
+		if name != "tt" {
+			t.Errorf("проверялась служба %q, ожидалась tt", name)
+		}
+		return errors.New("служба остановилась: Не удается найти указанный файл.")
+	}
+	dp := x.datapath(ExternalOptions{})
+
+	err := dp.Start(context.Background(), parsedServerConfig(t))
+	if err == nil {
+		t.Fatal("Start прошёл, хотя служба не запустилась")
+	}
+	for _, want := range []string{"не запустилась", "Не удается найти указанный файл", "/dumplog"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("в ошибке нет %q: %v", want, err)
+		}
+	}
+	if _, serr := os.Stat(x.confPath()); !errors.Is(serr, os.ErrNotExist) {
+		t.Errorf("файл конфига остался после отказа службы: %v", serr)
+	}
+
+	calls := x.calls()
+	if len(calls) != 2 || !strings.HasPrefix(calls[0], "/installtunnelservice ") ||
+		calls[1] != "/uninstalltunnelservice tt" {
+		t.Errorf("ожидались установка и снятие, а было:\n%s", strings.Join(calls, "\n"))
+	}
+
+	// Служба уже снята: Close ничего не зовёт, повторный Start возможен.
+	if err := dp.Close(); err != nil {
+		t.Errorf("Close после отказа: %v", err)
+	}
+	if got := len(x.calls()); got != 2 {
+		t.Errorf("Close после отказа позвал wireguard.exe ещё раз: вызовов %d", got)
 	}
 }
 

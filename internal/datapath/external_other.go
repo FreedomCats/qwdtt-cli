@@ -2,7 +2,10 @@
 
 package datapath
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
 // locateWireGuard на других платформах не ищет ничего: штатный клиент там
 // устроен иначе (wg-quick, а не служба), и в Э1 datapath external — только
@@ -11,3 +14,7 @@ import "errors"
 func locateWireGuard() (string, error) {
 	return "", errors.New("datapath external в этом выпуске поддерживается только на Windows")
 }
+
+// waitTunnelService на других платформах проверять нечего: служб WireGuard
+// для Windows там нет, а явно заданный Program — это тесты.
+func waitTunnelService(context.Context, string) error { return nil }
