@@ -468,7 +468,7 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	var guard *netguard.Guard
 	if req.Netguard || netguardForced() {
 		var err error
-		if guard, err = setupNetguard(out, verbose); err != nil {
+		if guard, err = setupNetguard(out, verbose, req.Netguard); err != nil {
 			return err
 		}
 		cfg.DialControl = guard.Control
@@ -503,7 +503,7 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	// Сокеты, привязанные к ушедшему интерфейсу, иначе молчали бы до
 	// watchdog'а.
 	if guard != nil {
-		defer watchNetwork(out, guard, tun.Restart, own.id)()
+		defer watchNetwork(out, guard, tun.Restart, own.id, req.Netguard)()
 	}
 
 	out.header(cfg.Workers, len(cfg.Hashes))

@@ -58,9 +58,14 @@ func (g *Guard) watch(opts WatchOptions, sub func(func(uint64)) (func(), error),
 		opts.MaxWait = DefaultMaxWait
 	}
 	w := &watcher{
-		guard:   g,
-		opts:    opts,
-		choose:  pick,
+		guard: g,
+		opts:  opts,
+		// Выбор сравнивается с поставленным уже без IPv6, если тот запрещён:
+		// иначе смена одного интерфейса IPv6 сошла бы за смену сети.
+		choose: func(exclude uint64) (Choice, error) {
+			c, err := pick(exclude)
+			return g.allowed(c), err
+		},
 		now:     now,
 		settler: settler{settle: opts.Settle, maxWait: opts.MaxWait},
 	}

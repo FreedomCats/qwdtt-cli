@@ -27,20 +27,47 @@ func netguardForced() bool { return os.Getenv(netguardEnv) == "1" }
 // Control — хук для ядра. Выбор печатается строкой; при -v каждый
 // привязанный сокет — строкой [NETGUARD].
 //
+// fullTunnel — datapath забирает весь трафик системы (Requirements.Netguard):
+// тогда проверяется обратный фильтр системы. Строгий rp_filter на выбранном
+// интерфейсе — отказ до подключения, строгий фильтр IPv6 — сокеты ядра
+// только IPv4 (plan-e4.md, T3).
+//
 // Интерфейс выбирается здесь один раз; tt connect дальше следит за сменой
 // сети (watchNetwork), tt ping и tt hashes — нет: они короткие.
-func setupNetguard(out *printer, verbose bool) (*netguard.Guard, error) {
+func setupNetguard(out *printer, verbose, fullTunnel bool) (*netguard.Guard, error) {
 	guard := &netguard.Guard{}
 	if verbose {
 		guard.Logf = out.logf
+	}
+	if fullTunnel {
+		why, err := ipv6ReplyFilter()
+		if err != nil {
+			out.line("Внимание: фильтр обратного пути IPv6 не проверен: %v", err)
+		}
+		if why != "" {
+			guard.NoIPv6 = true
+			out.line("netguard: сокеты ядра — только IPv4: %s", why)
+		}
 	}
 	choice, err := guard.SelectInterfaces(0)
 	if err != nil {
 		return nil, err
 	}
 	out.line("netguard: сокеты ядра идут мимо туннеля, %s", choice)
+	if fullTunnel {
+		problem, err := reversePathCheck(guard.Choice())
+		if err != nil {
+			out.line("Внимание: rp_filter не проверен: %v", err)
+		}
+		if problem != "" {
+			return nil, errors.New(problem + "; или подключитесь с -datapath socks")
+		}
+	}
 	return guard, nil
 }
+
+// reversePathCheck — переменная ради тестов: настоящая читает /proc.
+var reversePathCheck = reversePathProblem
 
 // errNetworkChanged — причина перезапуска при смене сети; её печатает
 // строка перехода «переподключение: сеть сменилась».
@@ -54,10 +81,10 @@ var errNetworkChanged = errors.New("сеть сменилась")
 // Отказ подписки подключиться не мешает: туннель работает, но после смены
 // сети восстановится только по watchdog, примерно через минуту, — об этом
 // строка.
-func watchNetwork(out *printer, guard *netguard.Guard, restart func(error), exclude func() uint64) (stop func()) {
+func watchNetwork(out *printer, guard *netguard.Guard, restart func(error), exclude func() uint64, fullTunnel bool) (stop func()) {
 	stop, err := guard.Watch(netguard.WatchOptions{
 		Exclude: exclude,
-		Changed: networkChanged(out, restart),
+		Changed: networkChanged(out, restart, fullTunnel),
 	})
 	if err != nil {
 		out.line("Внимание: за сменой сети не слежу (%v) — после неё туннель восстановится только по watchdog", err)
@@ -72,18 +99,31 @@ func watchNetwork(out *printer, guard *netguard.Guard, restart func(error), excl
 // а когда сеть вернётся, это будет ещё одна смена, и перезапуск — один на
 // выдернутый и вставленный кабель. Если сеть пропала надолго, попытку раньше
 // оборвёт watchdog, а возврат сети прервёт задержку.
-func networkChanged(out *printer, restart func(error)) func(now, before netguard.Choice) {
+//
+// fullTunnel — обратный фильтр проверяется и у нового интерфейса: строгий
+// не останавливает переподключения (сеть может смениться ещё раз), но
+// объясняет, почему они не удаются.
+func networkChanged(out *printer, restart func(error), fullTunnel bool) func(now, before netguard.Choice) {
 	return func(now, before netguard.Choice) {
 		switch {
 		case now.Empty():
 			out.line("сеть пропала — туннель переподключится, когда она вернётся")
+			return
 		case now.Same(before):
 			out.line("сеть переподключилась: %s", now)
-			restart(errNetworkChanged)
 		default:
 			out.line("сеть сменилась: %s", now)
-			restart(errNetworkChanged)
 		}
+		if fullTunnel {
+			problem, err := reversePathCheck(now)
+			switch {
+			case err != nil:
+				out.line("Внимание: rp_filter не проверен: %v", err)
+			case problem != "":
+				out.line("Внимание: %s", problem)
+			}
+		}
+		restart(errNetworkChanged)
 	}
 }
 

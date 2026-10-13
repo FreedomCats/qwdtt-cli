@@ -49,14 +49,46 @@ func linkAddrs(t *testing.T, name string) (addrs []netip.Addr, mtu int, up bool)
 	return addrs, link.Attrs().MTU, link.Attrs().Flags&unix.IFF_UP != 0
 }
 
+// linkRoutes — маршруты через интерфейс name, кроме тех, что ядро ставит
+// само под адреса (fe80::/64, /128 адреса IPv6).
+func linkRoutes(t *testing.T, name string) []netip.Prefix {
+	t.Helper()
+	link, err := netlink.LinkByName(name)
+	if err != nil {
+		t.Fatalf("интерфейс %s: %v", name, err)
+	}
+	list, err := netlink.RouteList(link, netlink.FAMILY_ALL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []netip.Prefix
+	for _, r := range list {
+		if r.Dst == nil || r.Protocol == unix.RTPROT_KERNEL {
+			continue
+		}
+		ones, _ := r.Dst.Mask.Size()
+		ip, _ := netip.AddrFromSlice(r.Dst.IP)
+		p := netip.PrefixFrom(ip.Unmap(), ones)
+		out = append(out, p)
+	}
+	slices.SortFunc(out, func(a, b netip.Prefix) int { return a.Addr().Compare(b.Addr()) })
+	return out
+}
+
+func sortedRoutes(routes []netip.Prefix) []netip.Prefix {
+	out := slices.Clone(routes)
+	slices.SortFunc(out, func(a, b netip.Prefix) int { return a.Addr().Compare(b.Addr()) })
+	return out
+}
+
 func linkExists(name string) bool {
 	_, err := netlink.LinkByName(name)
 	return err == nil
 }
 
-// Настоящий адаптер: Start создаёт интерфейс с адресами и MTU из конфига,
-// повторный Start с другими адресами и MTU перенастраивает тот же интерфейс,
-// Close его убирает.
+// Настоящий адаптер: Start создаёт интерфейс с адресами, MTU и маршрутами /1,
+// Suspend снимает маршруты, повторный Start с другими адресами и MTU
+// перенастраивает тот же интерфейс и возвращает маршруты, Close его убирает.
 func TestTunAdapterNetns(t *testing.T) {
 	skipOutsideNetns(t)
 	const name = "tttest0"
@@ -73,6 +105,18 @@ func TestTunAdapterNetns(t *testing.T) {
 	addrs, mtu, up := linkAddrs(t, name)
 	if !slices.Equal(addrs, conf.Addresses) || mtu != 1380 || !up {
 		t.Errorf("после Start: адреса %v, MTU %d, up %v; ждали %v, 1380, up", addrs, mtu, up, conf.Addresses)
+	}
+	if got, want := linkRoutes(t, name), sortedRoutes(fullTunnelRoutes); !slices.Equal(got, want) {
+		t.Errorf("маршруты после Start: %v, ждали %v", got, want)
+	}
+	if err := w.Suspend(); err != nil {
+		t.Fatalf("Suspend: %v", err)
+	}
+	if got := linkRoutes(t, name); len(got) != 0 {
+		t.Errorf("маршруты после Suspend: %v", got)
+	}
+	if err := w.Suspend(); err != nil {
+		t.Errorf("повторный Suspend: %v", err)
 	}
 	link, _ := netlink.LinkByName(name)
 	if w.AdapterID() != uint64(link.Attrs().Index) {
@@ -92,6 +136,9 @@ func TestTunAdapterNetns(t *testing.T) {
 	if link2, _ := netlink.LinkByName(name); link2 == nil || link2.Attrs().Index != link.Attrs().Index {
 		t.Error("перенастройка создала новый интерфейс")
 	}
+	if got, want := linkRoutes(t, name), sortedRoutes(fullTunnelRoutes); !slices.Equal(got, want) {
+		t.Errorf("маршруты после повторного Start: %v, ждали %v", got, want)
+	}
 
 	if err := w.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -102,8 +149,8 @@ func TestTunAdapterNetns(t *testing.T) {
 	t.Logf("лог:\n%s", rec.dump())
 }
 
-// MTU меньше 1280 ядро не совмещает с IPv6: адрес IPv6 не ставится, о чём
-// есть строка в логе, а подъём не падает.
+// MTU меньше 1280 ядро не совмещает с IPv6: адрес и маршруты IPv6 не
+// ставятся, о чём есть строки в логе, а подъём не падает.
 func TestTunAdapterSmallMTUNetns(t *testing.T) {
 	skipOutsideNetns(t)
 	const name = "tttest1"
@@ -121,8 +168,11 @@ func TestTunAdapterSmallMTUNetns(t *testing.T) {
 	if !slices.Equal(addrs, conf.Addresses[:1]) || mtu != 1200 {
 		t.Errorf("адреса %v, MTU %d; ждали только IPv4 и 1200", addrs, mtu)
 	}
-	if !strings.Contains(rec.dump(), "fd00::2 не поставлен") {
-		t.Errorf("в логе нет строки про IPv6:\n%s", rec.dump())
+	if !strings.Contains(rec.dump(), "fd00::2 не поставлен") || !strings.Contains(rec.dump(), "маршруты IPv6 не ставятся") {
+		t.Errorf("в логе нет строк про IPv6:\n%s", rec.dump())
+	}
+	if got, want := linkRoutes(t, name), sortedRoutes(ipv4Only(fullTunnelRoutes)); !slices.Equal(got, want) {
+		t.Errorf("маршруты при MTU 1200: %v, ждали %v", got, want)
 	}
 }
 

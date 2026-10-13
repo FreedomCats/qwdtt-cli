@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"sync"
 	"syscall"
 
@@ -18,6 +19,10 @@ var tunUnsupported error
 // tunFiles — на Linux рядом с tt ничего не нужно: TUN даёт ядро
 // (/dev/net/tun).
 var tunFiles []string
+
+// minMTU6 — наименьший MTU, при котором ядро держит IPv6 на интерфейсе
+// (RFC 8200); с меньшим маршрут через tt для IPv6 не поставить.
+const minMTU6 = 1280
 
 // tunLockName — абстрактный unix-сокет одного адаптера на машину: файла не
 // оставляет и умирает вместе с процессом, так что упавший запуск следующему
@@ -68,11 +73,15 @@ func openTunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (*tu
 		return nil, fmt.Errorf("адаптер %q: %w", name, err)
 	}
 
+	// mtu — MTU последней настройки: от него зависит, ставятся ли маршруты
+	// IPv6. configure и addRoutes зовёт одна горутина Start, по очереди.
+	var mtu int
 	configure := func(conf *WGConfig) error {
 		// DNS адаптера — D2 (plan-e4.md).
 		if err := linuxsys.ConfigureAdapter(index, conf.Addresses, conf.MTU, logf); err != nil {
 			return fmt.Errorf("адаптер %q: %w", name, err)
 		}
+		mtu = conf.MTU
 		return nil
 	}
 	if err := configure(conf); err != nil {
@@ -84,14 +93,33 @@ func openTunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (*tu
 		tun:       tunDev,
 		id:        uint64(index),
 		configure: configure,
-		// Маршруты fullTunnelRoutes — T3 (plan-e4.md): до неё адаптер
-		// поднимается без них и трафик системы не забирает.
-		addRoutes:    func() error { return nil },
-		removeRoutes: func() error { return nil },
+		addRoutes: func() error {
+			routes := fullTunnelRoutes
+			if mtu > 0 && mtu < minMTU6 {
+				routes = ipv4Only(routes)
+				logf("[TUN] Внимание: при MTU %d ядро не держит IPv6 на %s — маршруты IPv6 не ставятся, "+
+					"и IPv6 системы идёт мимо туннеля", mtu, name)
+			}
+			return linuxsys.SetTunnelRoutes(index, routes)
+		},
+		removeRoutes: func() error {
+			return linuxsys.ClearTunnelRoutes(index, fullTunnelRoutes)
+		},
 		// flush не нужен: адреса и маршруты уходят вместе с интерфейсом,
 		// когда закрывается TUN.
 		release: release,
 	}, nil
+}
+
+// ipv4Only — маршруты только IPv4.
+func ipv4Only(routes []netip.Prefix) []netip.Prefix {
+	var out []netip.Prefix
+	for _, r := range routes {
+		if r.Addr().Is4() {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // acquireTunLock занимает абстрактный сокет одного адаптера на машину

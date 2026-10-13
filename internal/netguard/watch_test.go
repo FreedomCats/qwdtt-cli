@@ -245,3 +245,40 @@ func TestWatchStop(t *testing.T) {
 		t.Fatalf("Changed после stop: %d раз", n)
 	}
 }
+
+// NoIPv6: выбор IPv6 отбрасывается и при первом выборе, и при смене сети,
+// а смена одного интерфейса IPv6 сменой сети не считается.
+func TestNoIPv6DropsIPv6Choice(t *testing.T) {
+	g := &Guard{NoIPv6: true}
+	g.commit(wifi)
+	if i4, i6 := g.Interfaces(); i4 != 7 || i6 != 0 {
+		t.Fatalf("индексы %d, %d; ждали 7 и 0", i4, i6)
+	}
+	if c := g.Choice(); c.Index6 != 0 || c.Alias6 != "" {
+		t.Fatalf("в выборе остался IPv6: %+v", c)
+	}
+
+	f := &fakeNet{choice: wifi}
+	changes := make(chan change, 16)
+	stop, err := g.watch(WatchOptions{
+		Changed: func(now, before Choice) { changes <- change{now, before} },
+		Settle:  40 * time.Millisecond,
+		MaxWait: time.Second,
+	}, f.sub, f.pick, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+
+	other6 := wifi
+	other6.Index6 = 9
+	f.set(other6)
+	f.notify(9)
+	expectNoChange(t, changes)
+
+	f.set(ethernet)
+	f.notify(3)
+	if c := expectChange(t, changes); c.now.Index4 != 3 || c.now.Index6 != 0 {
+		t.Errorf("смена сети: %+v", c.now)
+	}
+}

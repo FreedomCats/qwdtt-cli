@@ -45,6 +45,12 @@ type Guard struct {
 	// защита DNS включена. Задаётся до первого сокета. На Windows не
 	// используется: там защита DNS пропускает весь процесс tt.
 	Mark uint32
+
+	// NoIPv6 — сокетам ядра IPv6 не давать: выбор интерфейса IPv6
+	// отбрасывается, и сокет IPv6 не создаётся, а Go уходит на IPv4. Нужно,
+	// когда ответы IPv6 на физический интерфейс отбросит обратный фильтр
+	// (firewalld, plan-e4.md, T3). Задаётся до SelectInterfaces и Watch.
+	NoIPv6 bool
 }
 
 // SocketMark — значение Mark для сокетов tt. Свободно от известных
@@ -122,9 +128,18 @@ func (g *Guard) Choice() Choice {
 	return g.choice
 }
 
+// allowed — выбор без того, что сокетам ядра давать нельзя (NoIPv6).
+func (g *Guard) allowed(c Choice) Choice {
+	if g.NoIPv6 {
+		c.Index6, c.Alias6 = 0, ""
+	}
+	return c
+}
+
 // commit ставит выбор: индексы для новых сокетов и запись для сравнения.
 // Возвращает прежний выбор.
 func (g *Guard) commit(c Choice) (before Choice) {
+	c = g.allowed(c)
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	before, g.choice = g.choice, c
