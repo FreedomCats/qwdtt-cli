@@ -446,6 +446,13 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 		}
 		defer release()
 	}
+	// DNS туннеля в системе (Linux): способ — до сети, остатки упавшего
+	// запуска — после резерва адаптера.
+	if req.DNSGuard {
+		if err := prepareSystemDNS(out); err != nil {
+			return err
+		}
+	}
 	// Защита DNS (сессия WFP, на Linux — таблица nftables) — тоже до сети и
 	// на весь сеанс: отказ в Start супервизор принял бы за сбой попытки и
 	// ушёл бы в переподключения.

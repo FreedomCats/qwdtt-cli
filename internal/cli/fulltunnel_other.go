@@ -10,3 +10,7 @@ func reversePathProblem(netguard.Choice) (string, error) { return "", nil }
 
 // ipv6ReplyFilter — см. fulltunnel_linux.go.
 func ipv6ReplyFilter() (string, error) { return "", nil }
+
+// systemDNSReady — на Windows DNS туннеля — свойство адаптера
+// (winsys.SetAdapterDNS), выбирать нечего. См. fulltunnel_linux.go.
+func systemDNSReady(*printer) error { return nil }

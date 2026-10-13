@@ -48,9 +48,12 @@ require (
 // релиза: флаг таблицы owner (таблица уходит вместе с процессом) есть только
 // там. Только из *_linux.go. go-cmp (BSD-3) нужен лишь тестам mdlayher/netlink
 // и в бинарь не попадает.
+// godbus/dbus (BSD-2) — DNS туннеля через systemd-resolved на Linux, задача
+// D2 Э4. Только из *_linux.go.
 // Все лицензии с GPL v3 совместимы.
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/godbus/dbus/v5 v5.1.0
 	github.com/google/nftables v0.3.1-0.20260430172505-f9b52ed2ba65
 	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
 	github.com/tailscale/wf v0.0.0-20240214030419-6fbb0a674ee6

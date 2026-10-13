@@ -89,9 +89,17 @@ func linkExists(name string) bool {
 // Настоящий адаптер: Start создаёт интерфейс с адресами, MTU и маршрутами /1,
 // Suspend снимает маршруты, повторный Start с другими адресами и MTU
 // перенастраивает тот же интерфейс и возвращает маршруты, Close его убирает.
+//
+// DNS в контейнере — перезапись /etc/resolv.conf (docker монтирует его
+// отдельным файлом, так что запись идёт на месте): на время туннеля — DNS
+// конфига, после Close — прежний файл.
 func TestTunAdapterNetns(t *testing.T) {
 	skipOutsideNetns(t)
 	const name = "tttest0"
+	origResolv, err := os.ReadFile("/etc/resolv.conf")
+	if err != nil {
+		t.Fatal(err)
+	}
 	rec := &recorder{}
 	w := NewTun(TunOptions{Name: name, Logf: rec.logf})
 	defer w.Close()
@@ -108,6 +116,9 @@ func TestTunAdapterNetns(t *testing.T) {
 	}
 	if got, want := linkRoutes(t, name), sortedRoutes(fullTunnelRoutes); !slices.Equal(got, want) {
 		t.Errorf("маршруты после Start: %v, ждали %v", got, want)
+	}
+	if resolv, _ := os.ReadFile("/etc/resolv.conf"); !strings.Contains(string(resolv), "\nnameserver 8.8.8.8\n") {
+		t.Errorf("resolv.conf после Start:\n%s", resolv)
 	}
 	if err := w.Suspend(); err != nil {
 		t.Fatalf("Suspend: %v", err)
@@ -145,6 +156,12 @@ func TestTunAdapterNetns(t *testing.T) {
 	}
 	if linkExists(name) {
 		t.Error("интерфейс остался после Close")
+	}
+	if resolv, _ := os.ReadFile("/etc/resolv.conf"); string(resolv) != string(origResolv) {
+		t.Errorf("resolv.conf после Close:\n%s\nждали прежний:\n%s", resolv, origResolv)
+	}
+	if _, err := os.Stat("/etc/resolv.conf.tt-backup"); err == nil {
+		t.Error("копия resolv.conf осталась после Close")
 	}
 	t.Logf("лог:\n%s", rec.dump())
 }

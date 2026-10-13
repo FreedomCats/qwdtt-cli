@@ -6,6 +6,7 @@ package cli
 import (
 	"fmt"
 
+	"github.com/FreedomCats/qwdtt-cli/internal/datapath"
 	"github.com/FreedomCats/qwdtt-cli/internal/linuxsys"
 	"github.com/FreedomCats/qwdtt-cli/internal/netguard"
 )
@@ -38,4 +39,28 @@ func ipv6ReplyFilter() (string, error) {
 		return "", err
 	}
 	return "firewalld строго проверяет обратный путь IPv6 (IPv6_rpfilter) и отбросил бы ответы IPv6 сокетам tt", nil
+}
+
+// systemDNSReady узнаёт, как datapath tun задаст системе DNS туннеля
+// (plan-e4.md, D2), и печатает способ. Незнакомое устройство resolv.conf —
+// отказ сейчас, а не в каждой попытке после похода в VK. Заодно убирается
+// то, что оставил упавший прошлый запуск: CLI зовёт это после Reserve,
+// когда второго tt с адаптером на машине быть не может.
+func systemDNSReady(out *printer) error {
+	dns, err := linuxsys.DetectSystemDNS(datapath.DefaultTunnelName)
+	if err != nil {
+		return fmt.Errorf("DNS туннеля в системе: %w; или подключитесь с -datapath socks", err)
+	}
+	done, err := dns.Recover()
+	if err != nil {
+		return fmt.Errorf("DNS системы: %w", err)
+	}
+	if done != "" {
+		out.line("DNS системы: %s", done)
+	}
+	out.line("DNS системы: %s", dns)
+	if w := dns.Warning(); w != "" {
+		out.line("Внимание: %s", w)
+	}
+	return nil
 }

@@ -27,6 +27,10 @@ type dnsGuardSession interface {
 // администратора (root на Linux). Платформенная — openSystemDNSGuard.
 var openDNSGuard = openSystemDNSGuard
 
+// prepareSystemDNS — тоже ради тестов: настоящая читает /etc и убирает
+// остатки прошлого запуска (systemDNSReady, plan-e4.md, D2).
+var prepareSystemDNS = systemDNSReady
+
 // setupDNSGuard открывает защиту DNS и возвращает её для datapath вместе
 // с функцией закрытия. Без -allow-dns-leak отказ — ошибка, с ним —
 // предупреждение в warn и работа без защиты (guard == nil).

@@ -30,9 +30,13 @@ const minMTU6 = 1280
 // имена интерфейсов: tt в контейнере с хостовым не конфликтует.
 const tunLockName = "@qwdtt-cli-tun"
 
-// openTunAdapter создаёт адаптер и задаёт ему адреса и MTU из конфига;
+// openTunAdapter создаёт адаптер и задаёт ему адреса, MTU и DNS из конфига;
 // перенастройку и маршруты делает вызывающий (configure, addRoutes,
 // removeRoutes). На отказе за собой убирает всё.
+//
+// DNS на Linux — не свойство адаптера, а настройка системы (plan-e4.md, D2):
+// способ выбирает linuxsys.SystemDNS по тому, кто ведёт /etc/resolv.conf.
+// Снимается он в release, когда TUN уже закрыт, — на любом пути закрытия.
 //
 // TUN не постоянный: интерфейс живёт, пока открыт его дескриптор, и после
 // падения процесса исчезает вместе с адресами и маршрутами (plan-e4.md,
@@ -45,7 +49,18 @@ func openTunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (*tu
 		return nil, err
 	}
 	restoreLog := captureStdLog(logf)
+	var (
+		index int
+		dns   *linuxsys.SystemDNS
+	)
 	release := func() {
+		if dns != nil && dns.Applied() {
+			if err := dns.Revert(index); err != nil {
+				logf("[TUN] %v", err)
+			} else {
+				logf("[TUN] DNS системы возвращён (%s)", dns.Method())
+			}
+		}
 		restoreLog()
 		unlock()
 	}
@@ -66,7 +81,9 @@ func openTunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (*tu
 		release()
 		return nil, fmt.Errorf("адаптер %q: %w", name, err)
 	}
-	index, err := linuxsys.LinkIndex(name)
+	if index, err = linuxsys.LinkIndex(name); err == nil {
+		dns, err = linuxsys.DetectSystemDNS(name)
+	}
 	if err != nil {
 		tunDev.Close()
 		release()
@@ -77,11 +94,25 @@ func openTunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (*tu
 	// IPv6. configure и addRoutes зовёт одна горутина Start, по очереди.
 	var mtu int
 	configure := func(conf *WGConfig) error {
-		// DNS адаптера — D2 (plan-e4.md).
 		if err := linuxsys.ConfigureAdapter(index, conf.Addresses, conf.MTU, logf); err != nil {
 			return fmt.Errorf("адаптер %q: %w", name, err)
 		}
 		mtu = conf.MTU
+		// DNS держится и на время переподключения, как на Windows: маршруты
+		// сняты, и запросы к нему идут мимо туннеля (решение 3 Э2).
+		servers := conf.DNS
+		if !ipv6Routed(mtu) {
+			// Без маршрутов IPv6 резолвер IPv6 туннеля недостижим.
+			servers = ipv4Addrs(servers)
+		}
+		if err := dns.Set(index, servers); err != nil {
+			return fmt.Errorf("адаптер %q: %w", name, err)
+		}
+		if len(servers) == 0 {
+			logf("[TUN] сервер не выдал DNS — DNS системы tt не трогает")
+		} else {
+			logf("[TUN] DNS системы (%s): %v", dns.Method(), servers)
+		}
 		return nil
 	}
 	if err := configure(conf); err != nil {
@@ -114,6 +145,17 @@ func openTunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (*tu
 // ipv6Routed — ставятся ли при таком MTU маршруты IPv6 в туннель; 0 и
 // меньше — MTU не задан, ядро берёт своё.
 func ipv6Routed(mtu int) bool { return mtu <= 0 || mtu >= minMTU6 }
+
+// ipv4Addrs — адреса только IPv4.
+func ipv4Addrs(addrs []netip.Addr) []netip.Addr {
+	var out []netip.Addr
+	for _, a := range addrs {
+		if a.Unmap().Is4() {
+			out = append(out, a)
+		}
+	}
+	return out
+}
 
 // ipv4Only — маршруты только IPv4.
 func ipv4Only(routes []netip.Prefix) []netip.Prefix {
