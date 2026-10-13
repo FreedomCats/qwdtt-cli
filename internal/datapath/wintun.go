@@ -34,7 +34,7 @@ type WintunOptions struct {
 //
 // Адаптер живёт, пока открыт его дескриптор: Close убирает его штатно, а при
 // падении процесса систему чистит сам драйвер (plan-e2.md, врезка N1, п. 3).
-// Адреса висят на адаптере и уходят вместе с ним.
+// Адреса и маршруты висят на адаптере и уходят вместе с ним.
 type Wintun struct {
 	opts WintunOptions
 
@@ -63,6 +63,10 @@ type Wintun struct {
 type wintunAdapter struct {
 	tun  tun.Device
 	luid uint64
+	// addRoutes и removeRoutes ставят и снимают fullTunnelRoutes через
+	// адаптер; оба безвредны повторно. Сам адаптер при этом остаётся.
+	addRoutes    func() error
+	removeRoutes func() error
 	// release зовётся после закрытия TUN, то есть когда адаптера уже нет:
 	// снимает блокировку второго запуска и возвращает перехваченный вывод.
 	release func()
@@ -119,8 +123,9 @@ func (w *Wintun) LUID() uint64 {
 	return w.adapter.luid
 }
 
-// Start создаёт адаптер, задаёт ему адреса и MTU и поднимает над ним
-// wireguard-go. Возвращается, когда устройство поднято.
+// Start создаёт адаптер, задаёт ему адреса и MTU, поднимает над ним
+// wireguard-go и ставит маршруты fullTunnelRoutes — с этого момента через
+// туннель идёт весь трафик системы. Возвращается, когда всё это сделано.
 func (w *Wintun) Start(ctx context.Context, conf *WGConfig) error {
 	if conf == nil {
 		return errors.New("wintun: пустой конфиг WireGuard")
@@ -157,6 +162,16 @@ func (w *Wintun) Start(ctx context.Context, conf *WGConfig) error {
 		w.logf("[WINTUN] endpoint %q — не адрес с портом", conf.Endpoint)
 	}
 
+	for _, warning := range allowedIPsWarnings(conf) {
+		w.logf("[WINTUN] Внимание: %s", warning)
+	}
+	if err := adapter.addRoutes(); err != nil {
+		dev.Close()
+		adapter.release()
+		w.startFailed()
+		return fmt.Errorf("wintun: маршруты: %w", err)
+	}
+
 	w.mu.Lock()
 	if w.closed {
 		// Close пришёл, пока адаптер создавался, и убирать ему было нечего:
@@ -169,8 +184,8 @@ func (w *Wintun) Start(ctx context.Context, conf *WGConfig) error {
 	w.dev, w.adapter, w.endpoint = dev, adapter, endpoint
 	w.mu.Unlock()
 
-	w.logf("[WINTUN] адаптер %q поднят (addr=%v mtu=%d endpoint=%s)",
-		w.opts.Name, conf.Addresses, conf.MTU, conf.Endpoint)
+	w.logf("[WINTUN] адаптер %q поднят (addr=%v mtu=%d endpoint=%s routes=%v)",
+		w.opts.Name, conf.Addresses, conf.MTU, conf.Endpoint, fullTunnelRoutes)
 
 	go func() {
 		select {
@@ -180,6 +195,42 @@ func (w *Wintun) Start(ctx context.Context, conf *WGConfig) error {
 		}
 	}()
 	return nil
+}
+
+// AddRoutes возвращает маршруты fullTunnelRoutes через адаптер после
+// RemoveRoutes. Start ставит их сам; отдельный вызов нужен супервизору,
+// который снимает маршруты на время переподключения (plan-e2.md, S1).
+func (w *Wintun) AddRoutes() error {
+	adapter, err := w.runningAdapter()
+	if err != nil {
+		return err
+	}
+	if err := adapter.addRoutes(); err != nil {
+		return fmt.Errorf("wintun: маршруты: %w", err)
+	}
+	return nil
+}
+
+// RemoveRoutes снимает маршруты, оставляя адаптер: трафик системы идёт мимо
+// туннеля, пока их не вернёт AddRoutes.
+func (w *Wintun) RemoveRoutes() error {
+	adapter, err := w.runningAdapter()
+	if err != nil {
+		return err
+	}
+	if err := adapter.removeRoutes(); err != nil {
+		return fmt.Errorf("wintun: снятие маршрутов: %w", err)
+	}
+	return nil
+}
+
+func (w *Wintun) runningAdapter() (*wintunAdapter, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.adapter == nil {
+		return nil, errors.New("wintun: адаптер не поднят")
+	}
+	return w.adapter, nil
 }
 
 // Close останавливает wireguard-go и убирает адаптер. Безопасен до Start

@@ -1,6 +1,7 @@
 package winsys
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 
@@ -8,10 +9,14 @@ import (
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
 )
 
-// ConfigureAdapter задаёт адаптеру туннеля адреса и MTU — по семействам,
-// для которых в конфиге есть адреса. Адреса ставятся с длиной префикса во
-// весь адрес (/32, /128): конфиг сервера приходит без маски подсети, а
-// маршруты в туннель ставятся отдельно (W3).
+// ConfigureAdapter задаёт адаптеру туннеля адреса и MTU. Адреса ставятся
+// с длиной префикса во весь адрес (/32, /128): конфиг сервера приходит без
+// маски подсети, а маршруты в туннель ставятся отдельно (SetTunnelRoutes).
+//
+// Интерфейс настраивается в обоих семействах, даже если адресов IPv6 нет:
+// через туннель идут и маршруты IPv6 (ими IPv6 машины блокируется,
+// plan-e2.md, решение 2), и MTU у него должен быть тем же. Если IPv6 на
+// адаптере выключен, это не ошибка: семейство пропускается.
 //
 // Заодно на интерфейсе выключаются обнаружение маршрутизаторов и DAD:
 // адаптер точка-точка, соседей у него нет, а DAD задерживает готовность
@@ -29,20 +34,21 @@ func ConfigureAdapter(luid uint64, addrs []netip.Addr, mtu int, logf func(string
 				prefixes = append(prefixes, netip.PrefixFrom(a, a.BitLen()))
 			}
 		}
-		if len(prefixes) == 0 {
-			continue
-		}
-
-		err := l.SetIPAddressesForFamily(family, prefixes)
-		if err == windows.ERROR_OBJECT_ALREADY_EXISTS {
-			cleanupAddressesOnDisconnectedInterfaces(family, prefixes, logf)
-			err = l.SetIPAddressesForFamily(family, prefixes)
-		}
-		if err != nil {
-			return fmt.Errorf("адреса %v на адаптер: %w", prefixes, err)
+		if len(prefixes) > 0 {
+			err := l.SetIPAddressesForFamily(family, prefixes)
+			if err == windows.ERROR_OBJECT_ALREADY_EXISTS {
+				cleanupAddressesOnDisconnectedInterfaces(family, prefixes, logf)
+				err = l.SetIPAddressesForFamily(family, prefixes)
+			}
+			if err != nil {
+				return fmt.Errorf("адреса %v на адаптер: %w", prefixes, err)
+			}
 		}
 
 		ipif, err := l.IPInterface(family)
+		if len(prefixes) == 0 && family == windows.AF_INET6 && errors.Is(err, windows.ERROR_NOT_FOUND) {
+			continue
+		}
 		if err != nil {
 			return fmt.Errorf("параметры интерфейса %s: %w", familyName(family), err)
 		}
@@ -50,7 +56,10 @@ func ConfigureAdapter(luid uint64, addrs []netip.Addr, mtu int, logf func(string
 		ipif.DadTransmits = 0
 		ipif.ManagedAddressConfigurationSupported = false
 		ipif.OtherStatefulConfigurationSupported = false
-		if mtu > 0 {
+		// IPv6 не принимает MTU меньше 1280 (RFC 8200), а конфиг допускает
+		// и меньше. Тогда IPv6 через туннель всё равно не работает, только
+		// блокируется, и MTU IPv6 остаётся как есть, а не роняет подъём.
+		if mtu > 0 && (family == windows.AF_INET || mtu >= 1280) {
 			ipif.NLMTU = uint32(mtu)
 		}
 		if err := ipif.Set(); err != nil {

@@ -34,7 +34,8 @@ const wintunTunnelType = "tt"
 // процессом, так что упавший запуск следующему не мешает.
 const wintunLockName = `Global\qwdtt-cli-wintun`
 
-// openWintunAdapter создаёт адаптер и задаёт ему адреса и MTU из конфига.
+// openWintunAdapter создаёт адаптер и задаёт ему адреса и MTU из конфига;
+// маршруты ставит и снимает вызывающий (addRoutes, removeRoutes).
 // На отказе за собой убирает всё.
 //
 // Адаптер от упавшего прошлого запуска убирать не нужно: он исчезает, как
@@ -71,7 +72,17 @@ func openWintunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (
 		release()
 		return nil, fmt.Errorf("адаптер %q: %w", name, err)
 	}
-	return &wintunAdapter{tun: tunDev, luid: luid, release: release}, nil
+	return &wintunAdapter{
+		tun:  tunDev,
+		luid: luid,
+		addRoutes: func() error {
+			return winsys.SetTunnelRoutes(luid, fullTunnelRoutes, logf)
+		},
+		removeRoutes: func() error {
+			return winsys.ClearTunnelRoutes(luid, fullTunnelRoutes)
+		},
+		release: release,
+	}, nil
 }
 
 // acquireWintunLock занимает мьютекс одного адаптера на машину и возвращает

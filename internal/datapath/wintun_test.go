@@ -25,6 +25,9 @@ type fakeWintun struct {
 	gate chan struct{}
 	// releaseDelay — медленная уборка, чтобы поймать неподождавший Close.
 	releaseDelay time.Duration
+	// routed — стоят ли маршруты; routesErr — отказ их постановки.
+	routed    atomic.Bool
+	routesErr error
 }
 
 func (f *fakeWintun) open(name string, conf *WGConfig, logf func(string, ...any)) (*wintunAdapter, error) {
@@ -36,11 +39,26 @@ func (f *fakeWintun) open(name string, conf *WGConfig, logf func(string, ...any)
 		return nil, f.openErr
 	}
 	f.tun = newTestTUN(f.t, conf)
-	return &wintunAdapter{tun: f.tun, luid: 42, release: func() {
-		time.Sleep(f.releaseDelay)
-		f.releasedAfterTUN.Store(f.tun.closed.Load() > 0)
-		f.released.Add(1)
-	}}, nil
+	return &wintunAdapter{
+		tun:  f.tun,
+		luid: 42,
+		addRoutes: func() error {
+			if f.routesErr != nil {
+				return f.routesErr
+			}
+			f.routed.Store(true)
+			return nil
+		},
+		removeRoutes: func() error {
+			f.routed.Store(false)
+			return nil
+		},
+		release: func() {
+			time.Sleep(f.releaseDelay)
+			f.releasedAfterTUN.Store(f.tun.closed.Load() > 0)
+			f.released.Add(1)
+		},
+	}, nil
 }
 
 func newTestWintun(t *testing.T) (*Wintun, *fakeWintun, *recorder) {
@@ -116,6 +134,77 @@ func TestWintunStartClose(t *testing.T) {
 		if !strings.Contains(log, want) {
 			t.Errorf("в логе нет %q:\n%s", want, log)
 		}
+	}
+}
+
+func TestWintunRoutes(t *testing.T) {
+	w, f, rec := newTestWintun(t)
+	if err := w.AddRoutes(); err == nil {
+		t.Error("AddRoutes до Start принят")
+	}
+
+	if err := w.Start(context.Background(), testWGConfig(t, "127.0.0.1:9")); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !f.routed.Load() {
+		t.Fatal("Start не поставил маршруты")
+	}
+	if err := w.RemoveRoutes(); err != nil || f.routed.Load() {
+		t.Errorf("RemoveRoutes: err=%v, маршруты стоят=%v", err, f.routed.Load())
+	}
+	if err := w.AddRoutes(); err != nil || !f.routed.Load() {
+		t.Errorf("AddRoutes: err=%v, маршруты стоят=%v", err, f.routed.Load())
+	}
+	if f.tun.closed.Load() != 0 {
+		t.Error("снятие маршрутов закрыло адаптер")
+	}
+	if log := rec.dump(); strings.Contains(log, "Внимание") {
+		t.Errorf("предупреждение при AllowedIPs = 0.0.0.0/0:\n%s", log)
+	}
+
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.RemoveRoutes(); err == nil {
+		t.Error("RemoveRoutes после Close принят")
+	}
+}
+
+func TestWintunRouteFailureReleases(t *testing.T) {
+	w, f, _ := newTestWintun(t)
+	conf := testWGConfig(t, "127.0.0.1:9")
+
+	f.routesErr = errorString("доступ запрещён")
+	err := w.Start(context.Background(), conf)
+	if err == nil || !strings.Contains(err.Error(), "wintun: маршруты: доступ запрещён") {
+		t.Fatalf("Start = %v, ждали отказ маршрутов", err)
+	}
+	if f.tun.closed.Load() == 0 || f.released.Load() != 1 {
+		t.Errorf("после отказа: TUN закрыт %d раз, release %d раз; ждали оба",
+			f.tun.closed.Load(), f.released.Load())
+	}
+
+	f.routesErr = nil
+	if err := w.Start(context.Background(), conf); err != nil {
+		t.Fatalf("повторный Start после отказа: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWintunWarnsPartialAllowedIPs(t *testing.T) {
+	w, _, rec := newTestWintun(t)
+	conf := testWGConfig(t, "127.0.0.1:9")
+	conf.AllowedIPs = []string{"10.0.0.0/8"}
+
+	if err := w.Start(context.Background(), conf); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer w.Close()
+	want := "[WINTUN] Внимание: сервер разрешил в туннеле не весь IPv4 (AllowedIPs: 10.0.0.0/8)"
+	if log := rec.dump(); !strings.Contains(log, want) {
+		t.Errorf("в логе нет %q:\n%s", want, log)
 	}
 }
 
