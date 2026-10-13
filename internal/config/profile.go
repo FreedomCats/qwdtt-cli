@@ -1,0 +1,180 @@
+// Package config читает profiles.toml — файл с настройками подключения.
+//
+// Двадцать пять флагов ядра заменяются профилем: набором именованных настроек,
+// между которыми переключаются одним словом в командной строке (решение Р6
+// в doc/architecture.md, формат — там же, §10).
+//
+// Секретов в файле нет. Пароль подключения — это одновременно ключ маскировки
+// трафика (HKDF из него выводит WRAP-ключ, см. internal/core/wrap.go), поэтому
+// он и хеши звонков лежат в хранилище секретов, а в профиле остаются только
+// ссылки вида "dpapi:…". Разворачивает их задача C2; здесь ссылка — обычная
+// строка, и её содержимое пакету неизвестно.
+package config
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+
+	"qwdtt-cli/internal/core"
+)
+
+// Имя каталога и файла настроек. Каталог общий для всей программы: рядом
+// с profiles.toml задача C2 положит хранилище секретов.
+const (
+	AppDir   = "qwdtt-cli"
+	FileName = "profiles.toml"
+)
+
+// Способы отдать трафик наружу. Значения — те же слова, что в architecture.md §07.
+const (
+	// DatapathSocks — userspace WireGuard и локальный SOCKS5. Прав администратора
+	// не требует, поэтому в Э1 это путь по умолчанию.
+	DatapathSocks = "socks"
+	// DatapathExternal — конфиг отдаётся штатному WireGuard, тот поднимает
+	// туннель сам. Нужны права администратора и установленный WireGuard.
+	DatapathExternal = "external"
+	// DatapathWintun — свой адаптер поверх wintun.dll. Появится в Э2;
+	// в профиле принимается только затем, чтобы сказать об этом внятно.
+	DatapathWintun = "wintun"
+)
+
+// File — разобранный profiles.toml целиком.
+type File struct {
+	// DefaultProfile — какой профиль брать, если в командной строке имя
+	// не названо. Может быть пустым: когда профиль в файле один, выбирать
+	// не из чего.
+	DefaultProfile string `toml:"default_profile"`
+	// Profiles — секции [profile.<имя>].
+	Profiles map[string]*Profile `toml:"profile"`
+}
+
+// Profile — одна секция [profile.<имя>].
+//
+// Пустое поле означает «не задано»: значение по умолчанию подставляется
+// в Core, и берётся оно из core.DefaultConfig, чтобы умолчания не разъезжались
+// с ядром. Исключение — datapath, см. Core.
+type Profile struct {
+	// Name — имя секции. Заполняется при разборе, в файле его нет.
+	Name string `toml:"-"`
+
+	// Peer — адрес VPS в виде host:port.
+	Peer string `toml:"peer"`
+	// PasswordRef — ссылка на пароль подключения в хранилище секретов.
+	PasswordRef string `toml:"password_ref"`
+	// VkHashesRef — ссылка на список хешей звонков VK.
+	VkHashesRef string `toml:"vk_hashes_ref"`
+
+	// Workers — число воркеров. Кратно девяти, потолок 108; округляет
+	// и обрезает ядро (core.Config.Normalize), здесь значение не трогают.
+	Workers int `toml:"workers"`
+	// Obfs — режим RTP-маскировки: audio или video.
+	Obfs string `toml:"obfs"`
+	// TurnTransport — udp или tcp. TCP помогает в сетях, где душат UDP.
+	TurnTransport string `toml:"turn_transport"`
+	// DTLS — поднимать ли DTLS поверх TURN. Указатель, потому что «не задано»
+	// и «задано false» здесь разные вещи: пропущенное поле означает обычный
+	// режим с DTLS, а false — прямой RTP-obfs AEAD, который требует сервера,
+	// запущенного с -listen-direct.
+	DTLS *bool `toml:"dtls"`
+	// DNS — резолвер для доменов VK.
+	DNS string `toml:"dns"`
+	// Datapath — как отдавать трафик: socks или external.
+	Datapath string `toml:"datapath"`
+
+	// Socks — секция [profile.<имя>.socks].
+	Socks SocksSection `toml:"socks"`
+}
+
+// SocksSection — настройки локального SOCKS5. Учитываются при datapath = "socks".
+//
+// Логина и пароля здесь нет намеренно: SOCKS5 слушает петлю, а пароль к нему
+// был бы вторым секретом в файле. Появятся вместе с задачей, которой они
+// понадобятся.
+type SocksSection struct {
+	Listen string `toml:"listen"`
+}
+
+// Core переводит профиль в настройки ядра.
+//
+// Секреты не подставляются: Password и Hashes остаются пустыми, их заполняет
+// вызывающий, развернув PasswordRef и VkHashesRef через хранилище (задача C2).
+// Поэтому core.Config.Validate после Core ещё не проходит — и не должен.
+//
+// Умолчания берутся из core.DefaultConfig, кроме одного. Ядро по умолчанию
+// работает в режиме vpn — так был устроен его флаг -mode; для настольного
+// клиента умолчание другое, socks: это единственный режим, которому не нужны
+// права администратора, и ради него затевался Э1.
+func (p *Profile) Core() core.Config {
+	cfg := core.DefaultConfig()
+
+	cfg.Peer = p.Peer
+
+	if p.Workers != 0 {
+		cfg.Workers = p.Workers
+	}
+	if p.Obfs != "" {
+		cfg.ObfsMode = p.Obfs
+	}
+	if p.DNS != "" {
+		cfg.DNS = p.DNS
+	}
+	cfg.TurnTCP = strings.EqualFold(strings.TrimSpace(p.TurnTransport), "tcp")
+	cfg.NoDTLS = p.DTLS != nil && !*p.DTLS
+
+	if strings.TrimSpace(p.Datapath) == DatapathSocks || p.Datapath == "" {
+		cfg.Mode = core.ModeSocks
+	} else {
+		cfg.Mode = core.ModeVPN
+	}
+	if p.Socks.Listen != "" {
+		cfg.Socks.Listen = p.Socks.Listen
+	}
+
+	return cfg
+}
+
+// Names возвращает имена профилей по алфавиту — для выбора и для сообщений
+// об ошибках, где порядок обязан быть устойчивым.
+func (f *File) Names() []string {
+	names := make([]string, 0, len(f.Profiles))
+	for name := range f.Profiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// Profile возвращает профиль по имени. Пустое имя означает «профиль
+// по умолчанию»: сначала default_profile, а если его нет — единственный
+// профиль в файле.
+//
+// Сообщения об ошибках перечисляют, что в файле есть: чаще всего промах
+// с именем — это опечатка, и список избавляет от похода в файл.
+func (f *File) Profile(name string) (*Profile, error) {
+	name = strings.TrimSpace(name)
+
+	if name == "" {
+		switch {
+		case f.DefaultProfile != "":
+			name = f.DefaultProfile
+		case len(f.Profiles) == 1:
+			name = f.Names()[0]
+		case len(f.Profiles) == 0:
+			return nil, fmt.Errorf("в файле настроек нет ни одного профиля")
+		default:
+			return nil, fmt.Errorf(
+				"не выбран профиль: в файле их %d (%s), а default_profile не задан",
+				len(f.Profiles), strings.Join(f.Names(), ", "))
+		}
+	}
+
+	profile, ok := f.Profiles[name]
+	if !ok {
+		if len(f.Profiles) == 0 {
+			return nil, fmt.Errorf("профиля %q нет: в файле настроек нет ни одного профиля", name)
+		}
+		return nil, fmt.Errorf("профиля %q нет; в файле есть: %s", name, strings.Join(f.Names(), ", "))
+	}
+	return profile, nil
+}
