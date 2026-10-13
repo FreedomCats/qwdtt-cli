@@ -280,6 +280,14 @@ type Decision struct {
 	// Attempt — номер кончившейся попытки, начиная с единицы. Для строки
 	// вида «попытка 3, следующая через 4 с».
 	Attempt int
+	// Transitions — переходы автомата, которые сделало это решение: Reconnect,
+	// а при исчерпанных хешах следом Stop. Пусто, когда автомат уже стоял там,
+	// куда его переводили.
+	//
+	// Поле нужно потому, что автомат переводит Restarter, а печатает переходы
+	// цикл подключения (lifecycle.go): без него он узнавал бы о смене состояния
+	// сравнением State() до и после вызова.
+	Transitions []Transition
 }
 
 // Restarter — политика перезапуска: ведёт счётчик неудач и держит автомат
@@ -308,7 +316,10 @@ func NewRestarter(machine *Machine, hashes *HashPool) *Restarter {
 // Когда годных хешей не осталось, автомат переводится в StateStopping: ждать
 // нечего, подключаться не к чему.
 func (r *Restarter) Failed(cause error) Decision {
-	r.machine.Reconnect(cause)
+	var moves []Transition
+	if tr, ok := r.machine.Reconnect(cause); ok {
+		moves = append(moves, tr)
+	}
 
 	r.mu.Lock()
 	attempt := r.attempt
@@ -316,10 +327,12 @@ func (r *Restarter) Failed(cause error) Decision {
 	r.mu.Unlock()
 
 	if r.hashes.Exhausted() {
-		r.machine.Stop()
-		return Decision{Stop: true, Attempt: attempt + 1}
+		if tr, ok := r.machine.Stop(); ok {
+			moves = append(moves, tr)
+		}
+		return Decision{Stop: true, Attempt: attempt + 1, Transitions: moves}
 	}
-	return Decision{Delay: Backoff(attempt), Attempt: attempt + 1}
+	return Decision{Delay: Backoff(attempt), Attempt: attempt + 1, Transitions: moves}
 }
 
 // Connected сбрасывает счётчик задержек: туннель, проработавший час, должен
