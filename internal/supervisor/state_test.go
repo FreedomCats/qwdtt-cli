@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"qwdtt-cli/internal/core"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
 )
 
 // successEvents — события удачного подключения в том порядке, в котором их

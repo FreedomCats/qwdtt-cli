@@ -1,4 +1,4 @@
-module qwdtt-cli
+module github.com/FreedomCats/qwdtt-cli
 
 go 1.26.2
 

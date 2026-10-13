@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	"qwdtt-cli/internal/core"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
 )
 
 // Имя каталога и файла настроек. Каталог общий для всей программы: рядом

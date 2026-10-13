@@ -20,11 +20,11 @@ import (
 	"strings"
 	"time"
 
-	"qwdtt-cli/internal/captcha"
-	"qwdtt-cli/internal/config"
-	"qwdtt-cli/internal/core"
-	"qwdtt-cli/internal/datapath"
-	"qwdtt-cli/internal/supervisor"
+	"github.com/FreedomCats/qwdtt-cli/internal/captcha"
+	"github.com/FreedomCats/qwdtt-cli/internal/config"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
+	"github.com/FreedomCats/qwdtt-cli/internal/datapath"
+	"github.com/FreedomCats/qwdtt-cli/internal/supervisor"
 )
 
 // dnsProbeTimeout — сколько ждать резолвер при проверке шага «dns». Больше

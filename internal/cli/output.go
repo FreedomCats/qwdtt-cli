@@ -19,8 +19,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"qwdtt-cli/internal/core"
-	"qwdtt-cli/internal/supervisor"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
+	"github.com/FreedomCats/qwdtt-cli/internal/supervisor"
 )
 
 // stageLabels — как шаг подключения называется в выводе. Ключи повторяют

@@ -13,9 +13,9 @@ import (
 	"os"
 	"strings"
 
-	"qwdtt-cli/internal/config"
-	"qwdtt-cli/internal/core"
-	"qwdtt-cli/internal/datapath"
+	"github.com/FreedomCats/qwdtt-cli/internal/config"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
+	"github.com/FreedomCats/qwdtt-cli/internal/datapath"
 )
 
 func profileCommand() *command {

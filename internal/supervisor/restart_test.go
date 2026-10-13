@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"qwdtt-cli/internal/core"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
 )
 
 // base — начало отсчёта в тестах. Watchdog бесчасовой, время ему передают,

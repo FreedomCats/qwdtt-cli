@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"qwdtt-cli/internal/config"
+	"github.com/FreedomCats/qwdtt-cli/internal/config"
 )
 
 // Значения, которых в выводе быть не должно ни при каких обстоятельствах.

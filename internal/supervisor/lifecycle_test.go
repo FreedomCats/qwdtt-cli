@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"qwdtt-cli/internal/core"
-	"qwdtt-cli/internal/datapath"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
+	"github.com/FreedomCats/qwdtt-cli/internal/datapath"
 )
 
 // Ядро в этих тестах подменено: живого сервера VK и TURN-relay у нас нет, а

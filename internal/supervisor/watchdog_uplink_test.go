@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"qwdtt-cli/internal/core"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
 )
 
 // ready — шаг «туннель готов», который супервизор отправляет после подъёма

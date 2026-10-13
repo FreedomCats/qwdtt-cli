@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"qwdtt-cli/internal/core"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
 )
 
 // maxBackoffShift — потолок счётчика попыток. Шестая попытка ждёт 64 секунды,

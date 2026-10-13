@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"qwdtt-cli/internal/core"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
 )
 
 // Mode — чем ядро занималось до того, как обратилось наружу. От режима зависит

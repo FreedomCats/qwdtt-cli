@@ -23,8 +23,8 @@ import (
 	"syscall"
 	"time"
 
-	"qwdtt-cli/internal/core"
-	"qwdtt-cli/internal/datapath"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
+	"github.com/FreedomCats/qwdtt-cli/internal/datapath"
 )
 
 // DefaultStallPoll — как часто цикл спрашивает watchdog, жив ли туннель.

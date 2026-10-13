@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"qwdtt-cli/internal/core"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
 )
 
 // Умолчания приходят из ядра — кроме datapath, у которого своё: socks.

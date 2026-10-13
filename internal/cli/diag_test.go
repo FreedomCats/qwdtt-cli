@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"qwdtt-cli/internal/core"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
 )
 
 // Живого VK в тестах нет, поэтому проверяется сборка планов ping и hashes:

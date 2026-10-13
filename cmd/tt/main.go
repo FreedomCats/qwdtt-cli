@@ -9,7 +9,7 @@ package main
 import (
 	"os"
 
-	"qwdtt-cli/internal/cli"
+	"github.com/FreedomCats/qwdtt-cli/internal/cli"
 )
 
 // version и commit подставляются при сборке через -ldflags (задача H1).

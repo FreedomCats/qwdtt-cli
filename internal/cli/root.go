@@ -20,8 +20,8 @@ import (
 	"runtime"
 	"strings"
 
-	"qwdtt-cli/internal/captcha"
-	"qwdtt-cli/internal/supervisor"
+	"github.com/FreedomCats/qwdtt-cli/internal/captcha"
+	"github.com/FreedomCats/qwdtt-cli/internal/supervisor"
 )
 
 // Коды возврата. Три, и разделены они намеренно: скрипту важно отличить

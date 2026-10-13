@@ -15,7 +15,7 @@ package supervisor
 import (
 	"sync"
 
-	"qwdtt-cli/internal/core"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
 )
 
 // State — состояние туннеля. Набор повторяет схему из architecture.md §07.

@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"qwdtt-cli/internal/config"
-	"qwdtt-cli/internal/core"
-	"qwdtt-cli/internal/datapath"
+	"github.com/FreedomCats/qwdtt-cli/internal/config"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
+	"github.com/FreedomCats/qwdtt-cli/internal/datapath"
 )
 
 // Живого сервера в тестах нет, поэтому проверяется сборка плана: профиль,

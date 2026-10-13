@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"qwdtt-cli/internal/core"
-	"qwdtt-cli/internal/supervisor"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
+	"github.com/FreedomCats/qwdtt-cli/internal/supervisor"
 )
 
 // fixedClock — часы принтера в тестах: время в строках предсказуемо, аптайм

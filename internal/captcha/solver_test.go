@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"qwdtt-cli/internal/core"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
 )
 
 // Канал ответа у ядра один на процесс (core/main.go), поэтому тесты этого
