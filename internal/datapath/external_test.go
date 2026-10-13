@@ -135,8 +135,10 @@ func TestExternalInstallsAndUninstalls(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	confPath := x.confPath()
-	if _, err := os.Stat(confPath); err != nil {
+	if data, err := os.ReadFile(confPath); err != nil {
 		t.Errorf("файла конфига нет, пока стоит служба, а она читает его при запуске: %v", err)
+	} else if text := string(data); !strings.Contains(text, "AllowedIPs = 0.0.0.0/1, 128.0.0.0/1") || strings.Contains(text, "0.0.0.0/0") {
+		t.Errorf("в файле конфига маршрут по умолчанию не разбит на половины /1:\n%s", text)
 	}
 	if got, want := dp.Endpoint().String(), "127.0.0.1:51820"; got != want {
 		t.Errorf("Endpoint = %s, ожидался %s", got, want)
@@ -165,8 +167,8 @@ func TestExternalInstallsAndUninstalls(t *testing.T) {
 	}
 
 	joined := strings.Join(logs, "\n")
-	if !strings.Contains(joined, "AllowedIPs покрывает всё") {
-		t.Errorf("нет предупреждения о петле при 0.0.0.0/0:\n%s", joined)
+	if !strings.Contains(joined, "половинами /1") || !strings.Contains(joined, "allowed=0.0.0.0/1,128.0.0.0/1") {
+		t.Errorf("в логе нет замены 0.0.0.0/0 на половины /1:\n%s", joined)
 	}
 	if strings.Contains(joined, testPrivB64) {
 		t.Errorf("в логе виден приватный ключ")
@@ -313,7 +315,8 @@ func TestExternalRejectsBadName(t *testing.T) {
 	}
 }
 
-// Requires: права администратора, найденная программа и предупреждение о петле.
+// Requires: права администратора, найденная программа и netguard. Предупреждения
+// о петле больше нет — её закрыл netguard (Э2).
 func TestExternalRequires(t *testing.T) {
 	x := newExternalEnv(t)
 	dp := x.datapath(ExternalOptions{})
@@ -325,8 +328,8 @@ func TestExternalRequires(t *testing.T) {
 	if len(req.Programs) != 1 || req.Programs[0] != dp.program {
 		t.Errorf("Programs = %v, ожидался путь к программе", req.Programs)
 	}
-	if req.Warning == "" {
-		t.Error("Warning пуст")
+	if req.Warning != "" {
+		t.Errorf("Warning = %q, ожидался пустой", req.Warning)
 	}
 	if !req.Netguard {
 		t.Error("Netguard = false, а external забирает весь трафик")
@@ -339,5 +342,92 @@ func TestExternalRequires(t *testing.T) {
 	}
 	if err := missing.Start(context.Background(), parsedServerConfig(t)); err == nil {
 		t.Error("Start без программы прошёл")
+	}
+}
+
+// Маршрут по умолчанию в AllowedIPs становится парой половин /1: с /0
+// WireGuard для Windows включает kill-switch и режет сокеты tt мимо туннеля
+// (решение 5 Э2). Правится только значение AllowedIPs в [Peer], остальной
+// текст — байт в байт.
+func TestSplitDefaultRoutes(t *testing.T) {
+	const iface = "[Interface]\nPrivateKey = k\nAddress = 10.7.0.2/32\n\n"
+	tests := []struct {
+		name    string
+		in      string
+		want    string
+		changed bool
+	}{
+		{
+			name:    "IPv4 от сервера",
+			in:      iface + "[Peer]\nPublicKey = p\nAllowedIPs = 0.0.0.0/0\nEndpoint = 127.0.0.1:51820\n",
+			want:    iface + "[Peer]\nPublicKey = p\nAllowedIPs = 0.0.0.0/1, 128.0.0.0/1\nEndpoint = 127.0.0.1:51820\n",
+			changed: true,
+		},
+		{
+			name:    "IPv4 и IPv6, ключ в другом регистре, без пробелов",
+			in:      "[Peer]\nallowedips=0.0.0.0/0,::/0\n",
+			want:    "[Peer]\nallowedips= 0.0.0.0/1, 128.0.0.0/1, ::/1, 8000::/1\n",
+			changed: true,
+		},
+		{
+			name:    "/0 среди других префиксов, повтор половины убирается",
+			in:      "[Peer]\nAllowedIPs = 10.0.0.0/8, 0.0.0.0/0, 128.0.0.0/1\n",
+			want:    "[Peer]\nAllowedIPs = 10.0.0.0/8, 0.0.0.0/1, 128.0.0.0/1\n",
+			changed: true,
+		},
+		{
+			name:    "комментарий в конце строки и CRLF",
+			in:      "[Peer]\r\n  AllowedIPs   =   ::/0   # всё\r\nEndpoint = e\r\n",
+			want:    "[Peer]\r\n  AllowedIPs   = ::/1, 8000::/1 # всё\r\nEndpoint = e\r\n",
+			changed: true,
+		},
+		{
+			name:    "несколько строк AllowedIPs",
+			in:      "[Peer]\nAllowedIPs = 10.0.0.0/8\nAllowedIPs = 0.0.0.0/0\n",
+			want:    "[Peer]\nAllowedIPs = 10.0.0.0/8\nAllowedIPs = 0.0.0.0/1, 128.0.0.0/1\n",
+			changed: true,
+		},
+		{
+			name: "сплит-конфиг не трогается",
+			in:   iface + "[Peer]\nAllowedIPs = 10.0.0.0/8, 192.168.0.0/16\n",
+			want: iface + "[Peer]\nAllowedIPs = 10.0.0.0/8, 192.168.0.0/16\n",
+		},
+		{
+			name: "закомментированная строка и AllowedIPs вне [Peer] не трогаются",
+			in:   "[Interface]\nAllowedIPs = 0.0.0.0/0\n[Peer]\n# AllowedIPs = 0.0.0.0/0\nAllowedIPs = 10.0.0.0/8\n",
+			want: "[Interface]\nAllowedIPs = 0.0.0.0/0\n[Peer]\n# AllowedIPs = 0.0.0.0/0\nAllowedIPs = 10.0.0.0/8\n",
+		},
+		{
+			name:    "AllowedIPs нет: ParseWgQuick читает как 0.0.0.0/0, дописываются половины",
+			in:      iface + "[Peer]\r\nPublicKey = p\r\nEndpoint = e",
+			want:    iface + "[Peer]\r\nAllowedIPs = 0.0.0.0/1, 128.0.0.0/1\r\nPublicKey = p\r\nEndpoint = e",
+			changed: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, changed := splitDefaultRoutes(tt.in)
+			if got != tt.want || changed != tt.changed {
+				t.Errorf("splitDefaultRoutes:\n%q, %v\nожидалось\n%q, %v", got, changed, tt.want, tt.changed)
+			}
+		})
+	}
+
+	// Результат разбирается так же, как исходник, кроме AllowedIPs.
+	conf, err := ParseWgQuick(serverConfig())
+	if err != nil {
+		t.Fatalf("ParseWgQuick: %v", err)
+	}
+	text, _ := splitDefaultRoutes(serverConfig())
+	split, err := ParseWgQuick(text)
+	if err != nil {
+		t.Fatalf("ParseWgQuick после замены: %v", err)
+	}
+	if got := strings.Join(split.AllowedIPs, ","); got != "0.0.0.0/1,128.0.0.0/1" {
+		t.Errorf("AllowedIPs после замены = %s", got)
+	}
+	split.AllowedIPs, split.Raw = conf.AllowedIPs, conf.Raw
+	if fmt.Sprint(*split) != fmt.Sprint(*conf) {
+		t.Errorf("замена задела не только AllowedIPs:\n%+v\n%+v", *split, *conf)
 	}
 }

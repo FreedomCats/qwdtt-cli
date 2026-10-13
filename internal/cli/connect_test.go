@@ -204,8 +204,8 @@ func TestPlanConnectRejectsBadFlagValue(t *testing.T) {
 	}
 }
 
-// Datapath external: шаг vpn, права администратора и предупреждение о петле
-// в требованиях. Сам wireguard.exe здесь не ищется по-настоящему — план
+// Datapath external: шаг vpn, права администратора и netguard в требованиях,
+// предупреждения нет. Сам wireguard.exe здесь не ищется по-настоящему — план
 // только строит конструктор.
 func TestPlanConnectExternal(t *testing.T) {
 	c := newConnectEnv(t)
@@ -221,7 +221,7 @@ func TestPlanConnectExternal(t *testing.T) {
 		t.Errorf("описание datapath не про WireGuard: %q", plan.describe)
 	}
 	req := plan.datapath(nil).Requires()
-	if !req.Admin || req.Warning == "" || len(req.Programs) != 1 || !req.Netguard {
+	if !req.Admin || req.Warning != "" || len(req.Programs) != 1 || !req.Netguard {
 		t.Errorf("требования external не те: %+v", req)
 	}
 }

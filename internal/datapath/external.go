@@ -23,13 +23,6 @@ const DefaultTunnelName = "tt"
 // показала окно с ошибкой), и ждать её дальше незачем.
 const DefaultProgramTimeout = 30 * time.Second
 
-// ExternalWarning — ограничение Э1, о котором CLI предупреждает при запуске:
-// без netguard (architecture.md §05) полный туннель забирает и собственные
-// соединения ядра с VK, и подключение зацикливается.
-const ExternalWarning = "штатный WireGuard заберёт весь трафик системы, включая соединения tt с VK и TURN; " +
-	"до появления netguard (Э2) туннель поднимется только со сплит-конфигом, " +
-	"в котором AllowedIPs не покрывает адреса VK"
-
 // tunnelNameRe — правило wireguard-windows на имя туннеля: оно становится
 // именем службы и адаптера.
 var tunnelNameRe = regexp.MustCompile(`^[a-zA-Z0-9_=+.-]{1,32}$`)
@@ -107,8 +100,9 @@ func NewExternal(opts ExternalOptions) *External {
 }
 
 // Requires: права администратора (службу ставит только он), wireguard.exe
-// и предупреждение о петле. Programs называет найденный путь, а если найти
-// не вышло — голое имя, чтобы вызывающий сказал «не найдена программа».
+// и netguard: туннель забирает весь трафик системы. Programs называет
+// найденный путь, а если найти не вышло — голое имя, чтобы вызывающий
+// сказал «не найдена программа».
 func (e *External) Requires() Requirements {
 	program := "wireguard.exe"
 	if e.program != "" {
@@ -118,7 +112,6 @@ func (e *External) Requires() Requirements {
 		Admin:    true,
 		Programs: []string{program},
 		Netguard: true,
-		Warning:  ExternalWarning,
 	}
 }
 
@@ -155,7 +148,8 @@ func (e *External) Start(ctx context.Context, conf *WGConfig) error {
 	e.started = true
 	e.mu.Unlock()
 
-	path, err := e.writeConfig(conf)
+	raw, split := splitDefaultRoutes(conf.Raw)
+	path, err := e.writeConfig(raw)
 	if err != nil {
 		e.startFailed()
 		return err
@@ -188,10 +182,12 @@ func (e *External) Start(ctx context.Context, conf *WGConfig) error {
 	e.endpoint = endpoint
 	e.mu.Unlock()
 
+	allowed, _ := splitAllowedIPs(conf.AllowedIPs)
 	e.logf("[WG-EXT] служба туннеля %q установлена (addr=%v endpoint=%s allowed=%s)",
-		e.opts.Name, conf.Addresses, conf.Endpoint, strings.Join(conf.AllowedIPs, ","))
-	if coversEverything(conf.AllowedIPs) {
-		e.logf("[WG-EXT] предупреждение: AllowedIPs покрывает всё; %s", ExternalWarning)
+		e.opts.Name, conf.Addresses, conf.Endpoint, strings.Join(allowed, ","))
+	if split {
+		e.logf("[WG-EXT] маршрут по умолчанию в AllowedIPs записан двумя половинами /1: " +
+			"с /0 WireGuard включил бы свой kill-switch и отрезал соединения tt с VK и TURN")
 	}
 
 	go func() {
@@ -267,11 +263,11 @@ func (e *External) dir() string {
 	return os.TempDir()
 }
 
-// writeConfig пишет исходный текст конфига в файл, доступный только
-// пользователю. Именно исходный (WGConfig.Raw): читать его будет чужая
-// программа, и пересобирать из полей значило бы терять то, чего разбор
-// не понял (D1).
-func (e *External) writeConfig(conf *WGConfig) (string, error) {
+// writeConfig пишет текст конфига в файл, доступный только пользователю.
+// Текст — исходный (WGConfig.Raw) с одной правкой, splitDefaultRoutes:
+// читать его будет чужая программа, и пересобирать из полей значило бы
+// терять то, чего разбор не понял (D1).
+func (e *External) writeConfig(raw string) (string, error) {
 	dir := e.dir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("external: каталог для конфига %s: %w", dir, err)
@@ -281,7 +277,6 @@ func (e *External) writeConfig(conf *WGConfig) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("external: файл конфига %s: %w", path, err)
 	}
-	raw := conf.Raw
 	if !strings.HasSuffix(raw, "\n") {
 		raw += "\n"
 	}
@@ -336,14 +331,105 @@ func (e *External) logf(format string, args ...any) {
 	e.opts.Logf(format, args...)
 }
 
-// coversEverything — есть ли среди AllowedIPs маршрут по умолчанию: именно
-// он утаскивает в туннель собственные соединения ядра.
-func coversEverything(allowed []string) bool {
-	for _, a := range allowed {
-		switch strings.TrimSpace(a) {
-		case "0.0.0.0/0", "::/0":
-			return true
+// splitDefaultRoutes заменяет в тексте конфига маршруты по умолчанию в
+// AllowedIPs парами половин: 0.0.0.0/0 → 0.0.0.0/1, 128.0.0.0/1 и
+// ::/0 → ::/1, 8000::/1 (решение 5 Э2). Второе значение — была ли замена.
+//
+// Зачем: WireGuard для Windows при одном пире с префиксом /0 в AllowedIPs
+// включает свой kill-switch (wireguard/windows v1.1.1,
+// tunnel/addressconfig.go:165, enableFirewall) и режет всё мимо туннеля,
+// в том числе сокеты tt, которые netguard отправил через физический
+// интерфейс. Половины покрывают то же пространство и выигрывают у маршрута
+// по умолчанию длиной префикса, а kill-switch не включают.
+//
+// Правятся только значения строк AllowedIPs в секциях [Peer]; ключ, пробелы
+// до «=», комментарий в конце строки и конец строки (\r\n) сохраняются,
+// остальные строки не трогаются. Если строки AllowedIPs нет вовсе,
+// ParseWgQuick читает это как 0.0.0.0/0 (так туннель строит socks), а
+// wireguard.exe не поставил бы ни одного маршрута; поэтому в первую секцию
+// [Peer] дописывается AllowedIPs = 0.0.0.0/1, 128.0.0.0/1.
+func splitDefaultRoutes(raw string) (string, bool) {
+	lines := strings.Split(raw, "\n")
+	section := ""
+	firstPeer := -1
+	sawAllowed := false
+	changed := false
+	for i, line := range lines {
+		body, cr := strings.CutSuffix(line, "\r")
+		trimmed := strings.TrimSpace(body)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			section = strings.ToLower(strings.TrimSpace(trimmed[1 : len(trimmed)-1]))
+			if section == "peer" && firstPeer < 0 {
+				firstPeer = i
+			}
+			continue
+		}
+		eq := strings.IndexByte(body, '=')
+		if section != "peer" || eq < 0 || strings.ToLower(strings.TrimSpace(body[:eq])) != "allowedips" {
+			continue
+		}
+		sawAllowed = true
+		val, comment, hasComment := strings.Cut(body[eq+1:], "#")
+		parts, split := splitAllowedIPs(strings.Split(val, ","))
+		if !split {
+			continue
+		}
+		changed = true
+		rebuilt := body[:eq+1] + " " + strings.Join(parts, ", ")
+		if hasComment {
+			rebuilt += " #" + comment
+		}
+		if cr {
+			rebuilt += "\r"
+		}
+		lines[i] = rebuilt
+	}
+	if !sawAllowed && firstPeer >= 0 {
+		added := "AllowedIPs = 0.0.0.0/1, 128.0.0.0/1"
+		if strings.HasSuffix(lines[firstPeer], "\r") {
+			added += "\r"
+		}
+		lines = append(lines[:firstPeer+1], append([]string{added}, lines[firstPeer+1:]...)...)
+		changed = true
+	}
+	return strings.Join(lines, "\n"), changed
+}
+
+// splitAllowedIPs — та же замена над списком префиксов: каждый /0 становится
+// двумя половинами своего семейства, повторы убираются, пустые элементы
+// выбрасываются, остальное остаётся как было (без пробелов по краям).
+// Второе значение — был ли среди префиксов хоть один /0.
+func splitAllowedIPs(allowed []string) ([]string, bool) {
+	out := make([]string, 0, len(allowed)+2)
+	seen := make(map[string]bool, len(allowed)+2)
+	add := func(s string) {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
 		}
 	}
-	return false
+	split := false
+	for _, a := range allowed {
+		a = strings.TrimSpace(a)
+		if a == "" {
+			continue
+		}
+		p, err := netip.ParsePrefix(a)
+		switch {
+		case err != nil || p.Bits() != 0:
+			add(a)
+		case p.Addr().Is4():
+			split = true
+			add("0.0.0.0/1")
+			add("128.0.0.0/1")
+		default:
+			split = true
+			add("::/1")
+			add("8000::/1")
+		}
+	}
+	return out, split
 }
