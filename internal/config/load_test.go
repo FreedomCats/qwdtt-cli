@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/FreedomCats/qwdtt-cli/internal/sudo"
 )
 
 // Полный файл: все поля заданы, оба профиля разбираются, значения доходят
@@ -210,11 +212,14 @@ func TestParseWrongType(t *testing.T) {
 }
 
 func TestConfigDir(t *testing.T) {
+	underSudo := &sudo.User{Name: "user", Uid: 4242, Gid: 4242, HomeDir: "/home/user"}
+
 	tests := []struct {
-		name string
-		goos string
-		env  map[string]string
-		want string
+		name    string
+		goos    string
+		env     map[string]string
+		invoker *sudo.User
+		want    string
 	}{
 		{
 			name: "windows берёт APPDATA",
@@ -242,11 +247,28 @@ func TestConfigDir(t *testing.T) {
 			env:  map[string]string{"HOME": "/Users/user"},
 			want: filepath.Join("/Users/user", ".config"),
 		},
+		{
+			// Под sudo окружение — root'а: настройки ищутся у вызвавшего.
+			name:    "sudo берёт каталог вызвавшего",
+			goos:    "linux",
+			env:     map[string]string{"HOME": "/root"},
+			invoker: underSudo,
+			want:    filepath.Join("/home/user", ".config"),
+		},
+		{
+			// XDG_CONFIG_HOME, доживший до sudo (sudo -E или настройки root),
+			// вызвавшему не принадлежит — не учитывается.
+			name:    "sudo не смотрит на XDG_CONFIG_HOME",
+			goos:    "linux",
+			env:     map[string]string{"XDG_CONFIG_HOME": "/root/.config", "HOME": "/root"},
+			invoker: underSudo,
+			want:    filepath.Join("/home/user", ".config"),
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := configDir(tt.goos, func(key string) string { return tt.env[key] })
+			got, err := configDir(tt.goos, func(key string) string { return tt.env[key] }, tt.invoker)
 			if err != nil {
 				t.Fatalf("configDir: %v", err)
 			}
@@ -261,7 +283,7 @@ func TestConfigDirWithoutEnv(t *testing.T) {
 	empty := func(string) string { return "" }
 
 	for _, goos := range []string{"windows", "linux"} {
-		if _, err := configDir(goos, empty); err == nil {
+		if _, err := configDir(goos, empty, nil); err == nil {
 			t.Errorf("%s: пустое окружение принято за корректное", goos)
 		}
 	}

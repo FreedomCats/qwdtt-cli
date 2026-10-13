@@ -206,9 +206,8 @@ func (s *store) read() (*secretsData, error) {
 }
 
 func (s *store) write(data *secretsData) error {
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("каталог настроек %s: %w", dir, err)
+	if err := makeDir(filepath.Dir(s.path)); err != nil {
+		return err
 	}
 
 	raw, err := json.MarshalIndent(data, "", "  ")
@@ -223,6 +222,10 @@ func (s *store) write(data *secretsData) error {
 	// зашифрованы DPAPI.
 	tmp := s.path + ".tmp"
 	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return fmt.Errorf("хранилище секретов %s: %w", tmp, err)
+	}
+	if err := giveToInvoker(tmp); err != nil {
+		os.Remove(tmp)
 		return fmt.Errorf("хранилище секретов %s: %w", tmp, err)
 	}
 	if err := os.Rename(tmp, s.path); err != nil {

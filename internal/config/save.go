@@ -32,13 +32,16 @@ func Save(path string, f *File) error {
 		return err
 	}
 
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("каталог настроек %s: %w", dir, err)
+	if err := makeDir(filepath.Dir(path)); err != nil {
+		return err
 	}
 
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, []byte(render(f)), 0o600); err != nil {
+		return fmt.Errorf("файл настроек %s: %w", tmp, err)
+	}
+	if err := giveToInvoker(tmp); err != nil {
+		os.Remove(tmp)
 		return fmt.Errorf("файл настроек %s: %w", tmp, err)
 	}
 	if err := os.Rename(tmp, path); err != nil {

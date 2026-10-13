@@ -9,11 +9,14 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/FreedomCats/qwdtt-cli/internal/sudo"
 )
 
 // Path возвращает путь к profiles.toml по правилам платформы:
 // %APPDATA%\qwdtt-cli\profiles.toml на Windows и
 // $XDG_CONFIG_HOME/qwdtt-cli/profiles.toml (по умолчанию ~/.config) на прочих.
+// Под sudo — ~/.config/qwdtt-cli того, кто вызвал sudo, а не root.
 //
 // os.UserConfigDir здесь не годится: на macOS он даёт ~/Library/Application
 // Support, а клиент консольный, и его настройки логичнее держать там же, где
@@ -30,7 +33,11 @@ func Path() (string, error) {
 // profiles.toml и хранилище секретов (secret.go), поэтому путь считается
 // в одном месте.
 func appDir() (string, error) {
-	dir, err := configDir(runtime.GOOS, os.Getenv)
+	invoker, err := sudo.Invoker()
+	if err != nil {
+		return "", err
+	}
+	dir, err := configDir(runtime.GOOS, os.Getenv, invoker)
 	if err != nil {
 		return "", err
 	}
@@ -39,12 +46,21 @@ func appDir() (string, error) {
 
 // configDir вынесен отдельно от Path и берёт платформу с окружением
 // аргументами: иначе ветку другой системы нечем было бы проверить.
-func configDir(goos string, env func(string) string) (string, error) {
+//
+// invoker — кто вызвал sudo (nil — не через sudo). Окружение под sudo — уже
+// root'а: HOME=/root, а XDG_CONFIG_HOME, если и дожил, может быть чьим угодно.
+// Поэтому берётся домашний каталог вызвавшего из базы пользователей, а его
+// собственный XDG_CONFIG_HOME sudo не передаёт, и узнать его неоткуда.
+func configDir(goos string, env func(string) string, invoker *sudo.User) (string, error) {
 	if goos == "windows" {
 		if appData := strings.TrimSpace(env("APPDATA")); appData != "" {
 			return appData, nil
 		}
 		return "", errors.New("не задана переменная окружения APPDATA: непонятно, где искать настройки")
+	}
+
+	if invoker != nil {
+		return filepath.Join(invoker.HomeDir, ".config"), nil
 	}
 
 	if xdg := strings.TrimSpace(env("XDG_CONFIG_HOME")); xdg != "" {
