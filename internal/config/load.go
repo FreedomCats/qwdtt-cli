@@ -19,11 +19,22 @@ import (
 // Support, а клиент консольный, и его настройки логичнее держать там же, где
 // у остальных консольных программ.
 func Path() (string, error) {
+	dir, err := appDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, FileName), nil
+}
+
+// appDir — каталог настроек: каталог платформы плюс AppDir. В нём лежат
+// profiles.toml и хранилище секретов (secret.go), поэтому путь считается
+// в одном месте.
+func appDir() (string, error) {
 	dir, err := configDir(runtime.GOOS, os.Getenv)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, AppDir, FileName), nil
+	return filepath.Join(dir, AppDir), nil
 }
 
 // configDir вынесен отдельно от Path и берёт платформу с окружением

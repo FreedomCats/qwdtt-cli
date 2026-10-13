@@ -6,9 +6,9 @@ go 1.26.2
 // (коммит в internal/core/CORE_VERSION) — на них ядро собрано и протестировано.
 // Менять их отдельно от обновления ядра не нужно.
 //
-// golang.org/x/sys помечен indirect с задачи B6: напрямую его импортировал
-// tun_fd.go, который перестал переноситься вместе с режимом rawtun. Прямым он
-// снова станет в C2 — DPAPI живёт в golang.org/x/sys/windows.
+// golang.org/x/sys снова прямой с задачи C2: его импортирует secret_windows.go
+// ради DPAPI (golang.org/x/sys/windows). В B6 он был indirect — тогда его
+// единственным потребителем оставался убранный tun_fd.go.
 require (
 	github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5
 	github.com/bogdanfinn/fhttp v0.6.8
@@ -21,7 +21,7 @@ require (
 	github.com/pion/turn/v5 v5.0.12
 	golang.org/x/crypto v0.54.0
 	golang.org/x/net v0.57.0
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/sys v0.47.0
 	golang.zx2c4.com/wireguard v0.0.0-20260522210424-ecfc5a8d5446
 )
 
