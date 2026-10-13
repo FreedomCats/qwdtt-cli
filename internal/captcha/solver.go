@@ -9,7 +9,8 @@
 // solver.go — каркас (задача E1): интерфейс Solver, разбор события в Request и
 // Dispatcher, который связывает одно с другим и отвечает ядру через
 // core.Control.SubmitCaptcha. Сами решатели живут рядом: manual.go — ручной
-// режим (E2), окно WebView2 на Windows — Э2.
+// режим (E2), webview2_windows.go — окно WebView2 на Windows (E3). Какой из
+// них взять, решает CLI.
 package captcha
 
 import (

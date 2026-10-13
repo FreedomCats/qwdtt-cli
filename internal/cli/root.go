@@ -54,6 +54,10 @@ type env struct {
 	// openURL открывает ссылку в браузере — для решателя капчи. Пусто —
 	// ссылка только печатается; так в тестах, где чужие программы не запускают.
 	openURL func(rawURL string) error
+	// captchaWindow собирает решатель капчи с окном. Пусто — только консольный;
+	// так в тестах, где окна не открывают. Ошибка — окна не будет, и это
+	// не повод не подключаться: см. captchaSolver.
+	captchaWindow func(out io.Writer) (captcha.Solver, error)
 	// lines — буферизованный stdin. Заводится при первом чтении строки.
 	lines *bufio.Reader
 }
@@ -107,6 +111,8 @@ func Main(args []string, build Build) int {
 		stdin:   os.Stdin,
 		build:   build,
 		openURL: captcha.OpenInBrowser,
+
+		captchaWindow: newCaptchaWindow,
 	}
 
 	// Первый Ctrl+C или SIGTERM отменяет контекст команды, второй Ctrl+C

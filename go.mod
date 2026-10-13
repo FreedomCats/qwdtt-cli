@@ -29,9 +29,13 @@ require (
 //
 // BurntSushi/toml (MIT) — разбор profiles.toml, задача C1.
 // golang.org/x/term (BSD-3) — скрытый ввод пароля и хешей в `tt profile set`,
-// задача C3. Обе лицензии с GPL v3 совместимы.
+// задача C3.
+// jchv/go-webview2 (MIT) — окно капчи на Windows, задача E3. Без cgo,
+// WebView2Loader.dll встроен; тянет за собой jchv/go-winloader (MIT).
+// Все лицензии с GPL v3 совместимы.
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
 	golang.org/x/term v0.45.0
 )
 
@@ -43,6 +47,7 @@ require (
 	github.com/bogdanfinn/utls v1.7.7-barnius // indirect
 	github.com/bogdanfinn/websocket v1.5.5-barnius // indirect
 	github.com/google/btree v1.1.2 // indirect
+	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/klauspost/compress v1.18.2 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pion/stun/v3 v3.1.6 // indirect

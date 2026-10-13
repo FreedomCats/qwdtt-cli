@@ -2,10 +2,14 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/FreedomCats/qwdtt-cli/internal/captcha"
 	"github.com/FreedomCats/qwdtt-cli/internal/config"
 	"github.com/FreedomCats/qwdtt-cli/internal/core"
 	"github.com/FreedomCats/qwdtt-cli/internal/datapath"
@@ -296,5 +300,61 @@ func TestConnectStopsOnCancelledContext(t *testing.T) {
 	}
 	if strings.Contains(out.String(), testPassword) {
 		t.Errorf("в выводе виден пароль")
+	}
+}
+
+// windowSolver — подставной решатель с окном: captchaSolver должен отдать
+// именно его, а не консольный.
+type windowSolver struct{}
+
+func (windowSolver) Solve(context.Context, captcha.Request) (string, error) { return "", nil }
+func (windowSolver) NeedsHuman() bool                                       { return true }
+
+func TestCaptchaSolverChoice(t *testing.T) {
+	window := func(io.Writer) (captcha.Solver, error) { return windowSolver{}, nil }
+	missing := func(io.Writer) (captcha.Solver, error) {
+		return nil, errors.New("WebView2 Runtime не установлен")
+	}
+	unsupported := func(io.Writer) (captcha.Solver, error) {
+		return nil, fmt.Errorf("окно капчи есть только на Windows: %w", errors.ErrUnsupported)
+	}
+
+	cases := []struct {
+		name       string
+		window     func(io.Writer) (captcha.Solver, error)
+		ssh        bool
+		wantWindow bool
+		wantWarn   bool
+	}{
+		{name: "окно есть", window: window, wantWindow: true},
+		{name: "окна не заводили", window: nil},
+		{name: "нет Runtime", window: missing, wantWarn: true},
+		{name: "не Windows", window: unsupported},
+		{name: "по SSH", window: window, ssh: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ssh := ""
+			if tc.ssh {
+				ssh = "192.0.2.1 50000 192.0.2.2 22"
+			}
+			t.Setenv("SSH_CONNECTION", ssh)
+
+			var out, errOut strings.Builder
+			e := &env{stdout: &out, stderr: &errOut, stdin: strings.NewReader(""), captchaWindow: tc.window}
+			solver := captchaSolver(e, newPrinter(&out, false))
+
+			_, isWindow := solver.(windowSolver)
+			if isWindow != tc.wantWindow {
+				t.Errorf("решатель %T, окно ожидалось: %v", solver, tc.wantWindow)
+			}
+			if _, isConsole := solver.(*captcha.Manual); !tc.wantWindow && !isConsole {
+				t.Errorf("решатель %T, ожидался консольный", solver)
+			}
+			warned := strings.Contains(errOut.String(), "Предупреждение")
+			if warned != tc.wantWarn {
+				t.Errorf("предупреждение: %v, ожидалось: %v; stderr: %q", warned, tc.wantWarn, errOut.String())
+			}
+		})
 	}
 }

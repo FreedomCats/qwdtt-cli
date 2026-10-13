@@ -14,6 +14,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -337,6 +338,44 @@ func requirementProblems(req datapath.Requirements) []string {
 	return problems
 }
 
+// captchaSolver выбирает решатель капчи: окно WebView2, где оно возможно
+// (E3), иначе консольный (E2). Консольный — запасное дно: работает всегда.
+//
+// Сообщения обоих уходят в stderr через out.aside, чтобы статусная строка
+// не встала посреди приглашения; консольный читает ответ со stdin команды.
+func captchaSolver(e *env, out *printer) captcha.Solver {
+	console := captcha.NewManual(captcha.ManualOptions{In: e.stdin, Out: out.aside(e.stderr), Open: e.openURL})
+
+	if e.captchaWindow == nil {
+		return console
+	}
+	// По SSH окно откроется не там, где сидит пользователь, а то и вовсе
+	// нигде: сеанс службы рабочего стола не имеет. Консоль же у него под рукой.
+	if os.Getenv("SSH_CONNECTION") != "" {
+		return console
+	}
+
+	window, err := e.captchaWindow(out.aside(e.stderr))
+	if err != nil {
+		// Вне Windows окна и не ждут — предупреждать не о чем.
+		if !errors.Is(err, errors.ErrUnsupported) {
+			fmt.Fprintf(e.stderr, "Предупреждение: %v — капчу, если VK её попросит, придётся решать через консоль\n", err)
+		}
+		return console
+	}
+	return window
+}
+
+// newCaptchaWindow — настоящий решатель с окном для env.captchaWindow.
+// Отдельной функцией, чтобы не вернуть типизированный nil в интерфейсе.
+func newCaptchaWindow(out io.Writer) (captcha.Solver, error) {
+	window, err := captcha.NewWebView2(captcha.WebView2Options{Out: out})
+	if err != nil {
+		return nil, err
+	}
+	return window, nil
+}
+
 // ──────────────────────────── запуск ────────────────────────────
 
 // run поднимает туннель по плану и держит его до Ctrl+C или до тех пор, пока
@@ -364,11 +403,7 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	// циклу подключения и диспетчеру капчи, который отвечает через неё.
 	ctrl := core.NewControl()
 
-	// Решатель капчи: консольный (E2). Вопрос и инструкция уходят в stderr,
-	// ответ читается со stdin команды. Окно WebView2 — второй приём E2.
-	// Через out.aside, чтобы статусная строка не встала посреди приглашения.
-	solver := captcha.NewManual(captcha.ManualOptions{In: e.stdin, Out: out.aside(e.stderr), Open: e.openURL})
-	dispatcher := captcha.New(captcha.Options{Solver: solver, Control: ctrl, Logf: out.logf})
+	dispatcher := captcha.New(captcha.Options{Solver: captchaSolver(e, out), Control: ctrl, Logf: out.logf})
 	defer dispatcher.Close()
 
 	cfg := plan.cfg
