@@ -32,6 +32,8 @@ type profileEnv struct {
 	pipe bool
 	// hashCheck — подмена проверки хешей (меню).
 	hashCheck func(ctx context.Context, cfg core.Config, sink core.Sink) error
+	// elevate — подмена перезапуска с правами (меню).
+	elevate func(args []string) (bool, error)
 }
 
 func newProfileEnv(t *testing.T) *profileEnv {
@@ -87,6 +89,7 @@ func (p *profileEnv) run(args ...string) (code int, stdout, stderr string) {
 		e.secrets = nil
 	}
 	e.hashCheck = p.hashCheck
+	e.elevate = p.elevate
 
 	args = append(args, "-config", p.configPath())
 	code = run(context.Background(), e, args)

@@ -21,6 +21,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/FreedomCats/qwdtt-cli/internal/config"
+	"github.com/FreedomCats/qwdtt-cli/internal/datapath"
 )
 
 func menuCommand() *command {
@@ -131,7 +132,12 @@ func (m *menu) loop(ctx context.Context) error {
 		}
 
 		fmt.Fprintln(e.stdout)
-		if err := items[choice-1].run(ctx, name); err != nil {
+		err = items[choice-1].run(ctx, name)
+		if errors.Is(err, errMenuExit) {
+			e.noPause = true
+			return nil
+		}
+		if err != nil {
 			fmt.Fprintf(e.stderr, "Не получилось: %v\n", err)
 		}
 	}
@@ -283,11 +289,58 @@ func (m *menu) args(args ...string) []string {
 // ──────────────────────────── пункты ────────────────────────────
 
 func (m *menu) connect(ctx context.Context, name string) error {
+	opts := &connectOptions{common: &commonOptions{config: m.config}, named: map[string]bool{}}
+	plan, err := planConnect(opts, name)
+	if err != nil {
+		return err
+	}
+	// Прав не хватает — запросить их, а не объяснять, как запустить tt
+	// иначе: человек из меню командной строки не знает.
+	if plan.datapath(nil).Requires().Admin && !isElevated() {
+		return m.connectElevated(name)
+	}
+
 	ctx, done := m.connecting(ctx)
 	defer done()
-
 	fmt.Fprintln(m.e.stdout, "Подключение. Остановить — Ctrl+C, после этого снова откроется меню.")
-	return runConnect(ctx, m.e, m.args(name))
+	return plan.run(ctx, m.e, false)
+}
+
+// connectElevated перезапускает подключение с правами администратора.
+func (m *menu) connectElevated(name string) error {
+	done := m.runningChild()
+	detached, err := m.e.relaunch(relaunchArgs(name, m.config))
+	done()
+
+	switch {
+	case errors.Is(err, errNoAdminAccount):
+		return m.offerSocks(name)
+	case err != nil:
+		return err
+	case detached:
+		// Подключение ушло в своё окно с правами; это окно больше не нужно.
+		return errMenuExit
+	}
+	return nil
+}
+
+// offerSocks — прав администратора не получить: предложить режим, которому
+// они не нужны.
+func (m *menu) offerSocks(name string) error {
+	w := m.e.stdout
+	fmt.Fprintln(w, "Режиму «весь трафик» нужны права администратора, а у этой учётной записи их нет.")
+	fmt.Fprintln(w, "С паролем другой учётной записи tt запустился бы от её имени и не нашёл бы этот профиль.")
+	fmt.Fprintf(w, "Без прав работает режим «только программы с прокси» (SOCKS5 %s).\n", datapath.DefaultSocksListen)
+
+	agreed, err := m.e.confirm(fmt.Sprintf("Переключить профиль %s на этот режим?", name))
+	if err != nil || !agreed {
+		return err
+	}
+	if err := runProfileSet(context.Background(), m.e, m.args(name, "-datapath", config.DatapathSocks)); err != nil {
+		return err
+	}
+	fmt.Fprintln(w, "Готово. Подключиться — пункт 1 (Enter).")
+	return nil
 }
 
 func (m *menu) pick(context.Context, string) error {
@@ -343,6 +396,9 @@ type menuSignals struct {
 	mu sync.Mutex
 	// cancel — отменить идущее подключение; nil — подключения нет.
 	cancel context.CancelFunc
+	// child — идёт подключение, перезапущенное с правами (sudo): сигнал
+	// терминал отдал и ему, и разбирается с ним он. Меню ждёт его конца.
+	child bool
 	// exit — выйти, не дожидаясь меню.
 	exit func()
 }
@@ -391,6 +447,10 @@ func (m *menu) catchSignals() func() {
 
 func (s *menuSignals) handle() {
 	s.mu.Lock()
+	if s.child {
+		s.mu.Unlock()
+		return
+	}
 	cancel := s.cancel
 	s.cancel = nil
 	s.mu.Unlock()
@@ -419,6 +479,23 @@ func (m *menu) connecting(ctx context.Context) (context.Context, func()) {
 		s.cancel = nil
 		s.mu.Unlock()
 		cancel()
+	}
+}
+
+// runningChild — запущен tt с правами: пока он идёт, сигналы меню не
+// трогают. Возвращает функцию, которая снимает отметку.
+func (m *menu) runningChild() func() {
+	s := m.signals
+	if s == nil {
+		return func() {}
+	}
+	s.mu.Lock()
+	s.child = true
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		s.child = false
+		s.mu.Unlock()
 	}
 }
 
