@@ -151,8 +151,8 @@ func TestExternalInstallsAndUninstalls(t *testing.T) {
 	confPath := x.confPath()
 	if data, err := os.ReadFile(confPath); err != nil {
 		t.Errorf("файла конфига нет, пока стоит служба, а она читает его при запуске: %v", err)
-	} else if text := string(data); !strings.Contains(text, "AllowedIPs = 0.0.0.0/1, 128.0.0.0/1") || strings.Contains(text, "0.0.0.0/0") {
-		t.Errorf("в файле конфига маршрут по умолчанию не разбит на половины /1:\n%s", text)
+	} else if text := string(data); !strings.Contains(text, "AllowedIPs = 0.0.0.0/1, 128.0.0.0/1, ::/1, 8000::/1") || strings.Contains(text, "0.0.0.0/0") {
+		t.Errorf("в файле конфига маршрут по умолчанию не разбит на половины /1 или IPv6 не заворачивается в туннель:\n%s", text)
 	}
 	if got, want := dp.Endpoint().String(), "127.0.0.1:51820"; got != want {
 		t.Errorf("Endpoint = %s, ожидался %s", got, want)
@@ -183,6 +183,9 @@ func TestExternalInstallsAndUninstalls(t *testing.T) {
 	joined := strings.Join(logs, "\n")
 	if !strings.Contains(joined, "половинами /1") || !strings.Contains(joined, "allowed=0.0.0.0/1,128.0.0.0/1") {
 		t.Errorf("в логе нет замены 0.0.0.0/0 на половины /1:\n%s", joined)
+	}
+	if !strings.Contains(joined, "дописаны ::/1, 8000::/1") {
+		t.Errorf("в логе нет строки о блокировке IPv6:\n%s", joined)
 	}
 	if strings.Contains(joined, testPrivB64) {
 		t.Errorf("в логе виден приватный ключ")
@@ -472,5 +475,73 @@ func TestSplitDefaultRoutes(t *testing.T) {
 	split.AllowedIPs, split.Raw = conf.AllowedIPs, conf.Raw
 	if fmt.Sprint(*split) != fmt.Sprint(*conf) {
 		t.Errorf("замена задела не только AllowedIPs:\n%+v\n%+v", *split, *conf)
+	}
+}
+
+// Полный туннель IPv4 без IPv6 от сервера: IPv6 машины шёл бы мимо туннеля
+// (R2, находка 3) — половины IPv6 дописываются, как у wintun (решение 2).
+func TestBlockIPv6(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		want    string
+		changed bool
+	}{
+		{
+			name:    "сервер выдал только IPv4",
+			in:      "[Peer]\nPublicKey = p\nAllowedIPs = 0.0.0.0/1, 128.0.0.0/1\nEndpoint = e\n",
+			want:    "[Peer]\nPublicKey = p\nAllowedIPs = 0.0.0.0/1, 128.0.0.0/1, ::/1, 8000::/1\nEndpoint = e\n",
+			changed: true,
+		},
+		{
+			name:    "комментарий, CRLF, половины IPv4 в разных строках",
+			in:      "[Peer]\r\nAllowedIPs = 10.0.0.0/8, 0.0.0.0/1 # первая\r\nAllowedIPs = 128.0.0.0/1\r\n",
+			want:    "[Peer]\r\nAllowedIPs = 10.0.0.0/8, 0.0.0.0/1, ::/1, 8000::/1 # первая\r\nAllowedIPs = 128.0.0.0/1\r\n",
+			changed: true,
+		},
+		{
+			name:    "есть только одна половина IPv6 — дописывается вторая",
+			in:      "[Peer]\nAllowedIPs = 0.0.0.0/1, 128.0.0.0/1, ::/1\n",
+			want:    "[Peer]\nAllowedIPs = 0.0.0.0/1, 128.0.0.0/1, ::/1, 8000::/1\n",
+			changed: true,
+		},
+		{
+			name: "IPv6 уже в туннеле",
+			in:   "[Peer]\nAllowedIPs = 0.0.0.0/1, 128.0.0.0/1, ::/1, 8000::/1\n",
+			want: "[Peer]\nAllowedIPs = 0.0.0.0/1, 128.0.0.0/1, ::/1, 8000::/1\n",
+		},
+		{
+			name: "сплит-конфиг не трогается",
+			in:   "[Peer]\nAllowedIPs = 10.0.0.0/8, 0.0.0.0/1\n",
+			want: "[Peer]\nAllowedIPs = 10.0.0.0/8, 0.0.0.0/1\n",
+		},
+		{
+			name: "закомментированная строка и вне [Peer] не считаются",
+			in:   "[Interface]\nAllowedIPs = 0.0.0.0/1, 128.0.0.0/1\n[Peer]\n# AllowedIPs = 0.0.0.0/1, 128.0.0.0/1\nAllowedIPs = 10.0.0.0/8\n",
+			want: "[Interface]\nAllowedIPs = 0.0.0.0/1, 128.0.0.0/1\n[Peer]\n# AllowedIPs = 0.0.0.0/1, 128.0.0.0/1\nAllowedIPs = 10.0.0.0/8\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, changed := blockIPv6(tt.in)
+			if got != tt.want || changed != tt.changed {
+				t.Errorf("blockIPv6:\n%q, %v\nожидалось\n%q, %v", got, changed, tt.want, tt.changed)
+			}
+		})
+	}
+
+	// Конфиг сервера: после обеих правок — полный туннель обоих семейств
+	// половинами, без /0 (иначе kill-switch WireGuard).
+	text, _ := splitDefaultRoutes(serverConfig())
+	text, _ = blockIPv6(text)
+	conf, err := ParseWgQuick(text)
+	if err != nil {
+		t.Fatalf("ParseWgQuick: %v", err)
+	}
+	if got := strings.Join(conf.AllowedIPs, ","); got != "0.0.0.0/1,128.0.0.0/1,::/1,8000::/1" {
+		t.Errorf("AllowedIPs = %s", got)
+	}
+	if warnings := allowedIPsWarnings(conf); len(warnings) != 0 {
+		t.Errorf("покрытие неполное: %v", warnings)
 	}
 }

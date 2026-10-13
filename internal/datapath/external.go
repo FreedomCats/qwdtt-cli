@@ -161,6 +161,7 @@ func (e *External) Start(ctx context.Context, conf *WGConfig) error {
 	e.mu.Unlock()
 
 	raw, split := splitDefaultRoutes(conf.Raw)
+	raw, blocked6 := blockIPv6(raw)
 	raw, addedDNS := addDefaultDNS(raw, conf.DNS)
 	path, err := e.writeConfig(raw)
 	if err != nil {
@@ -210,6 +211,10 @@ func (e *External) Start(ctx context.Context, conf *WGConfig) error {
 	if split {
 		e.logf("[WG-EXT] маршрут по умолчанию в AllowedIPs записан двумя половинами /1: " +
 			"с /0 WireGuard включил бы свой kill-switch и отрезал соединения tt с VK и TURN")
+	}
+	if blocked6 {
+		e.logf("[WG-EXT] сервер не выдал маршрута IPv6: в AllowedIPs дописаны ::/1, 8000::/1 — " +
+			"IPv6 машины уходит в туннель и там отбрасывается, а не идёт мимо него")
 	}
 	if addedDNS {
 		e.logf("[WG-EXT] сервер не прислал DNS, в конфиг записан DNS = %s", joinAddrs(conf.DNS))
@@ -438,6 +443,91 @@ func splitDefaultRoutes(raw string) (string, bool) {
 			added += "\r"
 		}
 		lines = append(lines[:firstPeer+1], append([]string{added}, lines[firstPeer+1:]...)...)
+		changed = true
+	}
+	return strings.Join(lines, "\n"), changed
+}
+
+// blockIPv6 дописывает ::/1, 8000::/1 в AllowedIPs полного туннеля IPv4, если
+// IPv6 в нём не покрыт. Второе значение — была ли правка. Звать после
+// splitDefaultRoutes: полный туннель IPv4 к этому времени уже записан
+// половинами 0.0.0.0/1, 128.0.0.0/1.
+//
+// Зачем (решение 2 Э2, то же, что у wintun): маршруты WireGuard для Windows
+// ставит из AllowedIPs. Если сервер выдал только 0.0.0.0/0, маршрутов IPv6
+// в туннель нет, и у кого провайдер даёт IPv6, весь IPv6 машины идёт мимо
+// туннеля с настоящим адресом (сайты с AAAA — мимо VPN). С половинами IPv6
+// уходит в туннель; адреса IPv6 у туннеля нет, сервер такие пакеты
+// отбрасывает, и программы откатываются на IPv4 (Happy Eyeballs).
+//
+// Половины, а не ::/0: с /0 WireGuard включил бы kill-switch (см.
+// splitDefaultRoutes). Сплит-конфиг (без обеих половин IPv4) не трогается.
+// Половины дописываются в ту строку AllowedIPs секции [Peer], где стоит
+// 0.0.0.0/1, с сохранением комментария и \r.
+func blockIPv6(raw string) (string, bool) {
+	lines := strings.Split(raw, "\n")
+	type peerAllowed struct{ prefixes map[string]bool }
+	var peers []peerAllowed
+	target := map[int]int{} // номер секции [Peer] → строка с 0.0.0.0/1
+	section := ""
+	for i, line := range lines {
+		body := strings.TrimSuffix(line, "\r")
+		trimmed := strings.TrimSpace(body)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			section = strings.ToLower(strings.TrimSpace(trimmed[1 : len(trimmed)-1]))
+			if section == "peer" {
+				peers = append(peers, peerAllowed{prefixes: map[string]bool{}})
+			}
+			continue
+		}
+		eq := strings.IndexByte(body, '=')
+		if section != "peer" || eq < 0 || strings.ToLower(strings.TrimSpace(body[:eq])) != "allowedips" {
+			continue
+		}
+		val, _, _ := strings.Cut(body[eq+1:], "#")
+		for _, a := range strings.Split(val, ",") {
+			p, err := netip.ParsePrefix(strings.TrimSpace(a))
+			if err != nil {
+				continue
+			}
+			p = p.Masked()
+			peers[len(peers)-1].prefixes[p.String()] = true
+			if p.String() == "0.0.0.0/1" {
+				target[len(peers)-1] = i
+			}
+		}
+	}
+	changed := false
+	for n, peer := range peers {
+		i, ok := target[n]
+		if !ok || !peer.prefixes["128.0.0.0/1"] || (peer.prefixes["::/1"] && peer.prefixes["8000::/1"]) {
+			continue
+		}
+		body, cr := strings.CutSuffix(lines[i], "\r")
+		eq := strings.IndexByte(body, '=')
+		val, comment, hasComment := strings.Cut(body[eq+1:], "#")
+		var parts []string
+		for _, a := range strings.Split(val, ",") {
+			if a = strings.TrimSpace(a); a != "" {
+				parts = append(parts, a)
+			}
+		}
+		for _, h := range []string{"::/1", "8000::/1"} {
+			if !peer.prefixes[h] {
+				parts = append(parts, h)
+			}
+		}
+		rebuilt := body[:eq+1] + " " + strings.Join(parts, ", ")
+		if hasComment {
+			rebuilt += " #" + comment
+		}
+		if cr {
+			rebuilt += "\r"
+		}
+		lines[i] = rebuilt
 		changed = true
 	}
 	return strings.Join(lines, "\n"), changed
