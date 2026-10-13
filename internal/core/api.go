@@ -12,6 +12,7 @@ import (
 	"errors"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 const (
@@ -295,6 +296,24 @@ func (c *Control) SubmitCaptcha(token string) {
 	select {
 	case CaptchaResultChan <- token:
 	default:
+	}
+}
+
+// CaptchaTimeout — сколько ядро ждёт ответа на EventCaptchaRequired, прежде чем
+// считать попытку провальной и пойти дальше своей цепочкой. Режим приходит
+// в поле Mode того же события.
+//
+// Значения не дублируются, а берутся у ядра: внешний решатель обязан успеть
+// ответить, а после обновления ядра сдвинувшийся таймаут иначе тихо превратил бы
+// его ответы в опоздавшие — токен, которого никто не ждёт, ядро выбрасывает.
+func CaptchaTimeout(mode string) time.Duration {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "manual":
+		return captchaManualWebViewTimeout
+	case "selected":
+		return captchaSelectedWebViewTimeout
+	default:
+		return captchaAutoWebViewTimeout
 	}
 }
 
