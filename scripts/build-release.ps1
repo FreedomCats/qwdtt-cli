@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Собирает релиз tt: три бинаря и zip для Windows.
+    Собирает релиз tt: три бинаря, zip для Windows и tar.gz для Linux и macOS.
 
 .DESCRIPTION
     Сборка воспроизводима из чистого клона: скрипту нужны go, git и доступ
@@ -21,15 +21,22 @@
         dist/tt_<версия>_windows_amd64.zip   — tt.exe, wintun.dll, wintun-LICENSE.txt,
                                                THIRD_PARTY_NOTICES.txt,
                                                tt.example.toml, LICENSE, README.md
+        dist/tt_<версия>_linux_amd64.tar.gz  — каталог tt_<версия>_linux_amd64/ с tt,
+        dist/tt_<версия>_darwin_arm64.tar.gz   THIRD_PARTY_NOTICES.txt,
+                                               tt.example.toml, LICENSE, README.md
 
-    wintun.dll (режим -datapath wintun) кладётся в zip скриптом
+    wintun.dll (режим -datapath tun) кладётся в zip скриптом
     scripts/fetch-wintun.ps1: фиксированная версия, проверка SHA256 архива и
     подписи DLL. В репозитории её нет. THIRD_PARTY_NOTICES.txt — лицензии
     всего, что слинковано в tt.exe, — собирает `go run ./scripts/notices`
     на каждую сборку.
 
-    Zip собирается только для Windows: это единственная платформа, для которой
-    в Э1 есть все datapath и живая проверка. Остальные бинари лежат рядом как есть.
+    Внутри zip файлы лежат без каталога (распаковал и запустил), внутри tar.gz —
+    в каталоге с именем архива, как принято для tar. В tar.gz у tt стоит право
+    на исполнение (0755), у остальных файлов — 0644, на какой бы системе ни шла
+    сборка: архив пишется средствами .NET (System.Formats.Tar), а не tar
+    системы, — tar на Windows права на исполнение не ставит. Нужен pwsh 7.3
+    или новее.
 
     В конце скрипт запускает `tt version` у бинаря для своей платформы и
     проверяет, что версия и коммит подставились.
@@ -48,7 +55,7 @@
     darwin/arm64.
 
 .PARAMETER NoZip
-    Не собирать zip (и не брать wintun.dll).
+    Не собирать архивы — ни zip, ни tar.gz (и не брать wintun.dll).
 
 .PARAMETER WintunArchive
     Уже скачанный wintun-<версия>.zip для fetch-wintun.ps1 — сборка без сети.
@@ -143,7 +150,7 @@ foreach ($platform in $Platforms) {
 
 # --- zip для Windows -------------------------------------------------------
 
-$zips = @()
+$archives = @()
 if (-not $NoZip) {
     foreach ($b in $built | Where-Object GOOS -eq 'windows') {
         foreach ($extra in @('tt.example.toml', 'LICENSE', 'README.md')) {
@@ -154,12 +161,73 @@ if (-not $NoZip) {
         & (Join-Path $PSScriptRoot 'fetch-wintun.ps1') @fetch
         & go -C $root run ./scripts/notices -dest $b.Dir -goos $b.GOOS -goarch $b.GOARCH
         if ($LASTEXITCODE -ne 0) { throw "уведомления для $($b.Platform) не собраны" }
-        $zip = Join-Path $Out "$($b.Name).zip"
-        if (Test-Path $zip) { Remove-Item -Force $zip }
+        $archive = Join-Path $Out "$($b.Name).zip"
+        if (Test-Path $archive) { Remove-Item -Force $archive }
         # Внутри архива — файлы без каталога: распаковал и запустил.
-        Compress-Archive -Path (Join-Path $b.Dir '*') -DestinationPath $zip -CompressionLevel Optimal
-        $zips += $zip
-        Write-Host "Архив: $zip"
+        Compress-Archive -Path (Join-Path $b.Dir '*') -DestinationPath $archive -CompressionLevel Optimal
+        $archives += $archive
+        Write-Host "Архив: $archive"
+    }
+}
+
+# --- tar.gz для Linux и macOS ---------------------------------------------
+
+# New-TarGz пишет каталог $Dir в $Path: внутри — каталог $Prefix с файлами
+# $Dir (вложенных каталогов в релизе нет). $Executables получают 0755.
+# Время у всех записей одно и фиксированное: время файлов на машине сборки
+# в архив не попадает, и одинаковые файлы дают одинаковый архив. Формат —
+# ustar: pax дописывает каждой записи atime и ctime текущим временем.
+function New-TarGz {
+    param([string] $Dir, [string] $Path, [string] $Prefix, [string[]] $Executables)
+
+    if ($PSVersionTable.PSVersion -lt [version]'7.3') {
+        throw "tar.gz пишется через System.Formats.Tar: нужен pwsh 7.3 или новее, а это $($PSVersionTable.PSVersion)"
+    }
+    $exec = [System.IO.UnixFileMode]'UserRead, UserWrite, UserExecute, GroupRead, GroupExecute, OtherRead, OtherExecute'
+    $plain = [System.IO.UnixFileMode]'UserRead, UserWrite, GroupRead, OtherRead'
+    $mtime = [DateTimeOffset]::new(2026, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
+
+    $file = [System.IO.File]::Create($Path)
+    try {
+        $gzip = [System.IO.Compression.GZipStream]::new($file, [System.IO.Compression.CompressionLevel]::Optimal)
+        try {
+            $tar = [System.Formats.Tar.TarWriter]::new($gzip, [System.Formats.Tar.TarEntryFormat]::Ustar, $false)
+            try {
+                $dirEntry = [System.Formats.Tar.UstarTarEntry]::new([System.Formats.Tar.TarEntryType]::Directory, "$Prefix/")
+                $dirEntry.Mode = $exec
+                $dirEntry.ModificationTime = $mtime
+                $tar.WriteEntry($dirEntry)
+                foreach ($f in Get-ChildItem -File -LiteralPath $Dir | Sort-Object Name) {
+                    $entry = [System.Formats.Tar.UstarTarEntry]::new([System.Formats.Tar.TarEntryType]::RegularFile, "$Prefix/$($f.Name)")
+                    $entry.Mode = if ($Executables -contains $f.Name) { $exec } else { $plain }
+                    $entry.ModificationTime = $mtime
+                    $data = [System.IO.File]::OpenRead($f.FullName)
+                    try {
+                        $entry.DataStream = $data
+                        $tar.WriteEntry($entry)
+                    }
+                    finally { $data.Dispose() }
+                }
+            }
+            finally { $tar.Dispose() }
+        }
+        finally { $gzip.Dispose() }
+    }
+    finally { $file.Dispose() }
+}
+
+if (-not $NoZip) {
+    foreach ($b in $built | Where-Object GOOS -ne 'windows') {
+        foreach ($extra in @('tt.example.toml', 'LICENSE', 'README.md')) {
+            Copy-Item (Join-Path $root $extra) (Join-Path $b.Dir $extra)
+        }
+        & go -C $root run ./scripts/notices -dest $b.Dir -goos $b.GOOS -goarch $b.GOARCH
+        if ($LASTEXITCODE -ne 0) { throw "уведомления для $($b.Platform) не собраны" }
+        $tgz = Join-Path $Out "$($b.Name).tar.gz"
+        if (Test-Path $tgz) { Remove-Item -Force $tgz }
+        New-TarGz -Dir $b.Dir -Path $tgz -Prefix $b.Name -Executables @('tt')
+        $archives += $tgz
+        Write-Host "Архив: $tgz"
     }
 }
 
@@ -192,7 +260,8 @@ foreach ($b in $built) {
     $size = [math]::Round((Get-Item $b.Exe).Length / 1MB, 1)
     Write-Host ("  {0,-14} {1}  ({2} МБ)" -f $b.Platform, $b.Exe, $size)
 }
-foreach ($zip in $zips) {
-    $size = [math]::Round((Get-Item $zip).Length / 1MB, 1)
-    Write-Host ("  {0,-14} {1}  ({2} МБ)" -f 'zip', $zip, $size)
+foreach ($archive in $archives) {
+    $size = [math]::Round((Get-Item $archive).Length / 1MB, 1)
+    $kind = if ($archive.EndsWith('.zip')) { 'zip' } else { 'tar.gz' }
+    Write-Host ("  {0,-14} {1}  ({2} МБ)" -f $kind, $archive, $size)
 }
