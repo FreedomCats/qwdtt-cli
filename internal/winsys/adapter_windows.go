@@ -110,3 +110,25 @@ func familyName(family winipcfg.AddressFamily) string {
 	}
 	return "IPv4"
 }
+
+// FlushAdapter снимает с адаптера туннеля маршруты, адреса и DNS обоих
+// семейств перед тем, как адаптер закроют. Так делает wireguard-windows
+// (tunnel/interfacewatcher.go, Destroy, MIT, v1.1.1): стек Windows плохо
+// переносит уничтожение интерфейса с активными маршрутами. Заодно ключ
+// интерфейса в реестре (Tcpip\Parameters\Interfaces\{GUID}) не остаётся
+// с DNS туннеля после остановки (R2, сценарий 2).
+//
+// Ошибки собираются, но ничего не останавливают: адаптер всё равно
+// закрывается следом. Семейства, выключенного на адаптере, нет — не ошибка.
+func FlushAdapter(luid uint64) error {
+	l := winipcfg.LUID(luid)
+	var errs []error
+	for _, family := range []winipcfg.AddressFamily{windows.AF_INET, windows.AF_INET6} {
+		for _, flush := range []func(winipcfg.AddressFamily) error{l.FlushRoutes, l.FlushIPAddresses, l.FlushDNS} {
+			if err := flush(family); err != nil && !errors.Is(err, windows.ERROR_NOT_FOUND) {
+				errs = append(errs, fmt.Errorf("%s: %w", familyName(family), err))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}

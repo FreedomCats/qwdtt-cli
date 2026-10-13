@@ -31,6 +31,10 @@ type fakeWintun struct {
 	routesErr error
 	// configured — сколько раз адаптер перенастраивался (без создания).
 	configured atomic.Int32
+	// flushed — сброс адаптера; flushedBeforeTUN — пока TUN ещё открыт
+	// (после закрытия адаптера сбрасывать уже нечего).
+	flushed          atomic.Int32
+	flushedBeforeTUN atomic.Bool
 }
 
 func (f *fakeWintun) open(name string, conf *WGConfig, logf func(string, ...any)) (*wintunAdapter, error) {
@@ -58,6 +62,11 @@ func (f *fakeWintun) open(name string, conf *WGConfig, logf func(string, ...any)
 		},
 		removeRoutes: func() error {
 			f.routed.Store(false)
+			return nil
+		},
+		flush: func() error {
+			f.flushed.Add(1)
+			f.flushedBeforeTUN.Store(f.tun.closed.Load() == 0)
 			return nil
 		},
 		release: func() {
@@ -395,3 +404,25 @@ func TestWintunCloseDuringStart(t *testing.T) {
 type errorString string
 
 func (e errorString) Error() string { return string(e) }
+
+// Close сбрасывает адаптер (маршруты, адреса, DNS) до того, как закрыть его,
+// как wireguard-windows: иначе после остановки в реестре оставался ключ
+// интерфейса с DNS туннеля (R2, сценарий 2).
+func TestWintunCloseFlushesAdapterFirst(t *testing.T) {
+	w, f, _ := newTestWintun(t)
+	if err := w.Start(context.Background(), testWGConfig(t, "127.0.0.1:9")); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if f.flushed.Load() != 0 {
+		t.Fatal("адаптер сброшен до Close")
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if n := f.flushed.Load(); n != 1 {
+		t.Fatalf("сбросов %d, ждали 1", n)
+	}
+	if !f.flushedBeforeTUN.Load() {
+		t.Error("сброс после закрытия TUN — адаптера уже нет")
+	}
+}

@@ -95,6 +95,9 @@ func openWintunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (
 		removeRoutes: func() error {
 			return winsys.ClearTunnelRoutes(luid, fullTunnelRoutes)
 		},
+		flush: func() error {
+			return winsys.FlushAdapter(luid)
+		},
 		release: release,
 	}, nil
 }

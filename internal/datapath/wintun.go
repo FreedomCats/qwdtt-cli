@@ -79,6 +79,9 @@ type wintunAdapter struct {
 	// адаптер; оба безвредны повторно. Сам адаптер при этом остаётся.
 	addRoutes    func() error
 	removeRoutes func() error
+	// flush снимает с адаптера маршруты, адреса и DNS перед закрытием;
+	// nil — нечего снимать (подделки в тестах).
+	flush func() error
 	// release зовётся после закрытия TUN, то есть когда адаптера уже нет:
 	// снимает блокировку второго запуска и возвращает перехваченный вывод.
 	release func()
@@ -315,8 +318,13 @@ func (w *Wintun) close() error {
 	if dev == nil {
 		return nil
 	}
-	// Close устройства закрывает TUN, а закрытие TUN убирает адаптер вместе
-	// с его адресами. Ошибки wireguard-go здесь не возвращает.
+	if adapter.flush != nil {
+		if err := adapter.flush(); err != nil {
+			w.logf("[WINTUN] сброс настроек адаптера перед закрытием: %v", err)
+		}
+	}
+	// Close устройства закрывает TUN, а закрытие TUN убирает адаптер.
+	// Ошибки wireguard-go здесь не возвращает.
 	dev.Close()
 	adapter.release()
 	w.disableDNSGuard()
