@@ -14,3 +14,6 @@ wg-turn.conf
 .idea/
 .vscode/
 *.log
+
+# Выгрузки сессий Claude Code: рабочие записи, а не код проекта.
+/claude-sessions/
