@@ -25,6 +25,8 @@ type profileEnv struct {
 	answers []string
 	asked   []string
 	stdin   string
+	// tty — притвориться терминалом: без него меню не открывается.
+	tty bool
 }
 
 func newProfileEnv(t *testing.T) *profileEnv {
@@ -71,6 +73,10 @@ func (p *profileEnv) run(args ...string) (code int, stdout, stderr string) {
 			p.answers = p.answers[1:]
 			return value, nil
 		},
+	}
+
+	if p.tty {
+		e.tty = func() bool { return true }
 	}
 
 	args = append(args, "-config", p.configPath())

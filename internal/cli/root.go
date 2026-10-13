@@ -60,6 +60,16 @@ type env struct {
 	captchaWindow func(opts captcha.WebView2Options) (captcha.Solver, error)
 	// lines — буферизованный stdin. Заводится при первом чтении строки.
 	lines *bufio.Reader
+
+	// tty подменяет проверку «stdin и stdout — терминал», от которой зависит,
+	// откроется ли меню (menu.go). Пусто — проверяются настоящие потоки.
+	tty func() bool
+	// signals — Ctrl+C перехватывает сама команда: так в настоящем процессе
+	// (Main), но не в тестах, где сигналов нет.
+	signals bool
+	// noPause — пауза перед закрытием окна не нужна: человек сам ушёл из меню
+	// (pause.go).
+	noPause bool
 }
 
 // command — одна команда tt.
@@ -86,6 +96,7 @@ type command struct {
 func commands() []*command {
 	return []*command{
 		connectCommand(),
+		menuCommand(),
 		pingCommand(),
 		hashesCommand(),
 		profileCommand(),
@@ -113,6 +124,14 @@ func Main(args []string, build Build) int {
 		openURL: captcha.OpenInBrowser,
 
 		captchaWindow: newCaptchaWindow,
+		signals:       true,
+	}
+	defer pauseBeforeExit(e)
+
+	// Меню разбирает сигналы само: Ctrl+C во время подключения возвращает
+	// в него, а не завершает процесс (menu.go).
+	if wantsMenu(e, args) {
+		return run(context.Background(), e, args)
 	}
 
 	// Первый Ctrl+C или SIGTERM отменяет контекст команды, второй Ctrl+C
@@ -128,8 +147,13 @@ func Main(args []string, build Build) int {
 // run разделён с Main ради тестов: им нужны свои потоки и свой контекст.
 func run(ctx context.Context, e *env, args []string) int {
 	if len(args) == 0 {
-		// Запуск без аргументов — это вопрос «что ты умеешь», а не ошибка,
-		// поэтому список команд уходит в stdout и код возврата нулевой.
+		// В терминале запуск без аргументов — это человек, которому нужно
+		// меню: на Windows так выглядит двойной щелчок по tt.exe.
+		if e.console() {
+			return report(e, menuCommand(), runMenu(ctx, e, nil))
+		}
+		// Иначе — вопрос «что ты умеешь», а не ошибка, поэтому список команд
+		// уходит в stdout и код возврата нулевой.
 		printUsage(e.stdout)
 		return exitOK
 	}
