@@ -70,11 +70,12 @@ func addConnectFlags(fs *flag.FlagSet) *connectOptions {
 func runConnect(_ context.Context, e *env, args []string) error {
 	fs := newFlagSet(connectCommand())
 	opts := addConnectFlags(fs)
-	if err := parse(e, fs, args); err != nil {
+	rest, err := parseWithArgs(e, fs, args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() > 1 {
-		return usagef("лишний аргумент %q: профиль называется один", fs.Arg(1))
+	if len(rest) > 1 {
+		return usagef("лишний аргумент %q: профиль называется один", rest[1])
 	}
 	opts.named = setFlags(fs)
 

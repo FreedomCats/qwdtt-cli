@@ -43,11 +43,12 @@ func addPingFlags(fs *flag.FlagSet) *pingOptions {
 func runPing(_ context.Context, e *env, args []string) error {
 	fs := newFlagSet(pingCommand())
 	opts := addPingFlags(fs)
-	if err := parse(e, fs, args); err != nil {
+	rest, err := parseWithArgs(e, fs, args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() > 1 {
-		return usagef("лишний аргумент %q: профиль называется один", fs.Arg(1))
+	if len(rest) > 1 {
+		return usagef("лишний аргумент %q: профиль называется один", rest[1])
 	}
 	_ = opts
 
@@ -83,11 +84,12 @@ func addHashesFlags(fs *flag.FlagSet) *hashesOptions {
 func runHashes(_ context.Context, e *env, args []string) error {
 	fs := newFlagSet(hashesCommand())
 	opts := addHashesFlags(fs)
-	if err := parse(e, fs, args); err != nil {
+	rest, err := parseWithArgs(e, fs, args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() > 1 {
-		return usagef("лишний аргумент %q: профиль называется один", fs.Arg(1))
+	if len(rest) > 1 {
+		return usagef("лишний аргумент %q: профиль называется один", rest[1])
 	}
 	_ = opts
 

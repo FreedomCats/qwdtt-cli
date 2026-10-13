@@ -200,3 +200,63 @@ func TestSecretStorageForm(t *testing.T) {
 		}
 	}
 }
+
+// Delete убирает одну запись и не трогает соседнюю.
+func TestSecretDelete(t *testing.T) {
+	s := tempStore(t)
+
+	password, err := s.Put("home.password", "пароль")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hashes, err := s.Put("home.vk_hashes", "хеши")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Delete(password); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := s.Get(password); err == nil {
+		t.Error("удалённый секрет по-прежнему читается")
+	}
+	if got, err := s.Get(hashes); err != nil || got != "хеши" {
+		t.Errorf("соседняя запись пострадала: %q, %v", got, err)
+	}
+}
+
+// Удалять то, чего нет, не ошибка: `tt profile rm` обязан довести удаление
+// профиля до конца, даже если запись пропала раньше.
+func TestSecretDeleteMissing(t *testing.T) {
+	s := tempStore(t)
+
+	if err := s.Delete(secretScheme + ":0123456789abcdef"); err != nil {
+		t.Errorf("удаление отсутствующей записи вернуло ошибку: %v", err)
+	}
+
+	ref, err := s.Put("home.password", "пароль")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(ref); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(ref); err != nil {
+		t.Errorf("повторное удаление вернуло ошибку: %v", err)
+	}
+}
+
+// Чужая схема отвергается и здесь: Delete по ссылке с другой платформы
+// удалил бы не то, что имел в виду вызывающий.
+func TestSecretDeleteForeignScheme(t *testing.T) {
+	s := tempStore(t)
+
+	foreign := "невиданное-хранилище:0123456789abcdef"
+	err := s.Delete(foreign)
+	if err == nil {
+		t.Fatal("чужая схема принята")
+	}
+	if !strings.Contains(err.Error(), secretScheme) {
+		t.Errorf("в сообщении нет здешней схемы: %v", err)
+	}
+}

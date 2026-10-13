@@ -10,6 +10,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -45,6 +46,12 @@ type env struct {
 	stderr io.Writer
 	stdin  io.Reader
 	build  Build
+
+	// secrets подменяет скрытый ввод. Пусто — спрашиваем у терминала
+	// (см. prompt.go); заполняется в тестах, где терминала нет.
+	secrets func(prompt string) (string, error)
+	// lines — буферизованный stdin. Заводится при первом чтении строки.
+	lines *bufio.Reader
 }
 
 // command — одна команда tt.
@@ -140,11 +147,18 @@ func report(e *env, cmd *command, err error) int {
 		return exitUsage
 	}
 
-	fmt.Fprintf(e.stderr, "tt %s: %v\n", cmd.name, err)
-
+	// Подкоманда называет себя сама: ошибку в аргументах `tt profile set`
+	// нельзя подписывать именем `profile` — подсказка отправила бы не туда.
+	name := cmd.name
 	var ue usageError
-	if errors.As(err, &ue) {
-		fmt.Fprintf(e.stderr, "Помощь: tt %s -h\n", cmd.name)
+	isUsage := errors.As(err, &ue)
+	if isUsage && ue.cmd != "" {
+		name = ue.cmd
+	}
+
+	fmt.Fprintf(e.stderr, "tt %s: %v\n", name, err)
+	if isUsage {
+		fmt.Fprintf(e.stderr, "Помощь: tt %s -h\n", name)
 		return exitUsage
 	}
 	return exitError
@@ -153,12 +167,23 @@ func report(e *env, cmd *command, err error) int {
 // usageError — ошибка в командной строке, о которой ещё не сказано: лишний
 // аргумент, отсутствующая подкоманда, несовместимые флаги. От обычной ошибки
 // отличается кодом возврата и подсказкой, где смотреть помощь.
-type usageError struct{ msg string }
+type usageError struct {
+	msg string
+	// cmd — чьи это аргументы. Пусто означает «команды верхнего уровня»;
+	// подкоманда ставит сюда своё полное имя вида "profile set".
+	cmd string
+}
 
 func (e usageError) Error() string { return e.msg }
 
 func usagef(format string, a ...any) error {
 	return usageError{msg: fmt.Sprintf(format, a...)}
+}
+
+// subUsagef — то же для подкоманды: подсказка обязана называть её, а не
+// команду верхнего уровня.
+func subUsagef(cmd *command, format string, a ...any) error {
+	return usageError{msg: fmt.Sprintf(format, a...), cmd: cmd.name}
 }
 
 // errReported — ошибка, о которой уже сказано пользователю. Такую печатать
@@ -193,6 +218,45 @@ func parse(e *env, fs *flag.FlagSet, args []string) error {
 	default:
 		return fmt.Errorf("%w: %w", errReported, err)
 	}
+}
+
+// parseWithArgs разбирает флаги команды и возвращает позиционные аргументы.
+//
+// Стандартный flag останавливается на первом же не-флаге, поэтому
+// `tt profile set home -peer …` он разобрал бы как имя профиля и три лишних
+// аргумента. Записывать флаги перед именем — не то, чего ждут от команды,
+// у которой имя главное слово, поэтому разбор продолжается за каждым
+// позиционным аргументом.
+//
+// Значения после "--" остаются значениями: там разбор прекращается совсем.
+func parseWithArgs(e *env, fs *flag.FlagSet, args []string) ([]string, error) {
+	var positional []string
+	for {
+		if err := parse(e, fs, args); err != nil {
+			return nil, err
+		}
+
+		rest := fs.Args()
+		if len(rest) == 0 {
+			return positional, nil
+		}
+		if stoppedAtTerminator(args, rest) {
+			return append(positional, rest...), nil
+		}
+
+		positional = append(positional, rest[0])
+		if len(rest) == 1 {
+			return positional, nil
+		}
+		args = rest[1:]
+	}
+}
+
+// stoppedAtTerminator — разбор остановился на "--", а не на обычном аргументе.
+// Сам разделитель flag съедает, поэтому он стоит ровно перед остатком.
+func stoppedAtTerminator(args, rest []string) bool {
+	i := len(args) - len(rest) - 1
+	return i >= 0 && args[i] == "--"
 }
 
 // setFlags возвращает имена флагов, которые действительно назвали в командной

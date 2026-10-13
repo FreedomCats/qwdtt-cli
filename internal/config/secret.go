@@ -34,16 +34,29 @@ type SecretStore interface {
 	Put(name, value string) (ref string, err error)
 	// Get разворачивает ссылку обратно в значение.
 	Get(ref string) (value string, err error)
+	// Delete убирает значение из хранилища. Ссылка, которой в хранилище нет,
+	// ошибкой не считается: `tt profile rm` должен доводить удаление до конца,
+	// даже если запись пропала раньше.
+	Delete(ref string) error
 }
 
 // NewSecretStore открывает хранилище в каталоге настроек платформы — там же,
 // где Path ищет profiles.toml.
 func NewSecretStore() (SecretStore, error) {
-	dir, err := appDir()
+	path, err := Path()
 	if err != nil {
 		return nil, err
 	}
-	return &store{path: filepath.Join(dir, SecretsFileName)}, nil
+	return NewSecretStoreFor(path), nil
+}
+
+// NewSecretStoreFor открывает хранилище рядом с указанным файлом настроек.
+//
+// Нужен команде с флагом -config: секреты обязаны лежать в том же каталоге,
+// что и профили, которые на них ссылаются, иначе перенесённый каталог
+// настроек окажется наполовину рабочим.
+func NewSecretStoreFor(configPath string) SecretStore {
+	return newSecretStoreAt(filepath.Join(filepath.Dir(configPath), SecretsFileName))
 }
 
 // newSecretStoreAt открывает хранилище по явному пути. Нужен тестам и на случай,
@@ -100,14 +113,9 @@ func (s *store) Put(name, value string) (string, error) {
 }
 
 func (s *store) Get(ref string) (string, error) {
-	scheme, id, ok := strings.Cut(strings.TrimSpace(ref), ":")
-	if !ok || scheme == "" || id == "" {
-		return "", fmt.Errorf("ссылка на секрет %q: ожидается вид <хранилище>:<идентификатор>", ref)
-	}
-	if scheme != secretScheme {
-		return "", fmt.Errorf(
-			"ссылка на секрет %q: хранилище %q на этой системе недоступно — здесь секреты лежат в схеме %q (%s)",
-			ref, scheme, secretScheme, secretStoreKind)
+	_, id, err := splitSecretRef(ref)
+	if err != nil {
+		return "", err
 	}
 
 	data, err := s.read()
@@ -129,6 +137,42 @@ func (s *store) Get(ref string) (string, error) {
 		return "", fmt.Errorf("не удалось прочитать секрет %q (%s): %w", ref, secretStoreKind, err)
 	}
 	return string(plain), nil
+}
+
+func (s *store) Delete(ref string) error {
+	_, id, err := splitSecretRef(ref)
+	if err != nil {
+		return err
+	}
+
+	data, err := s.read()
+	if err != nil {
+		return err
+	}
+	if _, ok := data.Secrets[id]; !ok {
+		// Удалять нечего — значит, уже удалено. Ошибка здесь остановила бы
+		// `tt profile rm` на полпути, оставив профиль в файле.
+		return nil
+	}
+	delete(data.Secrets, id)
+	return s.write(data)
+}
+
+// splitSecretRef разбирает ссылку и убеждается, что она из здешнего хранилища.
+//
+// Чужая схема — не мусор, а секрет с другой платформы: DPAPI-шифртекст на unix
+// всё равно не прочитать, и честнее сказать об этом, чем молча отдать пустоту.
+func splitSecretRef(ref string) (scheme, id string, err error) {
+	scheme, id, ok := strings.Cut(strings.TrimSpace(ref), ":")
+	if !ok || scheme == "" || id == "" {
+		return "", "", fmt.Errorf("ссылка на секрет %q: ожидается вид <хранилище>:<идентификатор>", ref)
+	}
+	if scheme != secretScheme {
+		return "", "", fmt.Errorf(
+			"ссылка на секрет %q: хранилище %q на этой системе недоступно — здесь секреты лежат в схеме %q (%s)",
+			ref, scheme, secretScheme, secretStoreKind)
+	}
+	return scheme, id, nil
 }
 
 // idForName ищет идентификатор записи с данным именем. Пусто — записи нет,

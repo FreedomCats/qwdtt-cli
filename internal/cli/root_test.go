@@ -48,7 +48,6 @@ func TestHelpFlagPrintsFlags(t *testing.T) {
 		"connect": {"-peer", "-workers", "-datapath", "-config", "-v"},
 		"ping":    {"-peer", "-dns", "-config"},
 		"hashes":  {"-dns", "-config"},
-		"profile": {"-config"},
 	}
 
 	for _, cmd := range commands() {
@@ -63,6 +62,9 @@ func TestHelpFlagPrintsFlags(t *testing.T) {
 			}
 			if !strings.Contains(stdout, "Использование: tt "+cmd.name) {
 				t.Errorf("нет строки синтаксиса:\n%s", stdout)
+			}
+			if cmd.name == "profile" && !strings.Contains(stdout, "Подкоманды:") {
+				t.Errorf("в помощи profile нет списка подкоманд:\n%s", stdout)
 			}
 			for _, name := range withFlags[cmd.name] {
 				if !strings.Contains(stdout, name) {
@@ -168,8 +170,6 @@ func TestNotImplementedCommands(t *testing.T) {
 		{[]string{"connect"}, "G2"},
 		{[]string{"ping"}, "G3"},
 		{[]string{"hashes"}, "G3"},
-		{[]string{"profile", "list"}, "C3"},
-		{[]string{"profile", "set", "home"}, "C3"},
 	}
 
 	for _, tc := range cases {

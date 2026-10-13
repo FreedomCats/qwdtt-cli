@@ -26,7 +26,14 @@ require (
 )
 
 // Наши зависимости — те, которых у ядра не было.
-require github.com/BurntSushi/toml v1.6.0
+//
+// BurntSushi/toml (MIT) — разбор profiles.toml, задача C1.
+// golang.org/x/term (BSD-3) — скрытый ввод пароля и хешей в `tt profile set`,
+// задача C3. Обе лицензии с GPL v3 совместимы.
+require (
+	github.com/BurntSushi/toml v1.6.0
+	golang.org/x/term v0.45.0
+)
 
 require (
 	github.com/andybalholm/brotli v1.2.0 // indirect
