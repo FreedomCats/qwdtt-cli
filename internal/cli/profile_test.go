@@ -34,6 +34,8 @@ type profileEnv struct {
 	hashCheck func(ctx context.Context, cfg core.Config, sink core.Sink) error
 	// elevate — подмена перезапуска с правами (меню).
 	elevate func(args []string) (bool, error)
+	// connectRun — подмена подключения по плану (меню).
+	connectRun func(ctx context.Context, plan *connectPlan) error
 }
 
 func newProfileEnv(t *testing.T) *profileEnv {
@@ -90,6 +92,7 @@ func (p *profileEnv) run(args ...string) (code int, stdout, stderr string) {
 	}
 	e.hashCheck = p.hashCheck
 	e.elevate = p.elevate
+	e.connectRun = p.connectRun
 
 	args = append(args, "-config", p.configPath())
 	code = run(context.Background(), e, args)

@@ -22,6 +22,7 @@ import (
 
 	"github.com/FreedomCats/qwdtt-cli/internal/config"
 	"github.com/FreedomCats/qwdtt-cli/internal/datapath"
+	"github.com/FreedomCats/qwdtt-cli/internal/supervisor"
 )
 
 func menuCommand() *command {
@@ -289,21 +290,68 @@ func (m *menu) args(args ...string) []string {
 // ──────────────────────────── пункты ────────────────────────────
 
 func (m *menu) connect(ctx context.Context, name string) error {
-	opts := &connectOptions{common: &commonOptions{config: m.config}, named: map[string]bool{}}
-	plan, err := planConnect(opts, name)
+	for {
+		opts := &connectOptions{common: &commonOptions{config: m.config}, named: map[string]bool{}}
+		plan, err := planConnect(opts, name)
+		if err != nil {
+			return err
+		}
+		// Прав не хватает — запросить их, а не объяснять, как запустить tt
+		// иначе: человек из меню командной строки не знает.
+		if plan.datapath(nil).Requires().Admin && !isElevated() {
+			return m.connectElevated(name)
+		}
+
+		err = m.connectOnce(ctx, plan)
+		if !errors.Is(err, supervisor.ErrHashesExhausted) || ctx.Err() != nil {
+			return err
+		}
+
+		// Звонки закрылись — чаще всего так кончается сеанс, и выход из него
+		// один: новые ссылки. Спросить их здесь же, а не отсылать в пункт 4.
+		fmt.Fprintln(m.e.stderr, "Ни одна ссылка на звонок VK больше не работает: звонки закрыты.")
+		again, err := m.e.confirm("Ввести новые ссылки и подключиться снова?")
+		if err != nil || !again {
+			return err
+		}
+		if err := m.storeHashes(name); err != nil {
+			if errors.Is(err, errWizardCancelled) {
+				fmt.Fprintln(m.e.stdout, "Ссылки не изменены.")
+				return nil
+			}
+			return err
+		}
+	}
+}
+
+// connectOnce — один сеанс подключения. Ctrl+C на это время останавливает
+// его, а не меню.
+func (m *menu) connectOnce(ctx context.Context, plan *connectPlan) error {
+	ctx, done := m.connecting(ctx)
+	defer done()
+
+	fmt.Fprintln(m.e.stdout, "Подключение. Остановить — Ctrl+C, после этого снова откроется меню.")
+	if m.e.connectRun != nil {
+		return m.e.connectRun(ctx, plan)
+	}
+	return plan.run(ctx, m.e, false)
+}
+
+// storeHashes спрашивает новые ссылки на звонки и записывает их вместо прежних.
+func (m *menu) storeHashes(name string) error {
+	path, file, err := m.load()
 	if err != nil {
 		return err
 	}
-	// Прав не хватает — запросить их, а не объяснять, как запустить tt
-	// иначе: человек из меню командной строки не знает.
-	if plan.datapath(nil).Requires().Admin && !isElevated() {
-		return m.connectElevated(name)
+	p, err := file.Profile(name)
+	if err != nil {
+		return err
 	}
-
-	ctx, done := m.connecting(ctx)
-	defer done()
-	fmt.Fprintln(m.e.stdout, "Подключение. Остановить — Ctrl+C, после этого снова откроется меню.")
-	return plan.run(ctx, m.e, false)
+	hashes, err := m.askCallLinks(false)
+	if err != nil {
+		return err
+	}
+	return storeProfile(m.e, path, file, p, true, profileSecrets{hashes: hashes})
 }
 
 // connectElevated перезапускает подключение с правами администратора.

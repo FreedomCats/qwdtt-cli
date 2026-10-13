@@ -3,11 +3,13 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/FreedomCats/qwdtt-cli/internal/config"
+	"github.com/FreedomCats/qwdtt-cli/internal/supervisor"
 )
 
 // menuEnv — profileEnv, который притворяется терминалом.
@@ -317,5 +319,56 @@ func TestWizardCancelled(t *testing.T) {
 	}
 	if _, err := os.Stat(p.configPath()); !os.IsNotExist(err) {
 		t.Errorf("файл настроек создан при отмене")
+	}
+}
+
+// Звонки закрылись посреди сеанса — меню предлагает новые ссылки и
+// подключается снова уже с ними.
+func TestMenuConnectAsksNewHashesWhenExhausted(t *testing.T) {
+	p := newMenuEnv(t)
+	p.setHome()
+	var runs [][]string
+	p.connectRun = func(_ context.Context, plan *connectPlan) error {
+		runs = append(runs, plan.cfg.Hashes)
+		if len(runs) == 1 {
+			return fmt.Errorf("%w: звонок закрыт", supervisor.ErrHashesExhausted)
+		}
+		return nil
+	}
+	p.answer("https://vk.com/call/join/dddddddddddddddd")
+	p.input("\nда\n0\n")
+
+	code, _, stderr := p.run("menu")
+	if code != exitOK {
+		t.Fatalf("код возврата %d, stderr:\n%s", code, stderr)
+	}
+	if !strings.Contains(stderr, "больше не работает") {
+		t.Errorf("не сказано, что звонки закрыты:\n%s", stderr)
+	}
+	if len(runs) != 2 || strings.Join(runs[1], " ") != "dddddddddddddddd" {
+		t.Errorf("подключения: %q", runs)
+	}
+}
+
+// Отказ вводить новые ссылки — снова меню, профиль не тронут.
+func TestMenuConnectExhaustedDeclined(t *testing.T) {
+	p := newMenuEnv(t)
+	p.setHome()
+	runs := 0
+	p.connectRun = func(context.Context, *connectPlan) error {
+		runs++
+		return supervisor.ErrHashesExhausted
+	}
+	p.input("\n\n0\n")
+
+	code, stdout, stderr := p.run("menu")
+	if code != exitOK {
+		t.Fatalf("код возврата %d, stderr:\n%s", code, stderr)
+	}
+	if runs != 1 {
+		t.Errorf("подключений %d, ожидалось 1", runs)
+	}
+	if n := strings.Count(stdout, "1. Подключиться"); n != 2 {
+		t.Errorf("меню показано %d раз, ожидалось 2:\n%s", n, stdout)
 	}
 }

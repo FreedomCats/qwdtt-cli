@@ -62,6 +62,9 @@ type env struct {
 	// hashCheck подменяет core.RunHashCheck — проверку хешей в меню
 	// (menu_edit.go). Пусто — настоящая проверка; подменяют тесты, где сети нет.
 	hashCheck func(ctx context.Context, cfg core.Config, sink core.Sink) error
+	// connectRun подменяет подъём туннеля по готовому плану — для меню
+	// (menu.go). Пусто — plan.run; подменяют тесты, где сети нет.
+	connectRun func(ctx context.Context, plan *connectPlan) error
 	// elevate подменяет перезапуск с правами администратора (elevate.go):
 	// detached — команда ушла в своё окно. Пусто — настоящий перезапуск.
 	elevate func(args []string) (detached bool, err error)
