@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/tun"
@@ -40,14 +41,14 @@ const wintunLockName = `Global\qwdtt-cli-wintun`
 // только система закрыла дескрипторы умершего процесса, а его остатки драйвер
 // вычищает сам при следующем создании (plan-e2.md, врезка N1, п. 3).
 func openWintunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (*wintunAdapter, error) {
-	lock, err := acquireWintunLock()
+	unlock, err := acquireWintunLock()
 	if err != nil {
 		return nil, err
 	}
 	restoreLog := captureStdLog(logf)
 	release := func() {
 		restoreLog()
-		windows.CloseHandle(lock)
+		unlock()
 	}
 
 	tun.WintunTunnelType = wintunTunnelType
@@ -73,23 +74,55 @@ func openWintunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (
 	return &wintunAdapter{tun: tunDev, luid: luid, release: release}, nil
 }
 
-// acquireWintunLock берёт мьютекс одного адаптера. Занят — значит, на машине
+// acquireWintunLock занимает мьютекс одного адаптера на машину и возвращает
+// функцию, которая его отпустит. Занят другим процессом — значит, на машине
 // уже работает tt с datapath wintun.
-func acquireWintunLock() (windows.Handle, error) {
-	name, err := windows.UTF16PtrFromString(wintunLockName)
-	if err != nil {
-		return 0, err
+//
+// Внутри процесса захваты считаются: CLI держит мьютекс весь tt connect
+// (Wintun.Reserve), а Start каждой попытки берёт его ещё раз. Повторный
+// CreateMutex с тем же именем вернул бы ERROR_ALREADY_EXISTS и своему же
+// процессу, поэтому дескриптор один и закрывается с последним захватом.
+func acquireWintunLock() (release func(), err error) {
+	wintunLock.mu.Lock()
+	defer wintunLock.mu.Unlock()
+
+	if wintunLock.refs == 0 {
+		name, err := windows.UTF16PtrFromString(wintunLockName)
+		if err != nil {
+			return nil, err
+		}
+		h, err := windows.CreateMutex(nil, false, name)
+		if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+			windows.CloseHandle(h)
+			return nil, errors.New("адаптер уже занят: на этой машине работает другой tt с datapath wintun; " +
+				"остановите его или подключитесь с -datapath socks")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("мьютекс адаптера: %w", err)
+		}
+		wintunLock.handle = h
 	}
-	h, err := windows.CreateMutex(nil, false, name)
-	if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
-		windows.CloseHandle(h)
-		return 0, errors.New("адаптер уже занят: на этой машине работает другой tt с datapath wintun; " +
-			"остановите его или подключитесь с -datapath socks")
-	}
-	if err != nil {
-		return 0, fmt.Errorf("мьютекс адаптера: %w", err)
-	}
-	return h, nil
+	wintunLock.refs++
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			wintunLock.mu.Lock()
+			defer wintunLock.mu.Unlock()
+			wintunLock.refs--
+			if wintunLock.refs == 0 {
+				windows.CloseHandle(wintunLock.handle)
+				wintunLock.handle = 0
+			}
+		})
+	}, nil
+}
+
+// wintunLock — дескриптор мьютекса и число захватов в этом процессе.
+var wintunLock struct {
+	mu     sync.Mutex
+	handle windows.Handle
+	refs   int
 }
 
 // captureStdLog направляет стандартный log в logf и возвращает функцию,

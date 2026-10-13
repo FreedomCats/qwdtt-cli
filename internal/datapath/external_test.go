@@ -24,9 +24,19 @@ const (
 	ttFakeSlowStop  = "TT_FAKE_SLOW_STOP" // непусто — снимать службу полсекунды, как настоящий
 )
 
+// testHelpers — другие роли тестового бинаря, запущенного самим тестом;
+// регистрируются в init платформенных тестов (wintun_windows_test.go).
+// ok = true — роль узнала себя по окружению, процесс выходит с кодом code.
+var testHelpers []func() (code int, ok bool)
+
 func TestMain(m *testing.M) {
 	if journal := os.Getenv(ttFakeWireGuard); journal != "" {
 		os.Exit(fakeWireGuard(journal))
+	}
+	for _, helper := range testHelpers {
+		if code, ok := helper(); ok {
+			os.Exit(code)
+		}
 	}
 	os.Exit(m.Run())
 }

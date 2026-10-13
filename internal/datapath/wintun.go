@@ -87,6 +87,19 @@ func (w *Wintun) Requires() Requirements {
 	}
 }
 
+// Reserve занимает адаптер на машине до подключения (Reserver): второй tt
+// с datapath wintun узнаёт о первом сразу, а не после похода в VK за кредами,
+// и не уходит в переподключения (найдено живым прогоном W2). Держать
+// резерв — весь сеанс; Start каждой попытки берёт ту же блокировку ещё раз,
+// внутри процесса это не конфликт.
+func (w *Wintun) Reserve() (release func(), err error) {
+	release, err = acquireWintunLock()
+	if err != nil {
+		return nil, fmt.Errorf("wintun: %w", err)
+	}
+	return release, nil
+}
+
 // Endpoint — адрес из конфига, на который wireguard-go шлёт UDP; на нём
 // слушает ядро.
 func (w *Wintun) Endpoint() netip.AddrPort {

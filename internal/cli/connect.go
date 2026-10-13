@@ -399,7 +399,8 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 
 	// Требования спрашиваются у экземпляра: они свойство реализации, а
 	// экземпляр без Start сети не трогает.
-	req := plan.datapath(nil).Requires()
+	probe := plan.datapath(nil)
+	req := probe.Requires()
 	if problems := requirementProblems(req); len(problems) > 0 {
 		// socks не требует ничего, так что проблемы бывают только у остальных,
 		// и у них всегда есть выход попроще (architecture.md §09).
@@ -408,6 +409,16 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	}
 	if req.Warning != "" {
 		fmt.Fprintf(e.stderr, "Предупреждение: %s\n", req.Warning)
+	}
+	// Общее на машину (адаптер wintun) занимается до первого похода в сеть
+	// и держится весь сеанс: занятый — это ошибка сейчас, а не цикл
+	// переподключений с запросами кредов VK.
+	if r, ok := probe.(datapath.Reserver); ok {
+		release, err := r.Reserve()
+		if err != nil {
+			return err
+		}
+		defer release()
 	}
 
 	// Ручка ядра создаётся до запуска и раздаётся обоим, кому она нужна:
