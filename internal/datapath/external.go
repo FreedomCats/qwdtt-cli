@@ -44,6 +44,12 @@ type ExternalOptions struct {
 	// Logf — куда писать; nil означает молчать. Datapath сам в stdout не
 	// пишет — вывод принадлежит CLI.
 	Logf func(format string, args ...any)
+
+	// DNSGuard — защита от утечки DNS: включается, когда служба туннеля
+	// работает, выключается в Close. Нужна и здесь: с половинами /1 вместо
+	// /0 (splitDefaultRoutes) WireGuard свой запрет DNS не включает
+	// (plan-e2.md, решение 5). nil — без неё.
+	DNSGuard DNSGuard
 }
 
 // External — datapath поверх штатного WireGuard для Windows: конфиг от сервера
@@ -103,8 +109,8 @@ func NewExternal(opts ExternalOptions) *External {
 	return e
 }
 
-// Requires: права администратора (службу ставит только он), wireguard.exe
-// и netguard: туннель забирает весь трафик системы. Programs называет
+// Requires: права администратора (службу ставит только он), wireguard.exe,
+// netguard — туннель забирает весь трафик системы — и защита DNS. Programs называет
 // найденный путь, а если найти не вышло — голое имя, чтобы вызывающий
 // сказал «не найдена программа».
 func (e *External) Requires() Requirements {
@@ -116,6 +122,7 @@ func (e *External) Requires() Requirements {
 		Admin:    true,
 		Programs: []string{program},
 		Netguard: true,
+		DNSGuard: true,
 	}
 }
 
@@ -127,8 +134,9 @@ func (e *External) Endpoint() netip.AddrPort {
 	return e.endpoint
 }
 
-// Start записывает конфиг, ставит службу туннеля и ждёт, пока она заработает.
-// При любом отказе служба снимается, а файл удаляется: следов не остаётся.
+// Start записывает конфиг, ставит службу туннеля, ждёт, пока она заработает,
+// и включает защиту DNS. При любом отказе служба снимается, а файл
+// удаляется: следов не остаётся.
 func (e *External) Start(ctx context.Context, conf *WGConfig) error {
 	if conf == nil {
 		return errors.New("external: пустой конфиг WireGuard")
@@ -153,6 +161,7 @@ func (e *External) Start(ctx context.Context, conf *WGConfig) error {
 	e.mu.Unlock()
 
 	raw, split := splitDefaultRoutes(conf.Raw)
+	raw, addedDNS := addDefaultDNS(raw, conf.DNS)
 	path, err := e.writeConfig(raw)
 	if err != nil {
 		e.startFailed()
@@ -176,6 +185,15 @@ func (e *External) Start(ctx context.Context, conf *WGConfig) error {
 			e.opts.Name, err)
 	}
 
+	if e.opts.DNSGuard != nil {
+		if err := e.opts.DNSGuard.Enable(conf.DNS); err != nil {
+			_ = e.uninstall()
+			_ = os.Remove(path)
+			e.startFailed()
+			return fmt.Errorf("external: %w", err)
+		}
+	}
+
 	endpoint, ok := conf.EndpointAddrPort()
 	if !ok {
 		e.logf("[WG-EXT] endpoint %q — не адрес с портом", conf.Endpoint)
@@ -192,6 +210,9 @@ func (e *External) Start(ctx context.Context, conf *WGConfig) error {
 	if split {
 		e.logf("[WG-EXT] маршрут по умолчанию в AllowedIPs записан двумя половинами /1: " +
 			"с /0 WireGuard включил бы свой kill-switch и отрезал соединения tt с VK и TURN")
+	}
+	if addedDNS {
+		e.logf("[WG-EXT] сервер не прислал DNS, в конфиг записан DNS = %s", joinAddrs(conf.DNS))
 	}
 
 	go func() {
@@ -241,8 +262,14 @@ func (e *External) close() error {
 		return nil
 	}
 
-	// Сначала служба, потом файл: служба читает его, пока работает.
+	// Сначала служба, потом файл: служба читает его, пока работает. Запрет
+	// DNS — после службы: пока она работает, DNS туннеля доступен.
 	err := e.uninstall()
+	if e.opts.DNSGuard != nil {
+		if derr := e.opts.DNSGuard.Disable(); derr != nil {
+			err = errors.Join(err, fmt.Errorf("external: %w", derr))
+		}
+	}
 	if rerr := os.Remove(e.confPath()); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
 		err = errors.Join(err, fmt.Errorf("external: удаление конфига %s: %w", e.confPath(), rerr))
 	}
@@ -414,6 +441,54 @@ func splitDefaultRoutes(raw string) (string, bool) {
 		changed = true
 	}
 	return strings.Join(lines, "\n"), changed
+}
+
+// addDefaultDNS дописывает в секцию [Interface] строку DNS с резолверами
+// dns, если своей строки DNS там нет. Второе значение — была ли правка.
+//
+// Зачем: без строки DNS штатный WireGuard не даёт адаптеру резолверов, и
+// Windows спрашивает резолвер провайдера, а его запрещает защита DNS
+// (DNSGuard пускает только к WGConfig.DNS) — DNS системы пропал бы целиком.
+// ParseWgQuick в этом случае подставляет 1.1.1.1; та же подстановка нужна
+// и в файле.
+func addDefaultDNS(raw string, dns []netip.Addr) (string, bool) {
+	if len(dns) == 0 {
+		return raw, false
+	}
+	lines := strings.Split(raw, "\n")
+	section := ""
+	iface := -1
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			section = strings.ToLower(strings.TrimSpace(trimmed[1 : len(trimmed)-1]))
+			if section == "interface" && iface < 0 {
+				iface = i
+			}
+			continue
+		}
+		key, _, ok := strings.Cut(trimmed, "=")
+		if ok && section == "interface" && strings.ToLower(strings.TrimSpace(key)) == "dns" {
+			return raw, false
+		}
+	}
+	if iface < 0 {
+		return raw, false
+	}
+	added := "DNS = " + joinAddrs(dns)
+	if strings.HasSuffix(lines[iface], "\r") {
+		added += "\r"
+	}
+	lines = append(lines[:iface+1], append([]string{added}, lines[iface+1:]...)...)
+	return strings.Join(lines, "\n"), true
+}
+
+func joinAddrs(addrs []netip.Addr) string {
+	parts := make([]string, len(addrs))
+	for i, a := range addrs {
+		parts[i] = a.String()
+	}
+	return strings.Join(parts, ", ")
 }
 
 // splitAllowedIPs — та же замена над списком префиксов: каждый /0 становится

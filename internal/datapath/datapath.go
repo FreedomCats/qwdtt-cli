@@ -74,6 +74,12 @@ type Requirements struct {
 	// core.Config.DialControl.
 	Netguard bool
 
+	// DNSGuard — datapath ставит правила защиты от утечки DNS и ждёт их
+	// сессию в своих опциях (поле DNSGuard). Открывает её вызывающий, до
+	// подключения: отказ WFP — понятная ошибка сразу, а не цикл
+	// переподключений (plan-e2.md, W4).
+	DNSGuard bool
+
 	// Warning — ограничение, о котором нужно предупредить пользователя при
 	// запуске, даже когда всё остальное на месте. Пустая строка — сказать
 	// нечего. CLI печатает его строкой «Предупреждение: …» до подключения.
@@ -82,6 +88,16 @@ type Requirements struct {
 	// сплит-конфигом); в Э2 это ограничение снято, и сейчас поле никто
 	// не заполняет.
 	Warning string
+}
+
+// DNSGuard — защита от утечки DNS, общая на весь tt connect (на Windows —
+// winsys.DNSGuard). Datapath включает её, когда туннель поднят, и выключает
+// в Close; оба вызова безвредны повторно.
+type DNSGuard interface {
+	// Enable пускает DNS только к резолверам dns (и запросы самого tt).
+	Enable(dns []netip.Addr) error
+	// Disable снимает запрет.
+	Disable() error
 }
 
 // Reserver — необязательная часть Datapath: реализация, которой до

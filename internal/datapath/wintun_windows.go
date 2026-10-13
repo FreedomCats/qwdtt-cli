@@ -34,7 +34,7 @@ const wintunTunnelType = "tt"
 // процессом, так что упавший запуск следующему не мешает.
 const wintunLockName = `Global\qwdtt-cli-wintun`
 
-// openWintunAdapter создаёт адаптер и задаёт ему адреса и MTU из конфига;
+// openWintunAdapter создаёт адаптер и задаёт ему адреса, MTU и DNS из конфига;
 // маршруты ставит и снимает вызывающий (addRoutes, removeRoutes).
 // На отказе за собой убирает всё.
 //
@@ -68,6 +68,14 @@ func openWintunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (
 	luid := native.LUID()
 
 	if err := winsys.ConfigureAdapter(luid, conf.Addresses, conf.MTU, logf); err != nil {
+		tunDev.Close()
+		release()
+		return nil, fmt.Errorf("адаптер %q: %w", name, err)
+	}
+	// DNS — свойство адаптера и держится, пока он жив. На время
+	// переподключения (S1) снимаются маршруты /1 и запрет утечки (DNSGuard),
+	// а не DNS: весь трафик и так идёт мимо туннеля (решение 3).
+	if err := winsys.SetAdapterDNS(luid, conf.DNS); err != nil {
 		tunDev.Close()
 		release()
 		return nil, fmt.Errorf("адаптер %q: %w", name, err)

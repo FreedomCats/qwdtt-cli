@@ -35,10 +35,15 @@ require (
 // golang.zx2c4.com/wireguard/windows (MIT) — пакет tunnel/winipcfg: маршруты,
 // адреса, DNS и выбор интерфейса, задача N2 Э2. Импортируется только из
 // *_windows.go, в сборки под другие системы не попадает.
+// tailscale/wf (BSD-3) — фильтры WFP защиты от утечки DNS, задача W4 Э2;
+// тянет go4.org/netipx (BSD-3). Тоже только из *_windows.go. Прочие его
+// косвенные (x/tools, honnef.co/go/tools, x/exp/typeparams) нужны лишь
+// его генераторам и в бинарь не попадают: tidy видит их через tooldeps.go.
 // Все лицензии с GPL v3 совместимы.
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
+	github.com/tailscale/wf v0.0.0-20240214030419-6fbb0a674ee6
 	golang.org/x/term v0.45.0
 	golang.zx2c4.com/wireguard/windows v1.1.1
 )
@@ -58,10 +63,17 @@ require (
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/tam7t/hpkp v0.0.0-20160821193359-2b70b4024ed5 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
+	go4.org/netipx v0.0.0-20220725152314-7e7bdc8411bf // indirect
+	golang.org/x/exp/typeparams v0.0.0-20231108232855-2478ac86f678 // indirect
+	golang.org/x/mod v0.37.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
+	golang.org/x/tools v0.47.0 // indirect
+	golang.org/x/tools/go/expect v0.1.1-deprecated // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	gvisor.dev/gvisor v0.0.0-20250503011706-39ed1f5ac29c // indirect
+	honnef.co/go/tools v0.5.1 // indirect
 )
 
 // Пакет tun/netstack существует и внутри модуля golang.zx2c4.com/wireguard,

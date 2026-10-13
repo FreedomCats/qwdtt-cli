@@ -70,6 +70,7 @@ type connectOptions struct {
 	datapath      string
 	socksListen   string
 	listen        string
+	allowDNSLeak  bool
 
 	named map[string]bool
 }
@@ -90,6 +91,10 @@ func addConnectFlags(fs *flag.FlagSet) *connectOptions {
 	fs.StringVar(&o.datapath, "datapath", "", "как отдавать трафик: socks, wintun или external")
 	fs.StringVar(&o.socksListen, "socks-listen", "", "адрес локального SOCKS5 при datapath=socks")
 	fs.StringVar(&o.listen, "listen", "", "локальный UDP-адрес, куда datapath отдаёт трафик")
+	// Единственный флаг без поля в профиле: согласие на утечку DNS даётся
+	// на один запуск, а не записывается навсегда (plan-e2.md, W4).
+	fs.BoolVar(&o.allowDNSLeak, "allow-dns-leak", false,
+		"подключаться, даже если защита от утечки DNS (wintun, external) не включилась")
 
 	return o
 }
@@ -136,6 +141,12 @@ type connectPlan struct {
 	stage core.Stage
 	// describe — datapath одной фразой для заголовка: «SOCKS5 на 127.0.0.1:1080».
 	describe string
+
+	// allowDNSLeak — -allow-dns-leak: отказ защиты DNS не мешает подключению.
+	allowDNSLeak bool
+	// dnsGuard — защита DNS для datapath, которые её просят; открывается
+	// в run, до первой попытки. nil — нет (socks или -allow-dns-leak).
+	dnsGuard datapath.DNSGuard
 }
 
 // planConnect собирает план: профиль с флагами поверх, секреты из хранилища,
@@ -158,7 +169,7 @@ func planConnect(opts *connectOptions, name string) (*connectPlan, error) {
 		return nil, err
 	}
 
-	plan := &connectPlan{profile: p, cfg: cfg}
+	plan := &connectPlan{profile: p, cfg: cfg, allowDNSLeak: opts.allowDNSLeak}
 	if err := plan.chooseDatapath(); err != nil {
 		return nil, err
 	}
@@ -297,7 +308,7 @@ func (plan *connectPlan) chooseDatapath() error {
 
 	case config.DatapathWintun:
 		plan.datapath = func(logf func(string, ...any)) datapath.Datapath {
-			return datapath.NewWintun(datapath.WintunOptions{Logf: logf})
+			return datapath.NewWintun(datapath.WintunOptions{Logf: logf, DNSGuard: plan.dnsGuard})
 		}
 		plan.stage = core.StageVPN
 		plan.describe = "адаптер " + datapath.DefaultTunnelName + ", весь трафик системы"
@@ -305,7 +316,7 @@ func (plan *connectPlan) chooseDatapath() error {
 
 	case config.DatapathExternal:
 		plan.datapath = func(logf func(string, ...any)) datapath.Datapath {
-			return datapath.NewExternal(datapath.ExternalOptions{Logf: logf})
+			return datapath.NewExternal(datapath.ExternalOptions{Logf: logf, DNSGuard: plan.dnsGuard})
 		}
 		plan.stage = core.StageVPN
 		plan.describe = "штатный WireGuard, туннель " + datapath.DefaultTunnelName
@@ -419,6 +430,16 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 			return err
 		}
 		defer release()
+	}
+	// Сессия WFP — тоже до сети и на весь сеанс: отказ в Start супервизор
+	// принял бы за сбой попытки и ушёл бы в переподключения.
+	if req.DNSGuard {
+		guard, closeGuard, err := setupDNSGuard(out, e.stderr, plan.allowDNSLeak)
+		if err != nil {
+			return err
+		}
+		defer closeGuard()
+		plan.dnsGuard = guard
 	}
 
 	// Ручка ядра создаётся до запуска и раздаётся обоим, кому она нужна:

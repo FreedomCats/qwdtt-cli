@@ -26,6 +26,10 @@ type WintunOptions struct {
 	// Logf — куда писать; nil означает молчать. Сюда же уходит вывод
 	// wireguard-go и самого wintun.dll: datapath сам в stdout не пишет.
 	Logf func(format string, args ...any)
+
+	// DNSGuard — защита от утечки DNS: включается, когда маршруты стоят,
+	// выключается в Close. nil — без неё (CLI с -allow-dns-leak, тесты).
+	DNSGuard DNSGuard
 }
 
 // Wintun — datapath с собственным адаптером: wireguard-go в процессе поверх
@@ -82,12 +86,13 @@ func NewWintun(opts WintunOptions) *Wintun {
 }
 
 // Requires: права администратора (адаптер создаёт драйвер), wintun.dll рядом
-// с бинарём и netguard — туннель забирает весь трафик системы.
+// с бинарём, netguard — туннель забирает весь трафик системы — и защита DNS.
 func (w *Wintun) Requires() Requirements {
 	return Requirements{
 		Admin:    true,
 		Files:    []string{WintunDLL},
 		Netguard: true,
+		DNSGuard: true,
 	}
 }
 
@@ -123,9 +128,10 @@ func (w *Wintun) LUID() uint64 {
 	return w.adapter.luid
 }
 
-// Start создаёт адаптер, задаёт ему адреса и MTU, поднимает над ним
-// wireguard-go и ставит маршруты fullTunnelRoutes — с этого момента через
-// туннель идёт весь трафик системы. Возвращается, когда всё это сделано.
+// Start создаёт адаптер, задаёт ему адреса, MTU и DNS, поднимает над ним
+// wireguard-go, ставит маршруты fullTunnelRoutes — с этого момента через
+// туннель идёт весь трафик системы — и включает защиту DNS. Возвращается,
+// когда всё это сделано.
 func (w *Wintun) Start(ctx context.Context, conf *WGConfig) error {
 	if conf == nil {
 		return errors.New("wintun: пустой конфиг WireGuard")
@@ -171,6 +177,12 @@ func (w *Wintun) Start(ctx context.Context, conf *WGConfig) error {
 		w.startFailed()
 		return fmt.Errorf("wintun: маршруты: %w", err)
 	}
+	if err := w.enableDNSGuard(conf.DNS); err != nil {
+		dev.Close()
+		adapter.release()
+		w.startFailed()
+		return fmt.Errorf("wintun: %w", err)
+	}
 
 	w.mu.Lock()
 	if w.closed {
@@ -179,13 +191,14 @@ func (w *Wintun) Start(ctx context.Context, conf *WGConfig) error {
 		w.mu.Unlock()
 		dev.Close()
 		adapter.release()
+		w.disableDNSGuard()
 		return errors.New("wintun: datapath остановлен во время запуска")
 	}
 	w.dev, w.adapter, w.endpoint = dev, adapter, endpoint
 	w.mu.Unlock()
 
-	w.logf("[WINTUN] адаптер %q поднят (addr=%v mtu=%d endpoint=%s routes=%v)",
-		w.opts.Name, conf.Addresses, conf.MTU, conf.Endpoint, fullTunnelRoutes)
+	w.logf("[WINTUN] адаптер %q поднят (addr=%v mtu=%d endpoint=%s routes=%v dns=%v)",
+		w.opts.Name, conf.Addresses, conf.MTU, conf.Endpoint, fullTunnelRoutes, conf.DNS)
 
 	go func() {
 		select {
@@ -256,8 +269,29 @@ func (w *Wintun) close() error {
 	// с его адресами. Ошибки wireguard-go здесь не возвращает.
 	dev.Close()
 	adapter.release()
+	w.disableDNSGuard()
 	w.logf("[WINTUN] адаптер %q снят", w.opts.Name)
 	return nil
+}
+
+// enableDNSGuard включает защиту DNS, если она дана: DNS системы — только
+// к резолверам туннеля.
+func (w *Wintun) enableDNSGuard(dns []netip.Addr) error {
+	if w.opts.DNSGuard == nil {
+		return nil
+	}
+	return w.opts.DNSGuard.Enable(dns)
+}
+
+// disableDNSGuard снимает защиту DNS. Отказ только пишется: адаптера уже
+// нет, а правила уйдут вместе с сессией, когда tt выйдет.
+func (w *Wintun) disableDNSGuard() {
+	if w.opts.DNSGuard == nil {
+		return
+	}
+	if err := w.opts.DNSGuard.Disable(); err != nil {
+		w.logf("[WINTUN] %v", err)
+	}
 }
 
 // startFailed возвращает datapath в исходное состояние: неудачный Start не
