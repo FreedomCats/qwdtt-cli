@@ -14,6 +14,9 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
+// externalUnsupported — на Windows external работает (см. external_other.go).
+var externalUnsupported error
+
 // locateWireGuard ищет wireguard.exe там, куда его кладёт установщик:
 // сначала реестр (HKLM\SOFTWARE\WireGuard, если установщик его оставил),
 // затем Program Files, затем PATH. Первый найденный файл побеждает.

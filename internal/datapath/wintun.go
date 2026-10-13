@@ -98,12 +98,14 @@ func NewWintun(opts WintunOptions) *Wintun {
 
 // Requires: права администратора (адаптер создаёт драйвер), wintun.dll рядом
 // с бинарём, netguard — туннель забирает весь трафик системы — и защита DNS.
+// Вне Windows — Unsupported: Wintun там нет.
 func (w *Wintun) Requires() Requirements {
 	return Requirements{
-		Admin:    true,
-		Files:    []string{WintunDLL},
-		Netguard: true,
-		DNSGuard: true,
+		Unsupported: wintunUnsupported,
+		Admin:       true,
+		Files:       []string{WintunDLL},
+		Netguard:    true,
+		DNSGuard:    true,
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -261,6 +262,51 @@ func TestRequirementProblemsAdmin(t *testing.T) {
 	}
 	if len(problems) != 1 || !strings.Contains(problems[0], "администратора") {
 		t.Errorf("без прав ожидалась одна проблема про администратора: %v", problems)
+	}
+}
+
+// Неподдерживаемая система перекрывает остальные требования: на Linux
+// советовать права администратора и wintun.dll бессмысленно (найдено первым
+// прогоном на Linux).
+func TestRequirementsErrorUnsupported(t *testing.T) {
+	why := errors.New("datapath wintun поддерживается только на Windows")
+	req := datapath.Requirements{Unsupported: why, Admin: true, Files: []string{"wintun.dll"}}
+
+	err := requirementsError("адаптер tt", req)
+	if !errors.Is(err, why) {
+		t.Fatalf("ошибка %v, ждали обёрнутую причину", err)
+	}
+	if msg := err.Error(); strings.Contains(msg, "администратора") || strings.Contains(msg, "wintun.dll") ||
+		!strings.Contains(msg, "-datapath socks") {
+		t.Errorf("сообщение не то: %q", msg)
+	}
+}
+
+func TestRequirementsErrorNone(t *testing.T) {
+	if err := requirementsError("SOCKS5", datapath.Requirements{}); err != nil {
+		t.Errorf("socks ничего не требует, а ошибка есть: %v", err)
+	}
+}
+
+// Wintun и external работают только на Windows; на остальных системах план
+// строится, но запуск отказывает их собственной причиной.
+func TestPlanConnectUnsupportedElsewhere(t *testing.T) {
+	for _, dp := range []string{"wintun", "external"} {
+		c := newConnectEnv(t)
+		plan, err := c.plan("home", "-datapath", dp)
+		if err != nil {
+			t.Fatalf("%s: planConnect: %v", dp, err)
+		}
+		err = requirementsError(plan.describe, plan.datapath(nil).Requires())
+		if runtime.GOOS == "windows" {
+			if err != nil && strings.Contains(err.Error(), "только на Windows") {
+				t.Errorf("%s: на Windows отказ «только на Windows»: %v", dp, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), dp+" ") || !strings.Contains(err.Error(), "только на Windows") {
+			t.Errorf("%s: ждали отказ «только на Windows», получили %v", dp, err)
+		}
 	}
 }
 

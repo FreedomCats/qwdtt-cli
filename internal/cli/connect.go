@@ -329,6 +329,23 @@ func (plan *connectPlan) chooseDatapath() error {
 	}
 }
 
+// requirementsError объясняет одной ошибкой, почему datapath не запустится,
+// или возвращает nil. Неподдерживаемая система проверяется первой: права
+// и файлы тут не помогут, и советовать их — значит отправить человека
+// искать wintun.dll на Linux.
+func requirementsError(describe string, req datapath.Requirements) error {
+	if req.Unsupported != nil {
+		return fmt.Errorf("%w; на этой системе работает -datapath socks", req.Unsupported)
+	}
+	if problems := requirementProblems(req); len(problems) > 0 {
+		// socks не требует ничего, так что проблемы бывают только у остальных,
+		// и у них всегда есть выход попроще (architecture.md §09).
+		return errors.New("datapath " + describe + ": " + strings.Join(problems, "; ") +
+			"; без прав и установленных файлов работает -datapath socks")
+	}
+	return nil
+}
+
 // requirementProblems проверяет то, что datapath просит для запуска: права
 // администратора, внешние программы и файлы рядом с бинарём.
 func requirementProblems(req datapath.Requirements) []string {
@@ -413,11 +430,8 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	// экземпляр без Start сети не трогает.
 	probe := plan.datapath(nil)
 	req := probe.Requires()
-	if problems := requirementProblems(req); len(problems) > 0 {
-		// socks не требует ничего, так что проблемы бывают только у остальных,
-		// и у них всегда есть выход попроще (architecture.md §09).
-		return errors.New("datapath " + plan.describe + ": " + strings.Join(problems, "; ") +
-			"; без прав и установленных файлов работает -datapath socks")
+	if err := requirementsError(plan.describe, req); err != nil {
+		return err
 	}
 	if req.Warning != "" {
 		fmt.Fprintf(e.stderr, "Предупреждение: %s\n", req.Warning)

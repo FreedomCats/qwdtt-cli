@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/netip"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -306,6 +307,10 @@ func (f socksLogFilter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
+// bracketedIPv6 — адрес IPv6 в квадратных скобках, как его печатает
+// net.JoinHostPort: [2001:db8::1]:443.
+var bracketedIPv6 = regexp.MustCompile(`\[[0-9A-Fa-f]*:[0-9A-Fa-f:.%a-z]*\]`)
+
 func isBenignSocksNoise(msg string) bool {
 	lower := strings.ToLower(msg)
 	if strings.Contains(lower, "blocked by rules") {
@@ -314,13 +319,27 @@ func isBenignSocksNoise(msg string) bool {
 	if strings.Contains(lower, "ipv6") {
 		return true
 	}
-	// Connect to [2001:…] / ::ffff:… / no route на v6
-	if strings.Contains(msg, "[") && strings.Contains(msg, "]") && strings.Contains(msg, ":") {
+	// Connect to [2001:…] / no route на v6. Адрес ищется именно IPv6 в
+	// скобках: прежняя проверка «есть [, ] и :» срабатывала на префикс
+	// самой библиотеки «[ERR] socks:» и глушила любой отказ подключиться,
+	// в том числе к IPv4 (найдено первым прогоном на Linux).
+	if bracketedIPv6.MatchString(msg) {
 		if strings.Contains(lower, "no route") || strings.Contains(lower, "connect to") {
 			return true
 		}
 	}
 	if strings.Contains(msg, "::") && (strings.Contains(lower, "no route") || strings.Contains(lower, "failed")) {
+		return true
+	}
+	// Соединение закрыл или сбросил клиент: браузер бросил вкладку, curl
+	// дочитал ответ. Это штатно, а печаталось строкой [ERR] на каждое такое
+	// соединение (найдено первым прогоном на Linux). Отказ подключиться
+	// к цели («Connect to … failed») сюда не попадает и печатается.
+	if strings.Contains(lower, "failed to get version byte: eof") {
+		return true
+	}
+	if !strings.Contains(lower, "connect to") &&
+		(strings.Contains(lower, "connection reset by peer") || strings.Contains(lower, "broken pipe")) {
 		return true
 	}
 	return false

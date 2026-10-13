@@ -23,6 +23,9 @@ var wintunGUID = windows.GUID{
 	Data4: [8]byte{0x97, 0xdb, 0x29, 0xf1, 0x24, 0xa7, 0x0f, 0x40},
 }
 
+// wintunUnsupported — на Windows wintun работает (см. wintun_other.go).
+var wintunUnsupported error
+
 // wintunTunnelType — тип адаптера у драйвера, виден в диспетчере устройств
 // («tt Tunnel»). Умолчание wireguard-go — «WireGuard», его легко спутать
 // с адаптером штатного клиента.

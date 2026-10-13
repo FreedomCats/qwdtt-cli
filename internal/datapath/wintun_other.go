@@ -15,3 +15,6 @@ func openWintunAdapter(string, *WGConfig, func(string, ...any)) (*wintunAdapter,
 func acquireWintunLock() (func(), error) { return nil, errWintunWindowsOnly }
 
 var errWintunWindowsOnly = errors.New("datapath wintun поддерживается только на Windows")
+
+// wintunUnsupported — для Requires: CLI откажет им до проверки прав и файлов.
+var wintunUnsupported = errWintunWindowsOnly

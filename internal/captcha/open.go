@@ -32,9 +32,19 @@ func OpenInBrowser(rawURL string) error {
 	if name == "" {
 		return fmt.Errorf("не знаю, чем открыть браузер на %s", runtime.GOOS)
 	}
-	if err := exec.Command(name, args...).Start(); err != nil {
+	return startDetached(name, args)
+}
+
+// startDetached запускает программу и не ждёт её. Ждать браузер незачем, но
+// завершившуюся программу забрать надо: без Wait на Linux и macOS она висит
+// зомби, пока жив tt (найдено первым прогоном на Linux). Код возврата не
+// важен — ссылку человеку уже напечатали.
+func startDetached(name string, args []string) error {
+	cmd := exec.Command(name, args...)
+	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("%s: %w", name, err)
 	}
+	go func() { _ = cmd.Wait() }()
 	return nil
 }
 

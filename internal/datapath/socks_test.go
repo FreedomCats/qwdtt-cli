@@ -75,8 +75,31 @@ func startSocks(t *testing.T, opts SocksOptions) (*Socks, *recorder) {
 }
 
 func TestSocksRequiresNothing(t *testing.T) {
-	if got := NewSocks(SocksOptions{}).Requires(); got.Admin || len(got.Files) != 0 || len(got.Programs) != 0 || got.Warning != "" || got.Netguard {
+	if got := NewSocks(SocksOptions{}).Requires(); got.Admin || len(got.Files) != 0 || len(got.Programs) != 0 || got.Warning != "" || got.Netguard || got.Unsupported != nil {
 		t.Errorf("Requires = %+v, а режим на то и socks, что ничего не требует", got)
+	}
+}
+
+// Фильтр вывода go-socks5: штатные закрытия клиентом и IPv6 глушатся,
+// настоящие отказы печатаются. Первая строка — дословно из живого прогона.
+func TestSocksLogNoise(t *testing.T) {
+	cases := []struct {
+		msg   string
+		noise bool
+	}{
+		{"[ERR] socks: Failed to handle request: writeto tcp 127.0.0.1:1080->127.0.0.1:47238: read tcp 127.0.0.1:1080->127.0.0.1:47238: read: connection reset by peer", true},
+		{"[ERR] socks: Failed to handle request: readfrom tcp 127.0.0.1:1080->127.0.0.1:50000: write: broken pipe", true},
+		{"[ERR] socks: Failed to get version byte: EOF", true},
+		{"[ERR] socks: Failed to handle request: Connect to [2001:db8::1]:443 failed: no route to host", true},
+		{"[ERR] socks: Failed to handle request: Connect to 203.0.113.5:443 failed: connection reset by peer", false},
+		{"[ERR] socks: Failed to handle request: Connect to 203.0.113.5:443 failed: connect: connection refused", false},
+		{"[ERR] socks: Unsupported SOCKS version: [4]", false},
+		{"[ERR] socks: Failed to authenticate: no supported authentication mechanism", false},
+	}
+	for _, c := range cases {
+		if got := isBenignSocksNoise(c.msg); got != c.noise {
+			t.Errorf("isBenignSocksNoise(%q) = %v, ждали %v", c.msg, got, c.noise)
+		}
 	}
 }
 

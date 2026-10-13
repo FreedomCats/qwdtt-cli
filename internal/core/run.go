@@ -54,7 +54,7 @@ func Run(ctx context.Context, cfg Config, sink Sink, ctrl *Control) error {
 
 	peer, err := net.ResolveUDPAddr("udp", cfg.Peer)
 	if err != nil {
-		return fmt.Errorf("адрес сервера %q: %w", cfg.Peer, err)
+		return fmt.Errorf("адрес сервера %q: %w", cfg.Peer, withoutSystemServer(err))
 	}
 	tp, err := turnParams(&cfg)
 	if err != nil {
@@ -155,7 +155,7 @@ func RunPing(ctx context.Context, cfg Config, sink Sink) error {
 
 	peer, err := net.ResolveUDPAddr("udp", cfg.Peer)
 	if err != nil {
-		return fmt.Errorf("адрес сервера %q: %w", cfg.Peer, err)
+		return fmt.Errorf("адрес сервера %q: %w", cfg.Peer, withoutSystemServer(err))
 	}
 	tp, err := turnParams(&cfg)
 	if err != nil {
@@ -425,10 +425,26 @@ func ProbeDNS(ctx context.Context, cfg Config) error {
 
 	addrs, err := net.DefaultResolver.LookupHost(ctx, dnsProbeHost)
 	if err != nil {
-		return fmt.Errorf("резолвер %s не отвечает: %w", goDNSLabel(dns), err)
+		return fmt.Errorf("резолвер %s не отвечает: %w", goDNSLabel(dns), withoutSystemServer(err))
 	}
 	if len(addrs) == 0 {
 		return fmt.Errorf("резолвер %s не нашёл адресов у %s", goDNSLabel(dns), dnsProbeHost)
 	}
 	return nil
+}
+
+// withoutSystemServer убирает из ошибки DNS адрес системного резолвера —
+// у проверки DNS и у разрешения адреса сервера.
+// net.Resolver подписывает ошибку сервером из /etc/resolv.conf («lookup … on
+// 192.168.1.1:53»), хотя собственный Dial ядра отправил запрос на резолвер
+// из настроек — его адрес и так виден дальше в тексте ошибки. Человек,
+// проверяющий свой DNS, видел чужой адрес (найдено первым прогоном на Linux).
+func withoutSystemServer(err error) error {
+	var dnsErr *net.DNSError
+	if !errors.As(err, &dnsErr) || dnsErr.Server == "" {
+		return err
+	}
+	clean := *dnsErr
+	clean.Server = ""
+	return &clean
 }

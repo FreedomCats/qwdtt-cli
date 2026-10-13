@@ -12,8 +12,12 @@ import (
 // для Windows (architecture.md §11). Явно заданный ExternalOptions.Program
 // этим не ограничен — так проверяются тесты.
 func locateWireGuard() (string, error) {
-	return "", errors.New("datapath external в этом выпуске поддерживается только на Windows")
+	return "", externalUnsupported
 }
+
+// externalUnsupported — для Requires: CLI откажет им до проверки прав и
+// программы.
+var externalUnsupported = errors.New("datapath external в этом выпуске поддерживается только на Windows")
 
 // waitTunnelService на других платформах проверять нечего: служб WireGuard
 // для Windows там нет, а явно заданный Program — это тесты.

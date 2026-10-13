@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -169,5 +170,52 @@ func TestProbeDNSHonoursContext(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "резолвер") {
 		t.Errorf("ошибка не объясняет, что не так с резолвером: %v", err)
+	}
+}
+
+// В ошибке ProbeDNS нет адреса системного резолвера: запрос ушёл на тот, что
+// в настройках, а «on <системный>» от net.Resolver сбивал с толку.
+func TestProbeDNSErrorNamesNoSystemServer(t *testing.T) {
+	install(t)
+
+	saved := net.DefaultResolver
+	t.Cleanup(func() { net.DefaultResolver = saved })
+
+	silent, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket: %v", err)
+	}
+	defer silent.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	err = ProbeDNS(ctx, Config{DNS: "custom:" + silent.LocalAddr().String()})
+	var dnsErr *net.DNSError
+	if !errors.As(err, &dnsErr) {
+		t.Fatalf("ждали net.DNSError внутри, получили %v", err)
+	}
+	if dnsErr.Server != "" {
+		t.Errorf("в ошибке системный резолвер %q: %v", dnsErr.Server, err)
+	}
+}
+
+func TestWithoutSystemServer(t *testing.T) {
+	orig := &net.DNSError{Err: "timeout", Name: "login.vk.ru", Server: "192.168.1.1:53", IsTimeout: true}
+	got := withoutSystemServer(fmt.Errorf("обёртка: %w", orig))
+	if strings.Contains(got.Error(), "192.168.1.1") || !strings.Contains(got.Error(), "login.vk.ru") {
+		t.Errorf("withoutSystemServer = %q", got)
+	}
+	if orig.Server == "" {
+		t.Error("исходная ошибка испорчена: Server стёрт у оригинала")
+	}
+	var dnsErr *net.DNSError
+	if !errors.As(got, &dnsErr) || !dnsErr.IsTimeout {
+		t.Errorf("признаки ошибки потеряны: %#v", got)
+	}
+
+	plain := errors.New("не DNS")
+	if withoutSystemServer(plain) != plain {
+		t.Error("ошибка не про DNS должна вернуться как есть")
 	}
 }

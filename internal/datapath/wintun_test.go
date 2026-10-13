@@ -3,6 +3,7 @@ package datapath
 import (
 	"context"
 	"net/netip"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -93,6 +94,9 @@ func TestWintunRequires(t *testing.T) {
 	}
 	if len(req.Files) != 1 || req.Files[0] != "wintun.dll" {
 		t.Errorf("Files = %v, ждали [wintun.dll]", req.Files)
+	}
+	if (req.Unsupported == nil) != (runtime.GOOS == "windows") {
+		t.Errorf("Unsupported = %v на %s: wintun есть только на Windows", req.Unsupported, runtime.GOOS)
 	}
 }
 

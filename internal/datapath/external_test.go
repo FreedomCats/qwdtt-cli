@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -350,6 +351,9 @@ func TestExternalRequires(t *testing.T) {
 	}
 	if !req.Netguard {
 		t.Error("Netguard = false, а external забирает весь трафик")
+	}
+	if (req.Unsupported == nil) != (runtime.GOOS == "windows") {
+		t.Errorf("Unsupported = %v на %s: external есть только на Windows", req.Unsupported, runtime.GOOS)
 	}
 
 	// Без программы Requires называет голое имя, а Start отказывает.

@@ -112,17 +112,19 @@ func NewExternal(opts ExternalOptions) *External {
 // Requires: права администратора (службу ставит только он), wireguard.exe,
 // netguard — туннель забирает весь трафик системы — и защита DNS. Programs называет
 // найденный путь, а если найти не вышло — голое имя, чтобы вызывающий
-// сказал «не найдена программа».
+// сказал «не найдена программа». Вне Windows — Unsupported: служб WireGuard
+// для Windows там нет.
 func (e *External) Requires() Requirements {
 	program := "wireguard.exe"
 	if e.program != "" {
 		program = e.program
 	}
 	return Requirements{
-		Admin:    true,
-		Programs: []string{program},
-		Netguard: true,
-		DNSGuard: true,
+		Unsupported: externalUnsupported,
+		Admin:       true,
+		Programs:    []string{program},
+		Netguard:    true,
+		DNSGuard:    true,
 	}
 }
 
