@@ -1,9 +1,16 @@
 // Command tt — консольный клиент qWDTT для настольных систем.
 //
-// Разбор команд появится в задаче G1 (см. doc/plan-e1.md).
+// Сама программа — тонкая: разбор команд и всё, что за ними стоит, живёт
+// в internal/cli. Здесь остаются только сведения о сборке и код возврата,
+// потому что os.Exit из библиотеки звать нельзя — отложенные вызовы тогда
+// не отработают.
 package main
 
-import "fmt"
+import (
+	"os"
+
+	"qwdtt-cli/internal/cli"
+)
 
 // version и commit подставляются при сборке через -ldflags (задача H1).
 var (
@@ -12,5 +19,5 @@ var (
 )
 
 func main() {
-	fmt.Printf("tt %s (%s)\n", version, commit)
+	os.Exit(cli.Main(os.Args[1:], cli.Build{Version: version, Commit: commit}))
 }
