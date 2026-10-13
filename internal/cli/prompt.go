@@ -140,7 +140,29 @@ func (e *env) readLine() (string, error) {
 // terminalFD отдаёт дескриптор stdin, если это терминал. Только у настоящего
 // файла есть дескриптор, а у терминала — режим, в котором можно погасить эхо.
 func (e *env) terminalFD() (int, bool) {
-	f, ok := e.stdin.(*os.File)
+	return fileTerminal(e.stdin)
+}
+
+// stdoutTerminal говорит, терминал ли stdout, и отдаёт функцию, которая
+// возвращает его ширину в знаках (ноль — узнать не удалось). Спрашивать
+// ширину каждый раз, а не один, нужно потому, что окно растягивают по ходу
+// работы. Для статусной строки `tt connect` (output.go).
+func (e *env) stdoutTerminal() (width func() int, ok bool) {
+	fd, ok := fileTerminal(e.stdout)
+	if !ok {
+		return nil, false
+	}
+	return func() int {
+		w, _, err := term.GetSize(fd)
+		if err != nil {
+			return 0
+		}
+		return w
+	}, true
+}
+
+func fileTerminal(stream any) (int, bool) {
+	f, ok := stream.(*os.File)
 	if !ok {
 		return 0, false
 	}

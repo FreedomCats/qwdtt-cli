@@ -301,6 +301,12 @@ func requirementProblems(req datapath.Requirements) []string {
 // годных хешей не останется.
 func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	out := newPrinter(e.stdout, verbose)
+	// Статусная строка — только на терминале. В перенаправленном выводе
+	// остаются строки: `tt connect > log.txt` даёт файл без перерисовки.
+	if width, ok := e.stdoutTerminal(); ok {
+		out.enableStatus(width)
+	}
+	defer out.finish()
 
 	// Требования спрашиваются у экземпляра: они свойство реализации, а
 	// экземпляр без Start сети не трогает.
@@ -318,7 +324,8 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 
 	// Решатель капчи: консольный (E2). Вопрос и инструкция уходят в stderr,
 	// ответ читается со stdin команды. Окно WebView2 — второй приём E2.
-	solver := captcha.NewManual(captcha.ManualOptions{In: e.stdin, Out: e.stderr, Open: e.openURL})
+	// Через out.aside, чтобы статусная строка не встала посреди приглашения.
+	solver := captcha.NewManual(captcha.ManualOptions{In: e.stdin, Out: out.aside(e.stderr), Open: e.openURL})
 	dispatcher := captcha.New(captcha.Options{Solver: solver, Control: ctrl, Logf: out.logf})
 	defer dispatcher.Close()
 
@@ -348,10 +355,17 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 		return err
 	}
 
+	out.header(cfg.Workers, len(cfg.Hashes))
 	out.line("профиль %s: сервер %s, %s, воркеров %d, хешей %d, DNS %s",
 		plan.profile.Name, cfg.Peer, plan.describe, cfg.Workers, len(cfg.Hashes), cfg.DNS)
 
-	if err := tun.Run(ctx); err != nil {
+	// Аптайм в статусной строке идёт и без событий: раз в секунду она
+	// перерисовывается сама. Тикер снимается до того, как печатается итог.
+	stopRefresh := out.refreshEvery(time.Second)
+	err = tun.Run(ctx)
+	stopRefresh()
+	out.finish()
+	if err != nil {
 		return err
 	}
 	out.line("остановлено")

@@ -360,7 +360,7 @@ type commonOptions struct {
 	// config — путь к profiles.toml вместо файла по умолчанию.
 	config string
 	// verbose — печатать весь лог ядра, а не только значимые события.
-	// Разбор вывода — задача G4.
+	// Что на каком уровне печатается, решает printer (output.go).
 	verbose bool
 }
 
