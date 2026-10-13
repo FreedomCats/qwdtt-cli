@@ -1,15 +1,17 @@
 // Package datapath отвечает за то, каким способом трафик приложений попадает
 // в туннель.
 //
-// Ядро всегда делает одно и то же: принимает UDP на loopback и уносит его через
-// TURN. Различается только то, что подаёт трафик в этот сокет — userspace
-// WireGuard с локальным SOCKS5, штатный wireguard.exe или (с Э2) собственный
-// адаптер tun. Это различие и отделено интерфейсом Datapath
-// (architecture.md §04, решение Р2).
+// Ядро всегда делает одно и то же: принимает пакеты WireGuard и уносит их через
+// TURN. Различается только то, что их подаёт, — userspace WireGuard с
+// локальным SOCKS5, штатный wireguard.exe или (с Э2) собственный адаптер tun.
+// Это различие и отделено интерфейсом Datapath (architecture.md §04, решение
+// Р2). Свой wireguard-go (socks, tun) подаёт их каналом в памяти (Pipe, Piped),
+// wireguard.exe — UDP на loopback ядра.
 package datapath
 
 import (
 	"context"
+	"net"
 	"net/netip"
 )
 
@@ -30,9 +32,9 @@ type Datapath interface {
 	// Persistent: там ctx ограничивает только сам запуск.
 	Start(ctx context.Context, conf *WGConfig) error
 
-	// Endpoint — адрес, на который datapath шлёт UDP; на этом адресе слушает
-	// ядро. Берётся из поля Endpoint конфига: порт loopback выбирает ядро,
-	// а сервер возвращает его в конфиге обратно.
+	// Endpoint — адрес из поля Endpoint конфига: порт loopback выбирает ядро,
+	// а сервер возвращает его в конфиге обратно. Слушает на нём ядро только
+	// без канала в памяти (external); у Piped он номинальный.
 	//
 	// Осмысленно только после успешного Start; до него — нулевое значение.
 	Endpoint() netip.AddrPort
@@ -122,6 +124,17 @@ type IPv6Blocker interface {
 // супервизор принял бы его за сбой попытки.
 type Reserver interface {
 	Reserve() (release func(), err error)
+}
+
+// Piped — необязательная часть Datapath: реализация, у которой свой
+// wireguard-go и пакеты ядру идут каналом в памяти (Pipe), а не UDP на
+// loopback: порт ядра не открыт посторонним процессам (plan-e3.md, блок B).
+//
+// Супервизор зовёт CoreConn перед каждым запуском ядра и отдаёт результат в
+// core.Config.PacketConn; прежняя сторона ядра при этом закрывается. Ядро
+// стартует раньше Start — канал готов с постройки datapath.
+type Piped interface {
+	CoreConn() net.PacketConn
 }
 
 // Persistent — необязательная часть Datapath: реализация, которая живёт весь

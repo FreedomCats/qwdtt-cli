@@ -52,6 +52,10 @@ type Socks struct {
 	ln       net.Listener
 	endpoint netip.AddrPort
 
+	// pipe — канал к ядру; живёт с постройки, потому что ядро стартует
+	// раньше Start (Piped).
+	pipe *Pipe
+
 	// done закрывается в Close и снимает сторожа отмены ctx: без него горутина
 	// сторожа жила бы до конца процесса, если ctx не отменяют вовсе.
 	done chan struct{}
@@ -66,14 +70,17 @@ func NewSocks(opts SocksOptions) *Socks {
 	if strings.TrimSpace(opts.Listen) == "" {
 		opts.Listen = DefaultSocksListen
 	}
-	return &Socks{opts: opts, done: make(chan struct{})}
+	return &Socks{opts: opts, done: make(chan struct{}), pipe: NewPipe()}
 }
+
+// CoreConn — Piped: сторона ядра канала в памяти.
+func (s *Socks) CoreConn() net.PacketConn { return s.pipe.CoreConn() }
 
 // Requires: ничего. В этом весь смысл режима — он работает от обычного
 // пользователя и ничего не требует установленным.
 func (s *Socks) Requires() Requirements { return Requirements{} }
 
-// Endpoint — адрес, на который userspace WireGuard шлёт UDP; на нём слушает ядро.
+// Endpoint — адрес из конфига; номинальный: пакеты ядру идут каналом в памяти.
 func (s *Socks) Endpoint() netip.AddrPort {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -210,7 +217,7 @@ func (s *Socks) startWireGuard(conf *WGConfig) (*device.Device, *netstack.Net, e
 	if err != nil {
 		return nil, nil, fmt.Errorf("socks: CreateNetTUN: %w", err)
 	}
-	dev, err := startDevice(tunDev, conf, "[WG-SOCKS]", s.logf)
+	dev, err := startDevice(tunDev, s.pipe, conf, "[WG-SOCKS]", s.logf)
 	if err != nil {
 		return nil, nil, fmt.Errorf("socks: %w", err)
 	}

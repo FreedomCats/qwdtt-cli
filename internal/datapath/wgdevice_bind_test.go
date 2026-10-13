@@ -99,6 +99,10 @@ func waitHandshake(dev *device.Device, timeout time.Duration) bool {
 // одним IpcSet её не возвращает: рукопожатия уходят, ответы никто не читает,
 // туннель «работает» без трафика (живой прогон R2, сценарий 4).
 // reconfigureDevice обязан открыть сокеты заново.
+//
+// socks и tun с блока B Э3 ходят к ядру через Pipe, где ICMP нет; тест
+// держит стандартный UDP-Bind — BindUpdate в reconfigureDevice оставлен на
+// этот случай.
 func TestReconfigureDeviceSurvivesPortUnreachable(t *testing.T) {
 	clientPriv, clientPub := testKeyPair(t)
 	serverPriv, serverPub := testKeyPair(t)
@@ -107,7 +111,7 @@ func TestReconfigureDeviceSurvivesPortUnreachable(t *testing.T) {
 	conf := testWGConfig(t, fmt.Sprintf("127.0.0.1:%d", closedUDPPort(t)))
 	conf.PrivateKeyHex, conf.PeerPublicHex = clientPriv, serverPub
 	conf.Keepalive = 1
-	dev, err := startDevice(newTestTUN(t, conf), conf, "[WG-TEST]", (&recorder{}).logf)
+	dev, err := startDevice(newTestTUN(t, conf), conn.NewDefaultBind(), conf, "[WG-TEST]", (&recorder{}).logf)
 	if err != nil {
 		t.Fatalf("startDevice: %v", err)
 	}

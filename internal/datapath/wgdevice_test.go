@@ -35,7 +35,7 @@ func TestStartDevice(t *testing.T) {
 	tunDev := newTestTUN(t, conf)
 	rec := &recorder{}
 
-	dev, err := startDevice(tunDev, conf, "[WG-TEST]", rec.logf)
+	dev, err := startDevice(tunDev, NewPipe(), conf, "[WG-TEST]", rec.logf)
 	if err != nil {
 		t.Fatalf("startDevice: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestStartDeviceFailureClosesTUN(t *testing.T) {
 	tunDev := newTestTUN(t, conf)
 	rec := &recorder{}
 
-	dev, err := startDevice(tunDev, conf, "[WG-TEST]", rec.logf)
+	dev, err := startDevice(tunDev, NewPipe(), conf, "[WG-TEST]", rec.logf)
 	if err == nil {
 		dev.Close()
 		t.Fatal("startDevice принял битый ключ")
@@ -72,10 +72,10 @@ func TestStartDeviceFailureClosesTUN(t *testing.T) {
 }
 
 // Перенастройка живого устройства заменяет пира, а не добавляет второго:
-// иначе после переподключения wireguard-go слал бы и в старый порт ядра.
+// иначе после переподключения wireguard-go держал бы и прежнего пира.
 func TestReconfigureDeviceReplacesPeer(t *testing.T) {
 	conf := testWGConfig(t, "127.0.0.1:9")
-	dev, err := startDevice(newTestTUN(t, conf), conf, "[WG-TEST]", (&recorder{}).logf)
+	dev, err := startDevice(newTestTUN(t, conf), NewPipe(), conf, "[WG-TEST]", (&recorder{}).logf)
 	if err != nil {
 		t.Fatalf("startDevice: %v", err)
 	}

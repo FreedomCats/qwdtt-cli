@@ -70,7 +70,6 @@ type connectOptions struct {
 	dns           string
 	datapath      string
 	socksListen   string
-	listen        string
 	noKillSwitch  bool
 	allowLeak     bool
 
@@ -92,7 +91,6 @@ func addConnectFlags(fs *flag.FlagSet) *connectOptions {
 	fs.StringVar(&o.dns, "dns", "", "резолвер для доменов VK: yandex, cloudflare, google, doh-*, custom:IP, doh:URL")
 	fs.StringVar(&o.datapath, "datapath", "", "как отдавать трафик: socks, tun или external")
 	fs.StringVar(&o.socksListen, "socks-listen", "", "адрес локального SOCKS5 при datapath=socks")
-	fs.StringVar(&o.listen, "listen", "", "локальный UDP-адрес, куда datapath отдаёт трафик")
 	// Выключить на запуск, а не включить: включён он и так, если профиль
 	// не выключил (plan-e3.md, решение 2).
 	fs.BoolVar(&o.noKillSwitch, "no-kill-switch", false,
@@ -180,9 +178,6 @@ func planConnect(opts *connectOptions, name string) (*connectPlan, error) {
 	cfg, err := coreConfig(p, config.NewSecretStoreFor(path))
 	if err != nil {
 		return nil, err
-	}
-	if opts.named["listen"] {
-		cfg.Listen = opts.listen
 	}
 	cfg.Normalize()
 	if err := cfg.Validate(); err != nil {

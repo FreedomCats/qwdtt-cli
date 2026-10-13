@@ -17,10 +17,9 @@ const wgDebugEnv = "TT_WG_DEBUG"
 // startDevice поднимает wireguard-go поверх готового TUN по конфигу сервера.
 //
 // Это общая часть socks и tun: они отличаются только TUN (architecture.md
-// §04) — netstack у первого, свой адаптер у второго. Bind — стандартный UDP:
-// wireguard-go шлёт пакеты на Endpoint из конфига, то есть на loopback ядра
-// (решение Р4), и хук netguard ему не нужен — loopback маршрутами туннеля
-// не затрагивается.
+// §04) — netstack у первого, свой адаптер у второго. bind — их Pipe: пакеты
+// идут ядру в памяти, мимо сети, и хук netguard wireguard-go не нужен.
+// Endpoint конфига Pipe адресом не считает — пир один.
 //
 // С момента вызова tunDev принадлежит startDevice: на отказе он закрыт, на
 // успехе его закроет Close устройства. tag — префикс строк лога wireguard-go,
@@ -28,7 +27,7 @@ const wgDebugEnv = "TT_WG_DEBUG"
 //
 // Конфиг применяется к свежему устройству, поэтому replace_peers не нужен.
 // Перенастройка живого устройства — reconfigureDevice.
-func startDevice(tunDev tun.Device, conf *WGConfig, tag string, logf func(format string, args ...any)) (*device.Device, error) {
+func startDevice(tunDev tun.Device, bind conn.Bind, conf *WGConfig, tag string, logf func(format string, args ...any)) (*device.Device, error) {
 	// Свой Logger вместо device.NewLogger: тот пишет прямо в stdout, а вывод
 	// принадлежит CLI. Verbosef — DiscardLogf (без TT_WG_DEBUG): это тот же
 	// уровень, что был в ядре (LogLevelError), и обе функции обязаны быть
@@ -40,7 +39,7 @@ func startDevice(tunDev tun.Device, conf *WGConfig, tag string, logf func(format
 			logf(tag+" "+format, args...)
 		}
 	}
-	dev := device.NewDevice(tunDev, conn.NewDefaultBind(), &device.Logger{
+	dev := device.NewDevice(tunDev, bind, &device.Logger{
 		Verbosef: verbosef,
 		Errorf: func(format string, args ...any) {
 			logf(tag+" "+format, args...)
@@ -59,16 +58,16 @@ func startDevice(tunDev tun.Device, conf *WGConfig, tag string, logf func(format
 }
 
 // reconfigureDevice применяет к живому устройству новый конфиг сервера —
-// ключ, пира и endpoint на loopback ядра, которые на каждое подключение
+// ключ, пира и endpoint (у Pipe номинальный), которые на каждое подключение
 // бывают новыми. replace_peers убирает прежнего пира: без него IpcSet
 // добавил бы нового рядом со старым. TUN, а с ним и адаптер, остаётся.
 //
-// Сокеты устройства перед этим открываются заново (BindUpdate). Прошлая
-// попытка могла оставить wireguard-go без приёма: когда ядро закрывает
-// свой порт на loopback, а рукопожатие туда ещё летит, Windows отвечает на
-// ICMP «порт недоступен» ошибкой WSAECONNRESET на приёме, и приёмная
-// горутина wireguard-go выходит насовсем (device/receive.go). Рукопожатия
-// после этого уходят, а ответы никто не читает (R2, сценарий 4).
+// Bind устройства перед этим открывается заново (BindUpdate). Нужно это
+// было стандартному UDP-Bind: когда ядро закрывало свой порт на loopback, а
+// рукопожатие туда ещё летело, Windows отвечала на ICMP «порт недоступен»
+// ошибкой WSAECONNRESET на приёме, и приёмная горутина wireguard-go выходила
+// насовсем (device/receive.go, R2 Э2, сценарий 4). У Pipe такой ошибки нет;
+// BindUpdate оставлен — он дешёв и не зависит от того, какой Bind внизу.
 func reconfigureDevice(dev *device.Device, conf *WGConfig) error {
 	if err := dev.BindUpdate(); err != nil {
 		return fmt.Errorf("BindUpdate: %w", err)

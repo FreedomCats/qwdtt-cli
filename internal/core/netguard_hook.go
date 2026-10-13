@@ -19,7 +19,8 @@
 // а его ядро подменяет в точках 3 и 4 — значит, и он под хуком. Решатель
 // капчи v2 получает клиента из точки 5. HTTP/3 (QUIC по UDP мимо диалера)
 // tls-client включает только опцией WithProtocolRacing, ядро её не ставит.
-// listen.go — loopback для datapath, хук ему не нужен. Всё это сверяет
+// listen.go — loopback для datapath external (socks и tun — канал в памяти,
+// Config.PacketConn), хук ему не нужен. Всё это сверяет
 // TestNetguardCoverage: новая точка после обновления ядра роняет тест, а не
 // туннель.
 

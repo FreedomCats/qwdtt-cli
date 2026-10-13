@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -338,5 +339,71 @@ func TestKillSwitchLines(t *testing.T) {
 			!locked && (blocked != 0 || upAgain != 0 || bypassed != 2 || returned != 1) {
 			t.Errorf("kill-switch стоит=%v, строки:\n%s", locked, lines.dump())
 		}
+	}
+}
+
+// fakePiped — fakePersistent с каналом в памяти, как tun: каждая сторона
+// ядра, которую он отдал, запоминается.
+type fakePiped struct {
+	fakePersistent
+	pipe  *datapath.Pipe
+	conns *[]net.PacketConn
+}
+
+func (d fakePiped) CoreConn() net.PacketConn {
+	c := d.pipe.CoreConn()
+	*d.conns = append(*d.conns, c)
+	return c
+}
+
+// Datapath с каналом в памяти даёт ядру новую сторону на каждую попытку;
+// без канала ядро слушает loopback, как раньше.
+func TestPipedDatapathGivesCoreConnEachAttempt(t *testing.T) {
+	for _, piped := range []bool{true, false} {
+		t.Run(fmt.Sprintf("piped=%v", piped), func(t *testing.T) {
+			persistent := fakePersistent{&fakeFullTunnel{fakeDatapath: newFakeDatapath()}}
+			var conns []net.PacketConn
+			var dp datapath.Datapath = persistent
+			if piped {
+				dp = fakePiped{fakePersistent: persistent, pipe: datapath.NewPipe(), conns: &conns}
+			}
+
+			var seen []net.PacketConn
+			tun, _ := newTestTunnel(t, Options{
+				Hashes:      []string{"hash-one"},
+				NewDatapath: func() (datapath.Datapath, error) { return dp, nil },
+			}, func(ctx context.Context, cfg core.Config, sink core.Sink) error {
+				seen = append(seen, cfg.PacketConn)
+				return failAfterConnect(ctx, cfg, sink)
+			})
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var waits int
+			tun.sleep = func(context.Context, time.Duration) bool {
+				waits++
+				if waits >= 2 {
+					cancel()
+					return false
+				}
+				return true
+			}
+			if err := tun.Run(ctx); err != nil {
+				t.Fatalf("Run = %v", err)
+			}
+
+			if len(seen) != 2 {
+				t.Fatalf("ядро запускалось %d раз, ждали 2", len(seen))
+			}
+			if !piped {
+				if seen[0] != nil || seen[1] != nil {
+					t.Errorf("без канала ядро получило PacketConn: %v", seen)
+				}
+				return
+			}
+			if len(conns) != 2 || seen[0] != conns[0] || seen[1] != conns[1] || seen[0] == seen[1] {
+				t.Errorf("ядро получило %v, datapath отдал %v; ждали новую сторону на попытку", seen, conns)
+			}
+		})
 	}
 }

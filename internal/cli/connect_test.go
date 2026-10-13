@@ -144,7 +144,7 @@ func TestPlanConnectFlagsOverrideProfile(t *testing.T) {
 
 	plan, err := c.plan("home",
 		"-workers", "27", "-dtls=false", "-dns", "cloudflare",
-		"-turn-transport", "tcp", "-socks-listen", "127.0.0.1:1090", "-listen", "127.0.0.1:9100")
+		"-turn-transport", "tcp", "-socks-listen", "127.0.0.1:1090")
 	if err != nil {
 		t.Fatalf("planConnect: %v", err)
 	}
@@ -161,9 +161,6 @@ func TestPlanConnectFlagsOverrideProfile(t *testing.T) {
 	}
 	if !cfg.TurnTCP {
 		t.Errorf("-turn-transport tcp не дошёл до ядра")
-	}
-	if cfg.Listen != "127.0.0.1:9100" {
-		t.Errorf("Listen = %q, ожидался адрес из флага", cfg.Listen)
 	}
 	if !strings.Contains(plan.describe, "127.0.0.1:1090") {
 		t.Errorf("адрес SOCKS5 из флага не попал в описание: %q", plan.describe)

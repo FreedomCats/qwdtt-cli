@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"slices"
 	"strings"
@@ -62,6 +63,11 @@ type Tun struct {
 	conf     *WGConfig
 	endpoint netip.AddrPort
 
+	// pipe — канал к ядру. Живёт, как и адаптер, весь сеанс: устройство
+	// wireguard-go держит его через попытки, а сторона ядра у каждой попытки
+	// своя (Piped).
+	pipe *Pipe
+
 	// closeOnce и closeErr — уборка один раз, ожидание всеми (см. Close).
 	closeOnce sync.Once
 	closeErr  error
@@ -98,8 +104,11 @@ func NewTun(opts TunOptions) *Tun {
 	if strings.TrimSpace(opts.Name) == "" {
 		opts.Name = DefaultTunnelName
 	}
-	return &Tun{opts: opts, openAdapter: openTunAdapter}
+	return &Tun{opts: opts, openAdapter: openTunAdapter, pipe: NewPipe()}
 }
+
+// CoreConn — Piped: сторона ядра канала в памяти на эту попытку.
+func (w *Tun) CoreConn() net.PacketConn { return w.pipe.CoreConn() }
 
 // errTunBusy — отказ второму tt с datapath tun на той же машине.
 var errTunBusy = errors.New("адаптер уже занят: на этой машине работает другой tt с datapath tun; " +
@@ -131,8 +140,8 @@ func (w *Tun) Reserve() (release func(), err error) {
 	return release, nil
 }
 
-// Endpoint — адрес из конфига, на который wireguard-go шлёт UDP; на нём
-// слушает ядро.
+// Endpoint — адрес из конфига; номинальный: пакеты ядру идут каналом в
+// памяти.
 func (w *Tun) Endpoint() netip.AddrPort {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -202,7 +211,7 @@ func (w *Tun) open(conf *WGConfig) error {
 		return fmt.Errorf("tun: %w", err)
 	}
 
-	dev, err := startDevice(adapter.tun, conf, "[WG-TUN]", w.logf)
+	dev, err := startDevice(adapter.tun, w.pipe, conf, "[WG-TUN]", w.logf)
 	if err != nil {
 		// startDevice уже закрыл TUN, а с ним и адаптер.
 		adapter.release()
@@ -291,8 +300,8 @@ func (w *Tun) route(adapter *tunAdapter, conf *WGConfig) error {
 
 // Suspend снимает защиту DNS и маршруты, оставляя адаптер (Persistent):
 // трафик системы идёт мимо туннеля, пока следующий Start их не вернёт.
-// Заодно у устройства убирается пир — иначе wireguard-go стучался бы
-// рукопожатиями в порт ядра, которого после попытки уже нет.
+// Заодно у устройства убирается пир — иначе wireguard-go слал бы
+// рукопожатия старым ключом, пока ядра между попытками нет.
 //
 // Защита — раньше маршрутов: с kill-switch её Disable закрывает трафик
 // системы (plan-e3.md, K3), и мига, когда маршрутов уже нет, а закрыть

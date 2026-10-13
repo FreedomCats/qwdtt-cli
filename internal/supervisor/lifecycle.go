@@ -405,6 +405,11 @@ func (t *Tunnel) attempt(parent context.Context) (err error) {
 
 	cfg := t.opts.Config
 	cfg.Hashes = t.hashes.Alive()
+	// Свой wireguard-go у datapath — ядру канал в памяти вместо UDP на
+	// loopback, новый на попытку (plan-e3.md, блок B). Закроет его ядро.
+	if p, ok := dp.(datapath.Piped); ok {
+		cfg.PacketConn = p.CoreConn()
+	}
 
 	runErr := t.runCore(ctx, cfg, core.SinkFunc(a.emit), t.opts.Control)
 
