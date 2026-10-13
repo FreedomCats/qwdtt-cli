@@ -90,7 +90,7 @@ func openTunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (*tu
 	}
 	return &tunAdapter{
 		tun:       tunDev,
-		luid:      luid,
+		id:        luid,
 		configure: configure,
 		addRoutes: func() error {
 			return winsys.SetTunnelRoutes(luid, fullTunnelRoutes, logf)

@@ -39,11 +39,16 @@ require (
 // тянет go4.org/netipx (BSD-3). Тоже только из *_windows.go. Прочие его
 // косвенные (x/tools, honnef.co/go/tools, x/exp/typeparams) нужны лишь
 // его генераторам и в бинарь не попадают: tidy видит их через tooldeps.go.
+// vishvananda/netlink (Apache-2.0) — выбор интерфейса и подписка на смену
+// сети на Linux, задача N2 Э4; тянет vishvananda/netns (Apache-2.0). Только из
+// *_linux.go. Модуль и раньше был в графе (требование gvisor), но в сборку не
+// попадал; версия поднята с v1.1.1-0.20211118161826-650dca95af54.
 // Все лицензии с GPL v3 совместимы.
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
 	github.com/tailscale/wf v0.0.0-20240214030419-6fbb0a674ee6
+	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/term v0.45.0
 	golang.zx2c4.com/wireguard/windows v1.1.1
 )
@@ -62,6 +67,7 @@ require (
 	github.com/pion/stun/v3 v3.1.6 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/tam7t/hpkp v0.0.0-20160821193359-2b70b4024ed5 // indirect
+	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	go4.org/netipx v0.0.0-20220725152314-7e7bdc8411bf // indirect
 	golang.org/x/exp/typeparams v0.0.0-20231108232855-2478ac86f678 // indirect

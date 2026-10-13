@@ -5,8 +5,8 @@
 // ядра по общей таблице маршрутов попали бы в тот же туннель, и туннель
 // зависел бы от самого себя. Guard.Control ставится в поле Control у
 // net.Dialer и привязывает сокет к физическому интерфейсу: на Windows —
-// опциями IP_UNICAST_IF / IPV6_UNICAST_IF. На других системах Control пока
-// ничего не делает (Linux и macOS — этап Э4).
+// опциями IP_UNICAST_IF / IPV6_UNICAST_IF, на Linux — SO_BINDTOIFINDEX.
+// На других системах Control пока ничего не делает (macOS — этап Э4).
 package netguard
 
 import (
@@ -37,6 +37,40 @@ type Guard struct {
 	// отладки петли; CLI ставит его при -v. Задаётся до первого сокета.
 	// Имени хоста в строке нет: в Control адрес приходит уже разрешённым.
 	Logf func(format string, args ...any)
+
+	// Mark, если не 0, ставится сокетам опцией SO_MARK (только Linux): по
+	// ней защита DNS узнаёт сокеты tt и пропускает их запросы к DNS для
+	// доменов VK (plan-e4.md, D1). Метке нужен CAP_NET_ADMIN, без него
+	// сокет не создаётся (EPERM), поэтому CLI ставит её, только когда
+	// защита DNS включена. Задаётся до первого сокета. На Windows не
+	// используется: там защита DNS пропускает весь процесс tt.
+	Mark uint32
+}
+
+// SocketMark — значение Mark для сокетов tt. Свободно от известных
+// пользователей меток: wg-quick (0xca6c), kube-proxy (0x4000, 0x8000),
+// Tailscale (маска 0xff0000), Calico (маска 0xffff0000), Cilium (маска
+// 0xf00). Маршрутизации по метке tt не заводит — только опознание.
+const SocketMark uint32 = 0x1074
+
+// SelectInterfaces выбирает физический интерфейс маршрута по умолчанию для
+// IPv4 и IPv6 и ставит их индексы. exclude — свой адаптер (AdapterID
+// datapath: на Windows — LUID, на Linux — индекс), 0 — исключать нечего.
+// Возвращает выбор словами для вывода.
+//
+// Сети нет вовсе — не ошибка: индексы обнуляются, и сокеты ядра откажут
+// с понятным текстом, а не уйдут в туннель. Ошибка — только отказ системы
+// отдать таблицу маршрутов.
+func (g *Guard) SelectInterfaces(exclude uint64) (string, error) {
+	if !supported {
+		return "не нужен на этой системе", nil
+	}
+	c, err := choose(exclude)
+	if err != nil {
+		return "", err
+	}
+	g.commit(c)
+	return c.String(), nil
 }
 
 // SetInterfaces задаёт индексы физического интерфейса. 0 — для этого
@@ -55,7 +89,8 @@ func (g *Guard) Interfaces() (index4, index6 uint32) {
 // маршрута по умолчанию для семейства нет.
 type Choice struct {
 	Index4, Index6 uint32
-	// Alias4, Alias6 — имена интерфейсов для вывода («Ethernet 3», «Wi-Fi»).
+	// Alias4, Alias6 — имена интерфейсов для вывода («Ethernet 3», «Wi-Fi»,
+	// «enp7s0»).
 	Alias4, Alias6 string
 }
 
@@ -102,11 +137,11 @@ func (g *Guard) Control(network, address string, c syscall.RawConn) error {
 	if !supported {
 		return nil
 	}
-	return g.apply(network, address, c, setUnicastIf)
+	return g.apply(network, address, c, g.setter())
 }
 
-// setter привязывает сокет fd к интерфейсу index. На Windows это
-// setUnicastIf, в тестах — подмена.
+// setter привязывает сокет fd к интерфейсу index для семейства. На
+// Windows это setUnicastIf, на Linux — привязка и метка, в тестах — подмена.
 type setter func(fd uintptr, ipv6 bool, index uint32) error
 
 // apply — платформенно-независимая часть Control: решает, какие семейства
@@ -129,6 +164,12 @@ func (g *Guard) apply(network, address string, c syscall.RawConn, set setter) er
 			return noInterface("IPv4 и IPv6", network, address)
 		}
 		v4, v6 = index4 != 0, index6 != 0
+		// На Linux привязка одна на сокет, а не на семейство. При разных
+		// интерфейсах семейств сокет привязывается к интерфейсу IPv4: IPv6
+		// через него получит отказ маршрута, но в туннель не уйдёт.
+		if v4 && v6 && !bindPerFamily {
+			v6 = false
+		}
 	}
 	// Индекс не известен — сокет не создаётся. Молча пустить его по общей
 	// таблице значит получить петлю через туннель, которую не видно.
@@ -143,13 +184,13 @@ func (g *Guard) apply(network, address string, c syscall.RawConn, set setter) er
 	err = c.Control(func(fd uintptr) {
 		if v4 {
 			if setErr = set(fd, false, index4); setErr != nil {
-				setErr = fmt.Errorf("netguard: IP_UNICAST_IF=%d для %s %s: %w", index4, network, address, setErr)
+				setErr = fmt.Errorf("netguard: %s=%d для %s %s: %w", option4, index4, network, address, setErr)
 				return
 			}
 		}
 		if v6 {
 			if setErr = set(fd, true, index6); setErr != nil {
-				setErr = fmt.Errorf("netguard: IPV6_UNICAST_IF=%d для %s %s: %w", index6, network, address, setErr)
+				setErr = fmt.Errorf("netguard: %s=%d для %s %s: %w", option6, index6, network, address, setErr)
 			}
 		}
 	})

@@ -70,8 +70,10 @@ type Tun struct {
 // tunAdapter — то, что платформа отдаёт datapath: TUN для wireguard-go
 // и уборка того, что вместе с TUN не уходит.
 type tunAdapter struct {
-	tun  tun.Device
-	luid uint64
+	tun tun.Device
+	// id — идентификатор адаптера в системе: на Windows — LUID, на Linux —
+	// индекс интерфейса.
+	id uint64
 	// configure заново задаёт адаптеру адреса, MTU и DNS из конфига —
 	// когда сервер на новой попытке выдал другие.
 	configure func(conf *WGConfig) error
@@ -130,15 +132,17 @@ func (w *Tun) Endpoint() netip.AddrPort {
 	return w.endpoint
 }
 
-// LUID — LUID адаптера; 0 до Start и после Close. Нужен тем, кто исключает
-// свой адаптер из выбора физического интерфейса (netguard, смена сети).
-func (w *Tun) LUID() uint64 {
+// AdapterID — идентификатор адаптера в системе (на Windows — LUID, на
+// Linux — индекс интерфейса); 0 до Start и после Close. Нужен тем, кто
+// исключает свой адаптер из выбора физического интерфейса (netguard, смена
+// сети).
+func (w *Tun) AdapterID() uint64 {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.adapter == nil {
 		return 0
 	}
-	return w.adapter.luid
+	return w.adapter.id
 }
 
 // Start поднимает туннель по конфигу попытки и возвращается, когда через

@@ -48,8 +48,8 @@ var errNetworkChanged = errors.New("сеть сменилась")
 
 // watchNetwork следит за сменой физического интерфейса (задача S2 Э2):
 // новые индексы netguard ставит сам, выбор печатается строкой, попытка
-// перезапускается (networkChanged). exclude — LUID своего адаптера, его
-// события не в счёт.
+// перезапускается (networkChanged). exclude — AdapterID своего адаптера,
+// его события не в счёт.
 //
 // Отказ подписки подключиться не мешает: туннель работает, но после смены
 // сети восстановится только по watchdog, примерно через минуту, — об этом
@@ -89,7 +89,7 @@ func networkChanged(out *printer, restart func(error)) func(now, before netguard
 
 // ownAdapter помнит последний построенный datapath, чтобы исключать его
 // адаптер (tun) из слежения за сетью. У datapath без своего адаптера
-// LUID 0 — исключать нечего.
+// AdapterID нет — исключать нечего.
 type ownAdapter struct {
 	mu sync.Mutex
 	dp datapath.Datapath
@@ -102,12 +102,12 @@ func (o *ownAdapter) track(dp datapath.Datapath) datapath.Datapath {
 	return dp
 }
 
-func (o *ownAdapter) luid() uint64 {
+func (o *ownAdapter) id() uint64 {
 	o.mu.Lock()
 	dp := o.dp
 	o.mu.Unlock()
-	if a, ok := dp.(interface{ LUID() uint64 }); ok {
-		return a.LUID()
+	if a, ok := dp.(interface{ AdapterID() uint64 }); ok {
+		return a.AdapterID()
 	}
 	return 0
 }

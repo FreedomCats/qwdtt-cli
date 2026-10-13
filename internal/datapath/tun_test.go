@@ -48,8 +48,8 @@ func (f *fakeTun) open(name string, conf *WGConfig, logf func(string, ...any)) (
 	}
 	f.tun = newTestTUN(f.t, conf)
 	return &tunAdapter{
-		tun:  f.tun,
-		luid: 42,
+		tun: f.tun,
+		id:  42,
 		configure: func(*WGConfig) error {
 			f.configured.Add(1)
 			return nil
@@ -126,8 +126,8 @@ func TestTunStartClose(t *testing.T) {
 	if got := w.Endpoint().String(); got != "127.0.0.1:9" {
 		t.Errorf("Endpoint = %s", got)
 	}
-	if w.LUID() != 42 {
-		t.Errorf("LUID = %d, ждали 42", w.LUID())
+	if w.AdapterID() != 42 {
+		t.Errorf("AdapterID = %d, ждали 42", w.AdapterID())
 	}
 	if err := w.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -139,7 +139,7 @@ func TestTunStartClose(t *testing.T) {
 		t.Errorf("release: вызовов %d, после TUN %v; ждали один, после закрытия TUN",
 			f.released.Load(), f.releasedAfterTUN.Load())
 	}
-	if w.LUID() != 0 {
+	if w.AdapterID() != 0 {
 		t.Error("LUID после Close не нулевой")
 	}
 	if err := w.Close(); err != nil || f.released.Load() != 1 {
@@ -178,7 +178,7 @@ func TestTunSuspendAndRestart(t *testing.T) {
 	if on, _, _, _ := guard.state(); f.routed.Load() || on {
 		t.Errorf("после Suspend: маршруты стоят=%v, защита DNS=%v", f.routed.Load(), on)
 	}
-	if f.tun.closed.Load() != 0 || w.LUID() != 42 {
+	if f.tun.closed.Load() != 0 || w.AdapterID() != 42 {
 		t.Fatal("Suspend снял адаптер")
 	}
 

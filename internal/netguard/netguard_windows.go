@@ -12,24 +12,20 @@ import (
 
 const supported = true
 
-// SelectInterfaces выбирает физический интерфейс маршрута по умолчанию для
-// IPv4 и IPv6 (winsys.DefaultInterface) и ставит их индексы. exclude — LUID
-// своего адаптера, 0 — исключать нечего. Возвращает выбор словами для вывода.
-//
-// Сети нет вовсе — не ошибка: индексы обнуляются, и сокеты ядра откажут
-// с понятным текстом, а не уйдут в туннель. Ошибка — только отказ системы
-// отдать таблицу маршрутов.
-func (g *Guard) SelectInterfaces(exclude uint64) (string, error) {
-	c, err := choose(exclude)
-	if err != nil {
-		return "", err
-	}
-	g.commit(c)
-	return c.String(), nil
-}
+// bindPerFamily — у сокета своя привязка для IPv4 и для IPv6.
+const bindPerFamily = true
 
-// choose — выбор интерфейса без установки: Watch сперва сравнивает его
-// с прежним.
+// Опции привязки — для текста ошибок.
+const (
+	option4 = "IP_UNICAST_IF"
+	option6 = "IPV6_UNICAST_IF"
+)
+
+// setter на Windows — только привязка: Mark здесь не используется.
+func (g *Guard) setter() setter { return setUnicastIf }
+
+// choose выбирает интерфейс (winsys.DefaultInterface) без установки: Watch
+// сперва сравнивает его с прежним. exclude — LUID своего адаптера.
 func choose(exclude uint64) (Choice, error) {
 	v4, ok4, err := winsys.DefaultInterface(false, exclude)
 	if err != nil {
@@ -50,7 +46,7 @@ func choose(exclude uint64) (Choice, error) {
 }
 
 // subscribe — события смены маршрутов и интерфейсов (winsys.WatchNetwork).
-func subscribe(notify func(luid uint64)) (func(), error) {
+func subscribe(notify func(id uint64)) (func(), error) {
 	return winsys.WatchNetwork(notify)
 }
 

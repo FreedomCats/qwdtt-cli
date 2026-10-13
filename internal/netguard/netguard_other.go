@@ -1,23 +1,25 @@
-//go:build !windows
+//go:build !windows && !linux
 
 package netguard
 
 // На других системах Control ничего не делает: datapath, забирающих весь
-// трафик, там пока нет. Linux (SO_BINDTODEVICE) и macOS (IP_BOUND_IF) —
-// этап Э4.
+// трафик, там пока нет. macOS (IP_BOUND_IF) — этап Э4.
 const supported = false
 
-func setUnicastIf(uintptr, bool, uint32) error { return nil }
+const bindPerFamily = true
 
-// SelectInterfaces на других системах выбирать нечего: Control там ничего
-// не делает.
-func (g *Guard) SelectInterfaces(uint64) (string, error) {
-	return "не нужен на этой системе", nil
+const (
+	option4 = "IP_BOUND_IF"
+	option6 = "IPV6_BOUND_IF"
+)
+
+func (g *Guard) setter() setter {
+	return func(uintptr, bool, uint32) error { return nil }
 }
 
-// choose вне Windows выбирать нечего.
+// choose здесь выбирать нечего.
 func choose(uint64) (Choice, error) { return Choice{}, nil }
 
-// subscribe вне Windows событий не даёт: следить за сетью незачем, пока
-// Control ничего не делает.
-func subscribe(func(luid uint64)) (func(), error) { return func() {}, nil }
+// subscribe здесь событий не даёт: следить за сетью незачем, пока Control
+// ничего не делает.
+func subscribe(func(id uint64)) (func(), error) { return func() {}, nil }

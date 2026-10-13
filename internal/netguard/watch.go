@@ -24,7 +24,8 @@ const DefaultMaxWait = 10 * time.Second
 
 // WatchOptions — настройки Watch.
 type WatchOptions struct {
-	// Exclude — LUID своего адаптера на момент события; 0 или nil —
+	// Exclude — свой адаптер на момент события (AdapterID datapath: на
+	// Windows — LUID, на Linux — индекс интерфейса); 0 или nil —
 	// исключать нечего. События этого интерфейса пропускаются, и в выбор он
 	// не попадает: иначе туннель, ставя свои маршруты, перезапускал бы
 	// себя сам.
@@ -104,14 +105,14 @@ func (w *watcher) exclude() uint64 {
 	return w.opts.Exclude()
 }
 
-// event — изменение маршрутов или интерфейса luid.
+// event — изменение маршрутов или интерфейса id (0 — интерфейс неизвестен).
 //
 // Выбор считается и сравнивается под w.mu, как и в fire: иначе событие,
 // посчитавшее выбор до того, как fire поставил новый, сравнило бы старое
 // с новым и открыло бы лишнюю серию — второй перезапуск на одну смену сети.
-func (w *watcher) event(luid uint64) {
+func (w *watcher) event(id uint64) {
 	exclude := w.exclude()
-	if exclude != 0 && luid == exclude {
+	if exclude != 0 && id == exclude {
 		return
 	}
 

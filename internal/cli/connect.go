@@ -503,7 +503,7 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	// Сокеты, привязанные к ушедшему интерфейсу, иначе молчали бы до
 	// watchdog'а.
 	if guard != nil {
-		defer watchNetwork(out, guard, tun.Restart, own.luid)()
+		defer watchNetwork(out, guard, tun.Restart, own.id)()
 	}
 
 	out.header(cfg.Workers, len(cfg.Hashes))
