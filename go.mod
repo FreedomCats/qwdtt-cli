@@ -32,11 +32,15 @@ require (
 // задача C3.
 // jchv/go-webview2 (MIT) — окно капчи на Windows, задача E3. Без cgo,
 // WebView2Loader.dll встроен; тянет за собой jchv/go-winloader (MIT).
+// golang.zx2c4.com/wireguard/windows (MIT) — пакет tunnel/winipcfg: маршруты,
+// адреса, DNS и выбор интерфейса, задача N2 Э2. Импортируется только из
+// *_windows.go, в сборки под другие системы не попадает.
 // Все лицензии с GPL v3 совместимы.
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
 	golang.org/x/term v0.45.0
+	golang.zx2c4.com/wireguard/windows v1.1.1
 )
 
 require (
