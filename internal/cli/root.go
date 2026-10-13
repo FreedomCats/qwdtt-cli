@@ -17,10 +17,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"runtime"
 	"strings"
-	"syscall"
+
+	"qwdtt-cli/internal/captcha"
+	"qwdtt-cli/internal/supervisor"
 )
 
 // Коды возврата. Три, и разделены они намеренно: скрипту важно отличить
@@ -50,6 +51,9 @@ type env struct {
 	// secrets подменяет скрытый ввод. Пусто — спрашиваем у терминала
 	// (см. prompt.go); заполняется в тестах, где терминала нет.
 	secrets func(prompt string) (string, error)
+	// openURL открывает ссылку в браузере — для решателя капчи. Пусто —
+	// ссылка только печатается; так в тестах, где чужие программы не запускают.
+	openURL func(rawURL string) error
 	// lines — буферизованный stdin. Заводится при первом чтении строки.
 	lines *bufio.Reader
 }
@@ -97,12 +101,19 @@ func lookup(name string) *command {
 
 // Main — точка входа CLI. Возвращает код возврата; os.Exit зовёт cmd/tt.
 func Main(args []string, build Build) int {
-	e := &env{stdout: os.Stdout, stderr: os.Stderr, stdin: os.Stdin, build: build}
+	e := &env{
+		stdout:  os.Stdout,
+		stderr:  os.Stderr,
+		stdin:   os.Stdin,
+		build:   build,
+		openURL: captcha.OpenInBrowser,
+	}
 
-	// Ctrl+C и SIGTERM отменяют контекст команды. Второй Ctrl+C с немедленным
-	// выходом и снятие datapath — задача F3; здесь заводится только контекст,
-	// без которого командам нечего передать в ядро.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// Первый Ctrl+C или SIGTERM отменяет контекст команды, второй Ctrl+C
+	// убивает процесс: обработчик снимается по первому сигналу, и следующий
+	// уходит системе (supervisor.Interrupt). Ждать корректной остановки
+	// дважды пользователь не обязан, а на зависшем ядре она бы и не помогла.
+	ctx, stop := supervisor.Interrupt(context.Background())
 	defer stop()
 
 	return run(ctx, e, args)

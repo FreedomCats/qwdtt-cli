@@ -32,6 +32,18 @@ func (f *File) Validate() error {
 	return fmt.Errorf("настройки:\n  %s", strings.Join(problems, "\n  "))
 }
 
+// Validate проверяет один профиль — тот же набор правил, что и у файла.
+// Нужен `tt connect`: флаги командной строки перекрывают поля профиля, и
+// собранное из двух источников значение обязано пройти ту же проверку, что
+// и записанное в файл.
+func (p *Profile) Validate() error {
+	problems := profileProblems(p)
+	if len(problems) == 0 {
+		return nil
+	}
+	return fmt.Errorf("настройки профиля %q:\n  %s", p.Name, strings.Join(problems, "\n  "))
+}
+
 // validateFile собирает все претензии разом.
 //
 // Именно все, а не первую попавшуюся: человек правит файл в редакторе, и

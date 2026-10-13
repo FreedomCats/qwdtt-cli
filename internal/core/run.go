@@ -393,3 +393,33 @@ func captchaPlan(mode string) string {
 		return "AUTO: Go v2 ×2 → WBV Auto ×2 → Go v2 ×1 → ручной режим"
 	}
 }
+
+// ──────────────────────────── проверка DNS ────────────────────────────
+
+// dnsProbeHost — хост VK, по которому проверяется резолвер до запуска ядра.
+// Тот же, с которого начинается путь за кредами (creds.go): если он не
+// резолвится, дальше идти незачем. Android по той же ошибке — «lookup
+// login.vk.ru» — показывает совет сменить DNS (TunnelManager.kt, err_vk_dns).
+const dnsProbeHost = "login.vk.ru"
+
+// ProbeDNS настраивает резолвер по значению dns — тому же, что в Config.DNS, —
+// и проверяет, что он отвечает: резолвит хост VK. Шаг «dns» на схеме
+// подключения закрывает по ней супервизор (architecture.md §06).
+//
+// Резолвер настраивается здесь, а не в Run, чтобы проверка была честной:
+// она идёт через тот же net.DefaultResolver, которым потом пользуется ядро,
+// а не через системный. Run настраивает его ещё раз — это безвредно.
+//
+// Срок ожидания задаёт ctx: сама функция ничего не ограничивает.
+func ProbeDNS(ctx context.Context, dns string) error {
+	setupGlobalResolver(dns)
+
+	addrs, err := net.DefaultResolver.LookupHost(ctx, dnsProbeHost)
+	if err != nil {
+		return fmt.Errorf("резолвер %s не отвечает: %w", goDNSLabel(dns), err)
+	}
+	if len(addrs) == 0 {
+		return fmt.Errorf("резолвер %s не нашёл адресов у %s", goDNSLabel(dns), dnsProbeHost)
+	}
+	return nil
+}

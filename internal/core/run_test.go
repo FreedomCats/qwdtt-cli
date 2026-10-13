@@ -3,8 +3,10 @@ package core
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Настройки проверяются раньше, чем ядро трогает глобальное состояние и сеть,
@@ -135,5 +137,37 @@ func TestEmitPingErrorWithoutCause(t *testing.T) {
 
 	if err := emitPingError(nil); err == nil {
 		t.Fatal("emitPingError(nil) вернул nil")
+	}
+}
+
+// ProbeDNS ходит через тот резолвер, который настроил, и уважает срок из ctx:
+// сервер, который не отвечает, — это ошибка за отведённое время, а не вечное
+// ожидание.
+func TestProbeDNSHonoursContext(t *testing.T) {
+	install(t)
+
+	saved := net.DefaultResolver
+	t.Cleanup(func() { net.DefaultResolver = saved })
+
+	// Сокет, который слушает и молчит: запросы к нему уходят, ответов нет.
+	silent, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket: %v", err)
+	}
+	defer silent.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err = ProbeDNS(ctx, "custom:"+silent.LocalAddr().String())
+	if err == nil {
+		t.Fatal("ProbeDNS через молчащий сервер вернул nil")
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Errorf("ProbeDNS ждал %s, а срок был 300 мс", elapsed)
+	}
+	if !strings.Contains(err.Error(), "резолвер") {
+		t.Errorf("ошибка не объясняет, что не так с резолвером: %v", err)
 	}
 }

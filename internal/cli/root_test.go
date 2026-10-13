@@ -167,7 +167,6 @@ func TestNotImplementedCommands(t *testing.T) {
 		args []string
 		task string
 	}{
-		{[]string{"connect"}, "G2"},
 		{[]string{"ping"}, "G3"},
 		{[]string{"hashes"}, "G3"},
 	}

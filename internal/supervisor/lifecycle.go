@@ -60,6 +60,16 @@ type Options struct {
 	// шагов показать пользователю, известно тому, кто выбрал реализацию.
 	DatapathStage core.Stage
 
+	// ProbeDNS проверяет резолвер до запуска ядра и закрывает шаг «dns» —
+	// единственный шаг линии, который идёт до core.Run (core/events.go, «Кто
+	// какие шаги отправляет»). Отказ означает отказ попытки: без резолвера
+	// ядру не за чем идти, а сеть, где его нет, обычно возвращается — и
+	// следующая попытка это увидит. nil — шаг не проверяется и не отправляется.
+	//
+	// Срок ожидания задаёт сама функция: цикл передаёт ей контекст попытки,
+	// который живёт до её конца. Готовая реализация — core.ProbeDNS.
+	ProbeDNS func(ctx context.Context) error
+
 	// Control — ручка управления ядром: пауза, ответ на капчу, ответ на запрос
 	// TURN-кредов. nil допустим и означает, что управлять не понадобится.
 	Control *core.Control
@@ -236,6 +246,12 @@ func (t *Tunnel) attempt(parent context.Context) (err error) {
 		}
 	}()
 
+	// Резолвер проверяется до тикера watchdog'а: пока ядро не запущено,
+	// молчание в сети — не повод для тревоги.
+	if err := a.probeDNS(); err != nil {
+		return err
+	}
+
 	// Тикер watchdog'а снимается раньше всего остального: он умеет обрывать
 	// попытку, и пережить её ему нельзя.
 	defer t.watchTraffic(ctx, cancel, a)()
@@ -379,6 +395,23 @@ func (a *attempt) emit(ev core.Event) {
 	if conf, ok := ev.(core.EventConfig); ok {
 		a.startDatapath(conf)
 	}
+}
+
+// probeDNS закрывает шаг «dns»: проверяет резолвер, если цикл попросили об
+// этом. Отказ возвращается как причина отказа попытки.
+func (a *attempt) probeDNS() error {
+	probe := a.tunnel.opts.ProbeDNS
+	if probe == nil {
+		return nil
+	}
+
+	a.stage(core.StageDNS, core.StageRunning, "")
+	if err := probe(a.ctx); err != nil {
+		a.stage(core.StageDNS, core.StageFailed, err.Error())
+		return fmt.Errorf("dns: %w", err)
+	}
+	a.stage(core.StageDNS, core.StageOK, "")
+	return nil
 }
 
 // startDatapath поднимает datapath по конфигу WireGuard, который сервер вернул

@@ -826,3 +826,100 @@ func waitErr(t *testing.T, done <-chan error) error {
 		return nil
 	}
 }
+
+// ──────────────────────── шаг dns ────────────────────────
+
+// Проверка резолвера идёт до ядра и закрывает шаг dns; её отказ — отказ
+// попытки: ядро не запускается, назначается задержка, следующая попытка
+// проверяет снова.
+func TestDNSProbeFailureEndsAttemptBeforeCore(t *testing.T) {
+	dp := newFakeDatapath()
+	rec := &recorder{}
+
+	var probes, cores int
+	var mu sync.Mutex
+
+	tun, delays := newTestTunnel(t, Options{
+		Config:      core.Config{Peer: "1.2.3.4:9000", Password: "пароль"},
+		Hashes:      []string{"hash-one"},
+		NewDatapath: func() (datapath.Datapath, error) { return dp, nil },
+		ProbeDNS: func(context.Context) error {
+			mu.Lock()
+			defer mu.Unlock()
+			probes++
+			if probes == 1 {
+				return errors.New("резолвер молчит")
+			}
+			return nil
+		},
+		OnEvent:      rec.onEvent,
+		OnTransition: rec.onTransition,
+	}, func(ctx context.Context, cfg core.Config, sink core.Sink) error {
+		mu.Lock()
+		cores++
+		mu.Unlock()
+		connectTo(ctx, sink)
+		<-ctx.Done()
+		return nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- tun.Run(ctx) }()
+
+	select {
+	case <-dp.started:
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatalf("datapath так и не поднялся:\n%s", rec.dump())
+	}
+	cancel()
+	if err := waitErr(t, done); err != nil {
+		t.Errorf("Run после отмены = %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if probes != 2 || cores != 1 {
+		t.Errorf("проверок dns %d, запусков ядра %d; ожидалось 2 и 1", probes, cores)
+	}
+	want := []core.StageStatus{core.StageRunning, core.StageFailed, core.StageRunning, core.StageOK}
+	if got := rec.stageStatus(core.StageDNS); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("шаг dns = %v, ожидалось %v:\n%s", got, want, rec.dump())
+	}
+	if len(*delays) != 1 {
+		t.Errorf("задержек %d, ожидалась одна — между отказом dns и второй попыткой", len(*delays))
+	}
+	if !rec.seenState(StateReconnecting) {
+		t.Errorf("отказ dns не увёл автомат в переподключение:\n%s", rec.dump())
+	}
+}
+
+// Без ProbeDNS шага dns в выводе нет вовсе: печатать «готов» о том, что не
+// проверялось, нельзя.
+func TestNoDNSStageWithoutProbe(t *testing.T) {
+	dp := newFakeDatapath()
+	rec := &recorder{}
+
+	tun, _ := newTestTunnel(t, Options{
+		Config:      core.Config{Peer: "1.2.3.4:9000", Password: "пароль"},
+		Hashes:      []string{"hash-one"},
+		NewDatapath: func() (datapath.Datapath, error) { return dp, nil },
+		OnEvent:     rec.onEvent,
+	}, func(ctx context.Context, cfg core.Config, sink core.Sink) error {
+		connectTo(ctx, sink)
+		<-ctx.Done()
+		return nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- tun.Run(ctx) }()
+	<-dp.started
+	cancel()
+	_ = waitErr(t, done)
+
+	if got := rec.stageStatus(core.StageDNS); len(got) != 0 {
+		t.Errorf("шаг dns отправлен без проверки: %v", got)
+	}
+}
