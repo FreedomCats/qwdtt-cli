@@ -493,6 +493,7 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 					return "", "", nil, fmt.Errorf("CAPTCHA_WAIT_REQUIRED")
 				}
 
+				emitStage(StageCaptcha, StageRunning, streamID, "")
 				successToken, solveErr := solveCaptchaBySelectedMode(ctx, streamID, attempt+1, captchaErr, client, profile, savedProfile)
 				if solveErr != nil {
 					if errors.Is(solveErr, errCaptchaSessionExpired) {
@@ -503,10 +504,12 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 						continue
 					}
 					log.Printf("[STREAM %d] [Captcha] Solve failed: %v", streamID, solveErr)
+					emitStage(StageCaptcha, StageFailed, streamID, solveErr.Error())
 					globalCaptchaLockout.Store(time.Now().Add(60 * time.Second).Unix())
 					return "", "", nil, fmt.Errorf("CAPTCHA_WAIT_REQUIRED")
 				}
 
+				emitStage(StageCaptcha, StageOK, streamID, "")
 				captchaAttempt := captchaErr.CaptchaAttempt
 				if captchaAttempt == "0" || captchaAttempt == "" {
 					captchaAttempt = "1"
@@ -723,7 +726,7 @@ func requestWebViewCaptcha(streamID int, captchaErr *VkCaptchaError, mode string
 	}
 
 	drainCaptchaResult()
-	fmt.Printf("CAPTCHA_SOLVE|%s|%s|%s\n", mode, captchaErr.RedirectURI, captchaErr.SessionToken)
+	emit(EventCaptchaRequired{Session: streamID, Mode: mode, RedirectURI: captchaErr.RedirectURI, SessionToken: captchaErr.SessionToken})
 
 	waitCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

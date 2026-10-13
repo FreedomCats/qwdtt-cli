@@ -191,7 +191,7 @@ func requestAccountTurnCreds(ctx context.Context, link string, streamID int) (st
 	}
 
 	drainTurnCredsResult()
-	fmt.Printf("VK_AUTH_REQUIRED|%s\n", link)
+	emit(EventVkAuthRequired{Link: link})
 	log.Printf("[STREAM %d] [VK Auth] Waiting for account TURN creds (link=%s...)", streamID, shortLink(link))
 
 	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)

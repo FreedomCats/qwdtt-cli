@@ -138,6 +138,156 @@ func setReuseAddr(network, address string, c syscall.RawConn) error {
 '@
 }
 
+# Замены в апстримном коде (задача B2): маркеры stdout и рамки с конфигом
+# становятся событиями из events.go.
+#
+# Правила ниже — единственное место, где эти правки живут. Прямая правка
+# internal/core/*.go будет затёрта при следующем переносе ядра.
+#
+# Форма правила:
+#   File          — имя файла в go_client;
+#   Count         — сколько раз шаблон обязан совпасть;
+#   Pattern       — regex по тексту с LF; группа 1 обязана захватывать отступ;
+#   Replace       — чем заменить совпадение целиком;
+#   InsertAfter   — строка, дописываемая после совпадения с тем же отступом;
+#   InsertBefore  — то же, но перед совпадением.
+#
+# Count проверяется: если апстрим перепишет строку и шаблон перестанет совпадать,
+# скрипт упадёт. Молча потерять правку хуже, чем упасть.
+$replacements = @(
+    # --- шесть маркеров stdout ---
+    @{
+        File    = 'main.go'
+        Count   = 1
+        Pattern = '(?m)^(\t+)fmt\.Printf\("HASH_CHECK_START\|%d\|%s\\n", i\+1, hash\)$'
+        Replace = '${1}emitHashCheck(i+1, len(hashes), hash, HashCheckRunning, "")'
+    }
+    @{
+        File    = 'main.go'
+        Count   = 1
+        Pattern = '(?m)^(\t+)fmt\.Printf\("HASH_CHECK\|%d\|%s\|%s\|%s\\n", i\+1, hash, status, sanitizeHashCheckMessage\(message\)\)$'
+        Replace = '${1}emitHashCheck(i+1, len(hashes), hash, HashCheckStatus(status), sanitizeHashCheckMessage(message))'
+    }
+    @{
+        File    = 'main.go'
+        Count   = 1
+        Pattern = '(?m)^(\t+)fmt\.Printf\("PING_RESULT\|%d\\n", rtt\)$'
+        Replace = '${1}emitPing(rtt)'
+    }
+    @{
+        File    = 'main.go'
+        Count   = 1
+        Pattern = '(?m)^(\t+)fmt\.Printf\("PING_ERROR\|All hashes failed\. Last error: %v\\n", lastErr\)$'
+        Replace = '${1}emitPingError(lastErr)'
+    }
+    @{
+        File    = 'creds.go'
+        Count   = 1
+        Pattern = '(?m)^(\t+)fmt\.Printf\("CAPTCHA_SOLVE\|%s\|%s\|%s\\n", mode, captchaErr\.RedirectURI, captchaErr\.SessionToken\)$'
+        Replace = '${1}emit(EventCaptchaRequired{Session: streamID, Mode: mode, RedirectURI: captchaErr.RedirectURI, SessionToken: captchaErr.SessionToken})'
+    }
+    @{
+        File    = 'vk_account.go'
+        Count   = 1
+        Pattern = '(?m)^(\t+)fmt\.Printf\("VK_AUTH_REQUIRED\|%s\\n", link\)$'
+        Replace = '${1}emit(EventVkAuthRequired{Link: link})'
+    }
+
+    # --- рамки с конфигом, которые ядро рисовало в stdout ---
+    @{
+        File    = 'main.go'
+        Count   = 1
+        Pattern = '(?m)^(\t+)fmt\.Println\(\)\n\t+fmt\.Println\("╔[^"]*RAW Конфиг[^"]*╗"\)\n(?:[^\n]*\n){3}\t+fmt\.Println\("╚[^"]*╝"\)$'
+        Replace = '${1}emit(EventRawConfig{IP: ip, DNS: dnsCSV, MTU: mtuStr})'
+    }
+    @{
+        File    = 'main.go'
+        Count   = 1
+        Pattern = '(?m)^(\t+)fmt\.Println\(\)\n\t+fmt\.Println\("╔[^"]*WireGuard Конфиг[^"]*╗"\)\n(?:[^\n]*\n){3}\t+fmt\.Println\("╚[^"]*╝"\)$'
+        Replace = '${1}emit(EventConfig{WireGuard: finalConf})'
+    }
+
+    # --- шаги подключения ---
+    # Ядро отправляет только середину схемы: DNS проверяется до его запуска,
+    # а VPN/SOCKS/DONE закрывает супервизор по EventConfig (см. events.go).
+    @{
+        File        = 'main.go'
+        Count       = 1
+        Pattern     = '(?m)^(\t+)log\.Printf\("\[WRAP\] Ключ выведен из пароля, режим RTP AEAD активен"\)$'
+        InsertAfter = 'emitStage(StageWrap, StageOK, 0, "")'
+    }
+    @{
+        File        = 'group.go'
+        Count       = 1
+        Pattern     = '(?m)^(\t+)log\.Printf\("\[ГРУППА #%d\] Креды OK, TURN: %v, %d воркеров", groupID, creds\.TurnURLs, len\(workerIDs\)\)$'
+        InsertAfter = 'emitStage(StageVK, StageOK, 0, "")'
+    }
+    @{
+        File         = 'creds.go'
+        Count        = 1
+        Pattern      = '(?m)^(\t+)successToken, solveErr := solveCaptchaBySelectedMode\(ctx, streamID, attempt\+1, captchaErr, client, profile, savedProfile\)$'
+        InsertBefore = 'emitStage(StageCaptcha, StageRunning, streamID, "")'
+    }
+    @{
+        File        = 'creds.go'
+        Count       = 1
+        Pattern     = '(?m)^(\t+)log\.Printf\("\[STREAM %d\] \[Captcha\] Solve failed: %v", streamID, solveErr\)$'
+        InsertAfter = 'emitStage(StageCaptcha, StageFailed, streamID, solveErr.Error())'
+    }
+    # Единственное место, куда попадают только после успешного решения капчи:
+    # дальше ядро складывает запрос с уже полученным success_token.
+    @{
+        File         = 'creds.go'
+        Count        = 1
+        Pattern      = '(?m)^(\t+)captchaAttempt := captchaErr\.CaptchaAttempt$'
+        InsertBefore = 'emitStage(StageCaptcha, StageOK, streamID, "")'
+    }
+    @{
+        File        = 'session.go'
+        Count       = 1
+        Pattern     = '(?m)^(\t+)log\.Printf\("\[СЕССИЯ #%d\] Relay: %s", sessionID, relay\.LocalAddr\(\)\)$'
+        InsertAfter = 'emitStage(StageTURN, StageOK, sessionID, relay.LocalAddr().String())'
+    }
+    @{
+        File        = 'session.go'
+        Count       = 1
+        Pattern     = '(?m)^(\t+)log\.Printf\("\[ВОРКЕР #%d\] \[ПРЯМОЙ\] Без DTLS, только RTP-obfs AEAD ✓", sessionID\)$'
+        InsertAfter = 'emitStage(StageDTLS, StageOK, sessionID, "без DTLS, только RTP-obfs AEAD")'
+    }
+    @{
+        File        = 'session.go'
+        Count       = 1
+        Pattern     = '(?m)^(\t+)log\.Printf\("\[ВОРКЕР #%d\] \[DTLS\] Рукопожатие \(Handshake\)\.\.\.", sessionID\)$'
+        InsertAfter = 'emitStage(StageDTLS, StageRunning, sessionID, "")'
+    }
+    @{
+        File         = 'session.go'
+        Count        = 1
+        Pattern      = '(?m)^(\t+)return false, fmt\.Errorf\("DTLS хендшейк: %w", err\)$'
+        InsertBefore = 'emitStage(StageDTLS, StageFailed, sessionID, err.Error())'
+    }
+    @{
+        File        = 'session.go'
+        Count       = 1
+        Pattern     = '(?m)^(\t+)log\.Printf\("\[ВОРКЕР #%d\] \[DTLS\] Соединение установлено ✓", sessionID\)$'
+        InsertAfter = 'emitStage(StageDTLS, StageOK, sessionID, "")'
+    }
+    @{
+        File        = 'session.go'
+        Count       = 1
+        Pattern     = '(?m)^(\t+)log\.Printf\("\[ВОРКЕР #%d\] \[READY\] Туннель готов к работе ✓", sessionID\)$'
+        InsertAfter = 'emitStage(StageWorkers, StageOK, sessionID, "")'
+    }
+
+    # --- счётчики трафика ---
+    @{
+        File        = 'stats.go'
+        Count       = 1
+        Pattern     = '(?m)^(\t+)log\.Printf\("\[СТАТИСТИКА\] Активных: %d \| Трафик: %\.2f МБ \| ↓%\.2f МБ / ↑%\.2f МБ", active, totalMB, downMB, upMB\)$'
+        InsertAfter = 'emit(EventStats{ActiveWorkers: active, BytesUp: up, BytesDown: down})'
+    }
+)
+
 # ================================================================================
 
 function Get-UpstreamVersion {
@@ -168,8 +318,37 @@ function Convert-CoreFile {
         return $fileOverrides[$Name]
     }
 
+    # Шаблоны замен написаны под LF: с CRLF не совпал бы ни один якорь строки.
+    $Text = $Text -replace "`r`n", "`n"
+
     # package main -> package core
     $Text = [regex]::Replace($Text, '(?m)^package\s+main\s*$', 'package core')
+
+    foreach ($rule in $replacements) {
+        if ($rule.File -ne $Name) { continue }
+
+        $found = [regex]::Matches($Text, $rule.Pattern)
+        if ($found.Count -ne $rule.Count) {
+            throw @"
+Замена в $Name не сошлась: ожидалось совпадений $($rule.Count), найдено $($found.Count).
+Апстрим изменил этот код — поправьте шаблон в scripts/vendor-core.ps1.
+Шаблон: $($rule.Pattern)
+"@
+        }
+
+        # Группа 1 — отступ совпавшей строки: вставка встаёт на тот же уровень.
+        if ($rule.ContainsKey('Replace')) {
+            $replacement = $rule.Replace
+        } elseif ($rule.ContainsKey('InsertAfter')) {
+            $replacement = '${0}' + "`n" + '${1}' + $rule.InsertAfter
+        } elseif ($rule.ContainsKey('InsertBefore')) {
+            $replacement = '${1}' + $rule.InsertBefore + "`n" + '${0}'
+        } else {
+            throw "Правило для $Name не задаёт ни Replace, ни InsertAfter, ни InsertBefore."
+        }
+
+        $Text = [regex]::Replace($Text, $rule.Pattern, $replacement)
+    }
 
     if ($buildTags.ContainsKey($Name)) {
         $Text = $buildTags[$Name] + "`n`n" + $Text
@@ -185,6 +364,15 @@ $sourceFiles = Get-ChildItem -LiteralPath $source -Filter '*.go' -File | Sort-Ob
 
 if ($sourceFiles.Count -eq 0) {
     throw "В $source нет файлов *.go."
+}
+
+# Проверка счётчиков внутри Convert-CoreFile не сработает, если апстрим просто
+# переименовал файл: правило тогда не выполнится ни разу и пропадёт молча.
+$sourceNames = @($sourceFiles | ForEach-Object { $_.Name })
+foreach ($rule in $replacements) {
+    if ($rule.File -notin $sourceNames) {
+        throw "Правило замены ссылается на $($rule.File), которого нет в $source."
+    }
 }
 
 $header = @(

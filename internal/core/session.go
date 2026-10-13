@@ -267,6 +267,7 @@ func RunSession(
 	getStreamCache(creds.CacheStreamID).errorCount.Store(0)
 
 	log.Printf("[СЕССИЯ #%d] Relay: %s", sessionID, relay.LocalAddr())
+	emitStage(StageTURN, StageOK, sessionID, relay.LocalAddr().String())
 
 	sessCtx, sessCancel := context.WithCancel(ctx)
 	defer sessCancel()
@@ -311,6 +312,7 @@ func RunSession(
 			writeState: obfsWriteState,
 		}
 		log.Printf("[ВОРКЕР #%d] [ПРЯМОЙ] Без DTLS, только RTP-obfs AEAD ✓", sessionID)
+		emitStage(StageDTLS, StageOK, sessionID, "без DTLS, только RTP-obfs AEAD")
 	} else {
 		// ─── Классический режим: DTLS поверх RTP-obfs (обратная совместимость) ───
 		pipeA, pipeB := connutil.AsyncPacketPipe()
@@ -437,6 +439,7 @@ func RunSession(
 
 		hctx, hcancel := context.WithTimeout(sessCtx, 50*time.Second)
 		log.Printf("[ВОРКЕР #%d] [DTLS] Рукопожатие (Handshake)...", sessionID)
+		emitStage(StageDTLS, StageRunning, sessionID, "")
 		err = dtlsConn.HandshakeContext(hctx)
 		hcancel()
 		<-handshakeSem // RELEASE SEMAPHORE IMMEDIATELY AFTER HANDSHAKE
@@ -449,9 +452,11 @@ func RunSession(
 					return false, fmt.Errorf("WRAP_AUTH_TIMEOUT: DTLS timeout, пароль/WRAP не подтверждён")
 				}
 			}
+			emitStage(StageDTLS, StageFailed, sessionID, err.Error())
 			return false, fmt.Errorf("DTLS хендшейк: %w", err)
 		}
 		log.Printf("[ВОРКЕР #%d] [DTLS] Соединение установлено ✓", sessionID)
+		emitStage(StageDTLS, StageOK, sessionID, "")
 		activeConn = dtlsConn
 	}
 	defer activeConn.Close()
@@ -508,6 +513,7 @@ func RunSession(
 	}
 
 	log.Printf("[ВОРКЕР #%d] [READY] Туннель готов к работе ✓", sessionID)
+	emitStage(StageWorkers, StageOK, sessionID, "")
 
 	// Регистрация в диспетчере
 	slot := &WorkerSlot{

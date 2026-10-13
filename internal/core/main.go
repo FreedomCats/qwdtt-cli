@@ -58,7 +58,7 @@ func drainCaptchaResult() {
 func runHashChecks(ctx context.Context, hashes []string) {
 	log.Printf("[CHECK] Проверка VK-хешей: %d", len(hashes))
 	for i, hash := range hashes {
-		fmt.Printf("HASH_CHECK_START|%d|%s\n", i+1, hash)
+		emitHashCheck(i+1, len(hashes), hash, HashCheckRunning, "")
 		checkCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		_, _, turnURLs, err := GetCreds(checkCtx, hash, 9000+i)
 		cancel()
@@ -68,7 +68,7 @@ func runHashChecks(ctx context.Context, hashes []string) {
 			status = "ok"
 			message = fmt.Sprintf("TURN urls=%d", len(turnURLs))
 		}
-		fmt.Printf("HASH_CHECK|%d|%s|%s|%s\n", i+1, hash, status, sanitizeHashCheckMessage(message))
+		emitHashCheck(i+1, len(hashes), hash, HashCheckStatus(status), sanitizeHashCheckMessage(message))
 	}
 }
 
@@ -295,11 +295,11 @@ func main() {
 				lastErr = fmt.Errorf("RunPing hash %d: %v", i, err)
 				continue
 			}
-			fmt.Printf("PING_RESULT|%d\n", rtt)
+			emitPing(rtt)
 			os.Exit(0)
 		}
 		// Если все хеши провалились
-		fmt.Printf("PING_ERROR|All hashes failed. Last error: %v\n", lastErr)
+		emitPingError(lastErr)
 		os.Exit(1)
 	}
 
@@ -355,6 +355,7 @@ func main() {
 	}
 	log.Printf("[КЛИЕНТ] WRAP: %s", wrapStatus)
 	log.Printf("[WRAP] Ключ выведен из пароля, режим RTP AEAD активен")
+	emitStage(StageWrap, StageOK, 0, "")
 	log.Printf("[КЛИЕНТ] Device ID: %s", *deviceID)
 	log.Printf("[КЛИЕНТ] Captcha: %s", captchaStatus)
 	log.Println("[КЛИЕНТ] ═══════════════════════════════════════")
@@ -392,12 +393,7 @@ func main() {
 					return
 				}
 				ip, dnsCSV, mtuStr := parts[0], parts[1], parts[2]
-				fmt.Println()
-				fmt.Println("╔══════════════ RAW Конфиг ══════════════╗")
-				fmt.Printf("║ %-40s ║\n", fmt.Sprintf("IP = %s", ip))
-				fmt.Printf("║ %-40s ║\n", fmt.Sprintf("DNS = %s", dnsCSV))
-				fmt.Printf("║ %-40s ║\n", fmt.Sprintf("MTU = %s", mtuStr))
-				fmt.Println("╚══════════════════════════════════════╝")
+				emit(EventRawConfig{IP: ip, DNS: dnsCSV, MTU: mtuStr})
 
 				if *tunFdSock == "" {
 					log.Println("[RAW] Ошибка: -tun-fd-sock не указан")
@@ -440,12 +436,7 @@ func main() {
 				}
 				finalConf = strings.Join(newLines, "\n")
 			}
-			fmt.Println()
-			fmt.Println("╔══════════════ WireGuard Конфиг ══════════════╗")
-			for _, line := range strings.Split(finalConf, "\n") {
-				fmt.Printf("║ %-44s ║\n", line)
-			}
-			fmt.Println("╚══════════════════════════════════════════════╝")
+			emit(EventConfig{WireGuard: finalConf})
 			if err := os.WriteFile("wg-turn.conf", []byte(finalConf+"\n"), 0600); err != nil {
 				log.Printf("[КОНФИГ] Ошибка сохранения: %v", err)
 			} else {

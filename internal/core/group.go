@@ -74,6 +74,7 @@ func WorkerGroup(
 	}
 
 	log.Printf("[ГРУППА #%d] Креды OK, TURN: %v, %d воркеров", groupID, creds.TurnURLs, len(workerIDs))
+	emitStage(StageVK, StageOK, 0, "")
 
 	var configRequestInFlight int32
 	var wg sync.WaitGroup
