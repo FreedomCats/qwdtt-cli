@@ -68,7 +68,7 @@ func TestSetupDNSGuardAllowLeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("с -allow-leak отказ: %v", err)
 	}
-	if setup.guard != nil || setup.locked != nil {
+	if setup.guard != nil || setup.killSwitch != nil {
 		t.Errorf("защита %T, а сессии нет", setup.guard)
 	}
 	setup.close()
@@ -99,7 +99,7 @@ func TestSetupDNSGuardOpens(t *testing.T) {
 	if !strings.Contains(stdout.String(), "защита DNS") {
 		t.Errorf("нет строки о защите DNS: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "kill-switch выключен (-no-kill-switch)") || setup.locked != nil {
+	if !strings.Contains(stdout.String(), "kill-switch выключен (-no-kill-switch)") || setup.killSwitch != nil {
 		t.Errorf("нет строки о выключенном kill-switch: %q", stdout.String())
 	}
 

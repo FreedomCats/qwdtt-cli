@@ -35,8 +35,9 @@ var prepareSystemDNS = systemDNSReady
 type dnsGuardSetup struct {
 	// guard — защита для datapath; nil — без неё (-allow-leak при отказе).
 	guard datapath.DNSGuard
-	// locked — стоит ли kill-switch, для супервизора; nil — его нет.
-	locked func() bool
+	// killSwitch — kill-switch, если он включился: признак «закрыто» для
+	// супервизора и окно ручной капчи; nil — его нет.
+	killSwitch *killSwitchGuard
 	// close закрывает сессию; правила уходят вместе с ней.
 	close func()
 }
@@ -91,7 +92,7 @@ func setupDNSGuard(out *printer, warn io.Writer, allowLeak bool, killSwitchOff s
 		return setup, nil
 	}
 	out.line("kill-switch: пока туннель не поднят, трафик системы заблокирован")
-	setup.guard, setup.locked = ks, ks.Locked
+	setup.guard, setup.killSwitch = ks, ks
 	return setup, nil
 }
 

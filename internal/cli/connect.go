@@ -410,8 +410,13 @@ func requirementProblems(req datapath.Requirements) []string {
 //
 // Сообщения обоих уходят в stderr через out.aside, чтобы статусная строка
 // не встала посреди приглашения; консольный читает ответ со stdin команды.
-func captchaSolver(e *env, out *printer) captcha.Solver {
-	console := captcha.NewManual(captcha.ManualOptions{In: e.stdin, Out: out.aside(e.stderr), Open: e.openURL})
+// При kill-switch (ks не nil) консольный снимает его на время капчи: её
+// страница открывается в браузере пользователя (plan-e3.md, K4).
+func captchaSolver(e *env, out *printer, ks *killSwitchGuard) captcha.Solver {
+	var console captcha.Solver = captcha.NewManual(captcha.ManualOptions{In: e.stdin, Out: out.aside(e.stderr), Open: e.openURL})
+	if ks != nil {
+		console = killSwitchCaptcha{Solver: console, guard: ks}
+	}
 
 	if e.captchaWindow == nil {
 		return console
@@ -487,21 +492,21 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	// тоже до сети и на весь сеанс: отказ в Start супервизор принял бы за
 	// сбой попытки и ушёл бы в переподключения. Kill-switch закрывает
 	// систему уже здесь, до первой попытки (plan-e3.md, решение 5).
-	var killSwitch func() bool
+	var killSwitch *killSwitchGuard
 	if req.DNSGuard {
 		setup, err := setupDNSGuard(out, e.stderr, plan.allowLeak, plan.killSwitchOff)
 		if err != nil {
 			return err
 		}
 		defer setup.close()
-		plan.dnsGuard, killSwitch = setup.guard, setup.locked
+		plan.dnsGuard, killSwitch = setup.guard, setup.killSwitch
 	}
 
 	// Ручка ядра создаётся до запуска и раздаётся обоим, кому она нужна:
 	// циклу подключения и диспетчеру капчи, который отвечает через неё.
 	ctrl := core.NewControl()
 
-	dispatcher := captcha.New(captcha.Options{Solver: captchaSolver(e, out), Control: ctrl, Logf: out.logf})
+	dispatcher := captcha.New(captcha.Options{Solver: captchaSolver(e, out, killSwitch), Control: ctrl, Logf: out.logf})
 	defer dispatcher.Close()
 
 	cfg := plan.cfg
@@ -542,7 +547,7 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 		},
 		OnTransition: out.transition,
 		Logf:         out.logf,
-		KillSwitch:   killSwitch,
+		KillSwitch:   killSwitch.lockedFunc(),
 	})
 	if err != nil {
 		return err

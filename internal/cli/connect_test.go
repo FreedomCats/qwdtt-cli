@@ -416,11 +416,16 @@ func TestCaptchaSolverChoice(t *testing.T) {
 		name       string
 		window     func(io.Writer) (captcha.Solver, error)
 		ssh        bool
+		killSwitch bool
 		wantWindow bool
 		wantWarn   bool
 	}{
 		{name: "окно есть", window: window, wantWindow: true},
+		// Окно WebView2 пойдёт через прокси tt (W2) — kill-switch для него
+		// не снимается, обёртки нет.
+		{name: "окно есть, kill-switch", window: window, killSwitch: true, wantWindow: true},
 		{name: "окна не заводили", window: nil},
+		{name: "окна не заводили, kill-switch", window: nil, killSwitch: true},
 		{name: "нет Runtime", window: missing, wantWarn: true},
 		{name: "не Windows", window: unsupported},
 		{name: "по SSH", window: window, ssh: true},
@@ -435,7 +440,19 @@ func TestCaptchaSolverChoice(t *testing.T) {
 
 			var out, errOut strings.Builder
 			e := &env{stdout: &out, stderr: &errOut, stdin: strings.NewReader(""), captchaWindow: tc.window}
-			solver := captchaSolver(e, newPrinter(&out, false))
+			var ks *killSwitchGuard
+			if tc.killSwitch {
+				ks = &killSwitchGuard{session: &fakeLockdownSession{}, logf: func(string, ...any) {}}
+			}
+			solver := captchaSolver(e, newPrinter(&out, false), ks)
+			if wrapped, ok := solver.(killSwitchCaptcha); ok {
+				if !tc.killSwitch || wrapped.guard != ks {
+					t.Errorf("обёртка kill-switch: %+v, kill-switch: %v", wrapped, tc.killSwitch)
+				}
+				solver = wrapped.Solver
+			} else if tc.killSwitch && !tc.wantWindow {
+				t.Errorf("консольный %T не снимает kill-switch на время капчи", solver)
+			}
 
 			_, isWindow := solver.(windowSolver)
 			if isWindow != tc.wantWindow {
