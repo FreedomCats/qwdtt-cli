@@ -33,8 +33,9 @@ const dnsGuardTable = "tt"
 // локальной сети (маршрут конкретнее /1) иначе ушли бы мимо туннеля.
 //
 // Таблица и цепочки создаются один раз (OpenDNSGuard), а правила ставятся и
-// снимаются по ходу (Enable, Disable): отказ так узнаётся до подключения, а
-// не посреди него.
+// снимаются по ходу (Enable, Lockdown, Disable): отказ так узнаётся до
+// подключения, а не посреди него. В тех же цепочках живёт и kill-switch
+// (plan-e3.md, K2) — набор «закрыто», см. Lockdown.
 type DNSGuard struct {
 	mu        sync.Mutex
 	conn      *nftables.Conn
@@ -43,7 +44,17 @@ type DNSGuard struct {
 	forward   *nftables.Chain
 	mark      uint32
 	blockIPv6 bool
+	state     guardState
 }
+
+// guardState — какой набор правил стоит в таблице.
+type guardState int
+
+const (
+	guardOpen     guardState = iota // правил нет: ничего не запрещено
+	guardTunnel                     // туннель поднят: защита DNS (Enable)
+	guardLockdown                   // закрыто: kill-switch (Lockdown)
+)
 
 // OpenDNSGuard создаёт таблицу inet tt с пустыми цепочками; правил ещё
 // нет. mark — метка сокетов tt, им DNS разрешён к любым адресам. Нужны
@@ -125,30 +136,42 @@ func (g *DNSGuard) BlockIPv6(block bool) {
 
 // Enable ставит правила: DNS — только к резолверам dns. Прежние правила
 // заменяются одним пакетом nftables, так что повторный вызов безвреден, а
-// на отказе ядро не применяет ничего; правила тогда снимаются, чтобы не
-// осталось и старых.
+// на отказе ядро не применяет ничего. Тогда правила снимаются, чтобы не
+// осталось и старых, — кроме набора «закрыто»: он строже защиты DNS, и
+// открывать систему из-за отказа незачем.
 func (g *DNSGuard) Enable(dns []netip.Addr) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	err := g.applyLocked(guardTunnel, dnsGuardRules(dns, g.blockIPv6, false), dnsGuardRules(dns, g.blockIPv6, true))
+	if err == nil || g.state == guardLockdown {
+		return err
+	}
+	return errors.Join(err, g.disableLocked())
+}
+
+// applyLocked заменяет правила цепочек одним пакетом и при успехе
+// запоминает состояние state.
+func (g *DNSGuard) applyLocked(state guardState, output, forward []guardRule) error {
 	if g.conn == nil {
 		return errors.New("защита DNS: таблица nftables закрыта")
 	}
 	g.conn.FlushTable(g.table)
-	for _, r := range dnsGuardRules(dns, g.blockIPv6, false) {
+	for _, r := range output {
 		g.conn.AddRule(&nftables.Rule{Table: g.table, Chain: g.output, Exprs: r.exprs(g.mark)})
 	}
-	for _, r := range dnsGuardRules(dns, g.blockIPv6, true) {
+	for _, r := range forward {
 		g.conn.AddRule(&nftables.Rule{Table: g.table, Chain: g.forward, Exprs: r.exprs(g.mark)})
 	}
 	if err := g.conn.Flush(); err != nil {
-		err = fmt.Errorf("защита DNS: правила nftables: %w", err)
-		return errors.Join(err, g.disableLocked())
+		return fmt.Errorf("защита DNS: правила nftables: %w", err)
 	}
+	g.state = state
 	return nil
 }
 
 // Disable снимает правила; таблица и цепочки остаются пустыми и ничего не
-// запрещают. Повторный вызов безвреден.
+// запрещают — ни DNS, ни (после Lockdown) прочий трафик. Повторный вызов
+// безвреден.
 func (g *DNSGuard) Disable() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -163,6 +186,7 @@ func (g *DNSGuard) disableLocked() error {
 	if err := g.conn.Flush(); err != nil {
 		return fmt.Errorf("защита DNS: снятие правил nftables: %w", err)
 	}
+	g.state = guardOpen
 	return nil
 }
 
@@ -184,12 +208,15 @@ func (g *DNSGuard) Close() error {
 // guardRule — одно правило защиты в виде, удобном для проверки; exprs
 // переводит его в выражения nftables. Условия складываются по «и».
 type guardRule struct {
-	mark     bool       // сокет tt: meta mark == метка
-	loopback bool       // oifname "lo"
-	family   byte       // unix.NFPROTO_IPV4 или NFPROTO_IPV6; 0 — любое
-	daddr    netip.Addr // адрес назначения; пустой — любой
-	proto    byte       // unix.IPPROTO_UDP или IPPROTO_TCP с портом 53; 0 — любой трафик
-	accept   bool       // иначе drop
+	mark     bool         // сокет tt: meta mark == метка
+	loopback bool         // oifname "lo"
+	family   byte         // unix.NFPROTO_IPV4 или NFPROTO_IPV6; 0 — любое (при daddr обязательно)
+	daddr    netip.Prefix // адрес или подсеть назначения; пустой — любой
+	proto    byte         // unix.IPPROTO_*; 0 — любой
+	sport    uint16       // порт источника UDP или TCP; 0 — любой
+	dport    uint16       // порт назначения UDP или TCP; 0 — любой
+	ndp      bool         // ICMPv6 типов 133–137: RS, RA, NS, NA, Redirect
+	accept   bool         // иначе drop
 }
 
 // dnsGuardRules — правила цепочки по порядку: сначала разрешения, потом
@@ -219,11 +246,12 @@ func dnsGuardRules(dns []netip.Addr, blockIPv6, forward bool) []guardRule {
 			family = unix.NFPROTO_IPV6
 		}
 		for _, p := range protos {
-			rules = append(rules, guardRule{family: family, daddr: addr, proto: p, accept: true})
+			rules = append(rules, guardRule{family: family, daddr: netip.PrefixFrom(addr, addr.BitLen()),
+				proto: p, dport: 53, accept: true})
 		}
 	}
 	for _, p := range protos {
-		rules = append(rules, guardRule{proto: p})
+		rules = append(rules, guardRule{proto: p, dport: 53})
 	}
 	return rules
 }
@@ -246,23 +274,51 @@ func (r guardRule) exprs(mark uint32) []expr.Any {
 	if r.daddr.IsValid() {
 		// Адрес назначения: смещение 16 в заголовке IPv4, 24 — в IPv6.
 		offset, size := uint32(16), uint32(4)
-		if r.daddr.Is6() {
+		if r.daddr.Addr().Is6() {
 			offset, size = 24, 16
 		}
-		match(&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: offset, Len: size},
-			r.daddr.AsSlice())
+		e = append(e, &expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: offset, Len: size})
+		if !r.daddr.IsSingleIP() {
+			// Подсеть: адрес сперва накрывается маской.
+			e = append(e, &expr.Bitwise{SourceRegister: 1, DestRegister: 1, Len: size,
+				Mask: prefixMask(r.daddr), Xor: make([]byte, size)})
+		}
+		e = append(e, &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: r.daddr.Masked().Addr().AsSlice()})
 	}
 	if r.proto != 0 {
 		match(&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1}, []byte{r.proto})
-		// Порт назначения — смещение 2 и в UDP, и в TCP.
+	}
+	// Порты — смещения 0 и 2 и в UDP, и в TCP.
+	if r.sport != 0 {
+		match(&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseTransportHeader, Offset: 0, Len: 2},
+			binaryutil.BigEndian.PutUint16(r.sport))
+	}
+	if r.dport != 0 {
 		match(&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseTransportHeader, Offset: 2, Len: 2},
-			binaryutil.BigEndian.PutUint16(53))
+			binaryutil.BigEndian.PutUint16(r.dport))
+	}
+	if r.ndp {
+		match(&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1}, []byte{unix.IPPROTO_ICMPV6})
+		// Тип ICMPv6 — первый байт заголовка.
+		e = append(e,
+			&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseTransportHeader, Offset: 0, Len: 1},
+			&expr.Cmp{Op: expr.CmpOpGte, Register: 1, Data: []byte{133}},
+			&expr.Cmp{Op: expr.CmpOpLte, Register: 1, Data: []byte{137}})
 	}
 	verdict := expr.VerdictDrop
 	if r.accept {
 		verdict = expr.VerdictAccept
 	}
 	return append(e, &expr.Verdict{Kind: verdict})
+}
+
+// prefixMask — маска подсети p в байтах сети.
+func prefixMask(p netip.Prefix) []byte {
+	mask := make([]byte, p.Addr().BitLen()/8)
+	for i := 0; i < p.Bits(); i++ {
+		mask[i/8] |= 0x80 >> (i % 8)
+	}
+	return mask
 }
 
 // ifname — имя интерфейса так, как его сравнивает ядро: IFNAMSIZ байт,

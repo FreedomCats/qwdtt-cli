@@ -215,6 +215,116 @@ func TestDNSGuardNetns(t *testing.T) {
 	}
 }
 
+// Kill-switch на настоящих nftables: в «закрыто» публичный адрес — EPERM,
+// локальная сеть, loopback, сокеты tt и DHCP проходят, DNS не проходит и к
+// локальной сети; переходы в защиту DNS и обратно — без пустой таблицы.
+// Локальная сеть — 192.168.1.5 (уходит по маршруту по умолчанию) и шлюз
+// контейнера (сеть docker — 172.16/12).
+func TestKillSwitchNetns(t *testing.T) {
+	if os.Getenv(netnsEnv) != "1" || os.Geteuid() != 0 {
+		t.Skipf("меняет сеть: только в контейнере, %s=1 и root", netnsEnv)
+	}
+	const mark = 0x1074
+	g, err := OpenDNSGuard(mark)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+
+	if err := g.Lockdown(); err != nil {
+		t.Fatal(err)
+	}
+	expectSend(t, "udp", "198.51.100.1:443", 0, unix.EPERM)
+	expectSend(t, "udp", "198.51.100.1:443", mark, nil)
+	expectSend(t, "udp", "192.168.1.5:443", 0, nil)
+	expectSend(t, "udp", "192.168.1.5:53", 0, unix.EPERM)
+	expectSend(t, "udp", "127.0.0.1:53", 0, nil)
+	expectSend(t, "udp", "224.0.0.251:5353", 0, nil)
+	expectSendFrom(t, 68, "198.51.100.1:67", nil)
+	expectSendFrom(t, 69, "198.51.100.1:67", unix.EPERM)
+	gw := defaultGateway(t)
+	expectTCP(t, gw, 0, true)
+	expectTCP(t, gw, mark, false)
+	if err := g.Lockdown(); err != nil {
+		t.Errorf("повторный Lockdown: %v", err)
+	}
+
+	if ipv6Dummy(t) {
+		expectSend(t, "udp", "[2001:db8:1::5]:443", 0, unix.EPERM)
+		expectSend(t, "udp", "[2001:db8:1::5]:443", mark, nil)
+		expectSend(t, "udp", "[::1]:443", 0, nil)
+		expectSend(t, "udp", "[ff02::fb%ttdns0]:5353", 0, nil)
+		expectICMPv6(t, "2001:db8:1::5", 128, unix.EPERM) // echo request
+		expectICMPv6(t, "2001:db8:1::5", 135, nil)        // neighbor solicitation
+	}
+
+	// Из «закрыто» в защиту DNS: публичный адрес открыт, DNS — только
+	// резолверу туннеля.
+	if err := g.Enable([]netip.Addr{netip.MustParseAddr("192.0.2.53")}); err != nil {
+		t.Fatal(err)
+	}
+	expectSend(t, "udp", "198.51.100.1:443", 0, nil)
+	expectSend(t, "udp", "198.51.100.1:53", 0, unix.EPERM)
+	expectSend(t, "udp", "192.0.2.53:53", 0, nil)
+
+	// И обратно: резолвер туннеля закрыт вместе со всем.
+	if err := g.Lockdown(); err != nil {
+		t.Fatal(err)
+	}
+	expectSend(t, "udp", "192.0.2.53:53", 0, unix.EPERM)
+	expectSend(t, "udp", "198.51.100.1:443", 0, unix.EPERM)
+
+	if err := g.Disable(); err != nil {
+		t.Fatal(err)
+	}
+	expectSend(t, "udp", "198.51.100.1:443", 0, nil)
+	expectSend(t, "udp", "192.168.1.5:53", 0, nil)
+
+	if err := g.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Lockdown(); err == nil {
+		t.Error("Lockdown после Close прошёл")
+	}
+}
+
+// expectSendFrom отправляет пакет UDP на address с порта источника port.
+func expectSendFrom(t *testing.T, port int, address string, want error) {
+	t.Helper()
+	d := &net.Dialer{LocalAddr: &net.UDPAddr{Port: port}}
+	conn, err := d.Dial("udp4", address)
+	if err == nil {
+		_, err = conn.Write([]byte("tt"))
+		conn.Close()
+	}
+	switch {
+	case want == nil && err != nil:
+		t.Errorf("udp :%d → %s: %v, ждали успех", port, address, err)
+	case want != nil && !errors.Is(err, want):
+		t.Errorf("udp :%d → %s: %v, ждали %v", port, address, err, want)
+	}
+}
+
+// expectICMPv6 отправляет на address сообщение ICMPv6 типа typ (контрольную
+// сумму считает ядро); тело не важно — пакет проверяется на выходе.
+func expectICMPv6(t *testing.T, address string, typ byte, want error) {
+	t.Helper()
+	conn, err := net.ListenPacket("ip6:ipv6-icmp", "::")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	msg := make([]byte, 24)
+	msg[0] = typ
+	_, err = conn.WriteTo(msg, &net.IPAddr{IP: net.ParseIP(address)})
+	switch {
+	case want == nil && err != nil:
+		t.Errorf("icmpv6 тип %d → %s: %v, ждали успех", typ, address, err)
+	case want != nil && !errors.Is(err, want):
+		t.Errorf("icmpv6 тип %d → %s: %v, ждали %v", typ, address, err, want)
+	}
+}
+
 // expectSend отправляет пакет на address сокетом с меткой mark (0 — без
 // неё) и сверяет ошибку отправки с want: отброшенный на выходе пакет UDP —
 // EPERM при отправке.
