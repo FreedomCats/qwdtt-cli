@@ -2,6 +2,9 @@ package winsys
 
 import (
 	"net/netip"
+	"runtime"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tailscale/wf"
@@ -117,5 +120,50 @@ func TestDNSGuardSession(t *testing.T) {
 	}
 	if err := g.Enable(dns); err == nil {
 		t.Error("Enable после Close принят")
+	}
+}
+
+// Правила ставятся, пока идёт сборка мусора. У tailscale/wf арена отдавала
+// невыровненную память, и запись структуры с указателями во время разметки
+// роняла процесс: fatal error «bulkBarrierPreWrite: unaligned arguments»,
+// recover её не ловит (найдено живым прогоном S1, на первом же Enable).
+//
+// Выровнено ли — решает длина идентификатора приложения в правиле «свой
+// процесс», то есть длина пути к exe. У tt.exe путь постоянный, а у
+// тестового бинаря каталог go-build каждый раз свой, поэтому длины
+// перебираются: дополнение в 0–7 байт даёт и невыровненный случай.
+// Без исправления в форке тест падает за доли секунды.
+func TestDNSGuardUnderGC(t *testing.T) {
+	g, err := OpenDNSGuard()
+	if err != nil {
+		t.Skipf("сессия WFP не открылась (нужны права администратора): %v", err)
+	}
+	defer g.Close()
+
+	var stop atomic.Bool
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for !stop.Load() {
+			runtime.GC()
+		}
+	}()
+	defer func() {
+		stop.Store(true)
+		<-done
+	}()
+
+	appID := g.appID
+	dns := []netip.Addr{netip.MustParseAddr("1.1.1.1"), netip.MustParseAddr("1.0.0.1")}
+	for i := range 50 {
+		for pad := range 8 {
+			g.appID = appID + strings.Repeat("x", pad)
+			if err := g.Enable(dns); err != nil {
+				t.Fatalf("Enable %d, дополнение %d: %v", i, pad, err)
+			}
+		}
+	}
+	if err := g.Disable(); err != nil {
+		t.Fatal(err)
 	}
 }
