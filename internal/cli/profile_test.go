@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/FreedomCats/qwdtt-cli/internal/config"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
 )
 
 // Значения, которых в выводе быть не должно ни при каких обстоятельствах.
@@ -29,6 +30,8 @@ type profileEnv struct {
 	tty bool
 	// pipe — скрытого ввода нет: секреты читаются из stdin, как в конвейере.
 	pipe bool
+	// hashCheck — подмена проверки хешей (меню).
+	hashCheck func(ctx context.Context, cfg core.Config, sink core.Sink) error
 }
 
 func newProfileEnv(t *testing.T) *profileEnv {
@@ -83,6 +86,7 @@ func (p *profileEnv) run(args ...string) (code int, stdout, stderr string) {
 	if p.pipe {
 		e.secrets = nil
 	}
+	e.hashCheck = p.hashCheck
 
 	args = append(args, "-config", p.configPath())
 	code = run(context.Background(), e, args)

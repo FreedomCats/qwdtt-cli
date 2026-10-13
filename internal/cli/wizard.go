@@ -78,7 +78,7 @@ func (m *menu) wizard(path string, file *config.File) error {
 		}
 	}
 	if secrets.hashes == "" {
-		if secrets.hashes, err = m.askCallLinks(); err != nil {
+		if secrets.hashes, err = m.askCallLinks(false); err != nil {
 			return err
 		}
 	}
@@ -252,12 +252,20 @@ func (m *menu) askPassword() (string, error) {
 }
 
 // askCallLinks спрашивает ссылки на звонки VK. Скрыто: по ссылке в звонок
-// зайдёт кто угодно, это такой же секрет, как пароль.
-func (m *menu) askCallLinks() (string, error) {
+// зайдёт кто угодно, это такой же секрет, как пароль. optional — пустой
+// ответ допустим и значит «новых ссылок нет».
+func (m *menu) askCallLinks(optional bool) (string, error) {
+	prompt := "Ссылки на звонки VK через пробел (при вводе не отображаются): "
+	if optional {
+		prompt = "Новые ссылки на звонки VK через пробел (не отображаются) [без новых]: "
+	}
 	for {
-		value, err := m.wizardSecret("Ссылки на звонки VK через пробел (при вводе не отображаются): ")
+		value, err := m.wizardSecret(prompt)
 		if err != nil {
 			return "", err
+		}
+		if optional && value == "" {
+			return "", nil
 		}
 		n := len(core.ParseHashes(value))
 		if n == 0 {

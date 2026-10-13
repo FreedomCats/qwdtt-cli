@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/FreedomCats/qwdtt-cli/internal/captcha"
+	"github.com/FreedomCats/qwdtt-cli/internal/core"
 	"github.com/FreedomCats/qwdtt-cli/internal/supervisor"
 )
 
@@ -58,6 +59,9 @@ type env struct {
 	// так в тестах, где окна не открывают. Ошибка — окна не будет, и это
 	// не повод не подключаться: см. captchaSolver.
 	captchaWindow func(opts captcha.WebView2Options) (captcha.Solver, error)
+	// hashCheck подменяет core.RunHashCheck — проверку хешей в меню
+	// (menu_edit.go). Пусто — настоящая проверка; подменяют тесты, где сети нет.
+	hashCheck func(ctx context.Context, cfg core.Config, sink core.Sink) error
 	// lines — буферизованный stdin. Заводится при первом чтении строки.
 	lines *bufio.Reader
 

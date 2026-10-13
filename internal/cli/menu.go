@@ -169,7 +169,7 @@ func (m *menu) items(name string) []menuItem {
 		{label: fmt.Sprintf("Подключиться (%s)", name), run: m.connect},
 		{label: "Выбрать другой профиль", run: m.pick},
 		{label: "Создать новый профиль (по ссылке qwdtt:// или вручную)", run: m.create},
-		{label: "Заменить ссылки на звонки VK", run: m.replaceHashes},
+		{label: "Обновить ссылки на звонки VK", run: m.updateHashes},
 		{label: "Заменить пароль или адрес сервера", run: m.replacePasswordOrPeer},
 		{label: fmt.Sprintf("Удалить профиль %s", name), run: m.remove},
 	}
@@ -183,9 +183,10 @@ func (m *menu) show(file *config.File, name string, items []menuItem) {
 	if len(names) == 0 {
 		fmt.Fprintln(w, "Профилей пока нет. Профиль — это адрес сервера, пароль и ссылки на звонки VK.")
 	} else {
-		width := 0
+		width, peerWidth := 0, 0
 		for _, n := range names {
 			width = max(width, len(n))
+			peerWidth = max(peerWidth, len(file.Profiles[n].Peer))
 		}
 		fmt.Fprintln(w, "Профили:")
 		for _, n := range names {
@@ -198,7 +199,7 @@ func (m *menu) show(file *config.File, name string, items []menuItem) {
 			if isDefaultProfile(file, n) {
 				note = "  (по умолчанию)"
 			}
-			fmt.Fprintf(w, "  %s %-*s  %-22s %s%s\n", marker, width, n, p.Peer, modeText(p.Datapath), note)
+			fmt.Fprintf(w, "  %s %-*s  %-*s  %s%s\n", marker, width, n, peerWidth, p.Peer, modeText(p.Datapath), note)
 		}
 	}
 
@@ -323,49 +324,6 @@ func (m *menu) pick(context.Context, string) error {
 		}
 		return nil
 	}
-}
-
-func (m *menu) replaceHashes(ctx context.Context, name string) error {
-	return runProfileSet(ctx, m.e, m.args(name, "-hashes"))
-}
-
-func (m *menu) replacePasswordOrPeer(ctx context.Context, name string) error {
-	fmt.Fprintln(m.e.stdout, "  1. Пароль подключения")
-	fmt.Fprintln(m.e.stdout, "  2. Адрес сервера")
-	fmt.Fprintln(m.e.stdout, "  0. Назад")
-
-	for {
-		line, err := m.ask("Что заменить? [0]: ")
-		if errors.Is(err, errNoInput) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		n, ok := menuNumber(line, 2, 0)
-		switch {
-		case !ok:
-			fmt.Fprintf(m.e.stderr, "Нет такого пункта: %q. Введите 0, 1 или 2.\n", line)
-			continue
-		case n == 1:
-			return runProfileSet(ctx, m.e, m.args(name, "-password"))
-		case n == 2:
-			return m.replacePeer(ctx, name)
-		}
-		return nil
-	}
-}
-
-func (m *menu) replacePeer(ctx context.Context, name string) error {
-	peer, err := m.ask("Новый адрес сервера (например, example.org:56000): ")
-	if errors.Is(err, errNoInput) || (err == nil && peer == "") {
-		fmt.Fprintln(m.e.stdout, "Адрес не изменён.")
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	return runProfileSet(ctx, m.e, m.args(name, "-peer", peer))
 }
 
 func (m *menu) remove(ctx context.Context, name string) error {
