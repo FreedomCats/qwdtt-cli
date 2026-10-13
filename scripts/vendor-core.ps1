@@ -269,6 +269,24 @@ $replacements = @(
         InsertAfter = 'emitStage(StageWorkers, StageOK, sessionID, "")'
     }
 
+    # --- окно ручного режима капчи (задача E2) ---
+    # 60 секунд достались от Android, где окно капчи всплывало само и мгновенно
+    # (ManlCaptchaWebViewManager.kt:37). У нас в это окно укладывается ещё и то,
+    # как пользователь доберётся до страницы: консольному решателю минуты
+    # не хватает заведомо, окну WebView2 и браузеру под управлением — впритык
+    # (doc/e2-captcha.md, §6).
+    #
+    # Цена ошибки — задержка одного воркера: остальные в это время работают,
+    # а globalCaptchaLockout отсчитывается уже после отказа и от величины
+    # не зависит. Два соседних окна не трогаем: они машинные, и человека
+    # на них не зовут (internal/captcha/solver.go, NeedsHuman).
+    @{
+        File    = 'creds.go'
+        Count   = 1
+        Pattern = '(?m)^(\t+)captchaManualWebViewTimeout   = 60 \* time\.Second$'
+        Replace = '${1}captchaManualWebViewTimeout   = 180 * time.Second'
+    }
+
     # --- режим rawtun (задача B6) ---
     # Режим принимал TUN-дескриптор от Android и на десктопе не поддерживается:
     # Config его не выражает с B1, ветки в Run не появилось с B4. Здесь уходит
