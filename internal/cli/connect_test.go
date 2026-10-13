@@ -421,8 +421,7 @@ func TestCaptchaSolverChoice(t *testing.T) {
 		wantWarn   bool
 	}{
 		{name: "окно есть", window: window, wantWindow: true},
-		// Окно WebView2 пойдёт через прокси tt (W2) — kill-switch для него
-		// не снимается, обёртки нет.
+		// До W2 окно WebView2 тоже снимает kill-switch на время капчи.
 		{name: "окно есть, kill-switch", window: window, killSwitch: true, wantWindow: true},
 		{name: "окна не заводили", window: nil},
 		{name: "окна не заводили, kill-switch", window: nil, killSwitch: true},
@@ -450,8 +449,8 @@ func TestCaptchaSolverChoice(t *testing.T) {
 					t.Errorf("обёртка kill-switch: %+v, kill-switch: %v", wrapped, tc.killSwitch)
 				}
 				solver = wrapped.Solver
-			} else if tc.killSwitch && !tc.wantWindow {
-				t.Errorf("консольный %T не снимает kill-switch на время капчи", solver)
+			} else if tc.killSwitch {
+				t.Errorf("решатель %T не снимает kill-switch на время капчи", solver)
 			}
 
 			_, isWindow := solver.(windowSolver)

@@ -1,10 +1,12 @@
 package winsys
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/netip"
 	"os"
+	"slices"
 	"sync"
 
 	"github.com/tailscale/wf"
@@ -45,14 +47,25 @@ const (
 // пропускает правило по адресу резолвера туннеля.
 //
 // Сессия открывается один раз на tt connect (OpenDNSGuard), а правила
-// ставятся и снимаются по ходу (Enable, Disable): отказ WFP так узнаётся до
-// подключения, а не посреди него.
+// ставятся и снимаются по ходу (Enable, Lockdown, Disable): отказ WFP так
+// узнаётся до подключения, а не посреди него. В той же сессии живёт и
+// kill-switch (plan-e3.md, W1) — набор «закрыто», см. Lockdown.
 type DNSGuard struct {
 	mu      sync.Mutex
 	session *wf.Session
 	appID   string
-	rules   []wf.RuleID
+	rules   []*wf.Rule // стоят в сессии
+	state   guardState
 }
+
+// guardState — какой набор правил стоит в сессии.
+type guardState int
+
+const (
+	guardOpen     guardState = iota // правил нет: ничего не запрещено
+	guardTunnel                     // туннель поднят: защита DNS (Enable)
+	guardLockdown                   // закрыто: kill-switch (Lockdown)
+)
 
 // OpenDNSGuard открывает сессию WFP, заводит в ней провайдера и подслой;
 // правил ещё нет. Нужны права администратора и работающая служба BFE
@@ -97,29 +110,54 @@ func OpenDNSGuard() (*DNSGuard, error) {
 }
 
 // Enable ставит правила: DNS — только к резолверам dns. Прежние правила
-// заменяются, так что повторный вызов безвреден. На отказе не остаётся ни
-// старых правил, ни части новых.
+// заменяются (replaceLocked), так что повторный вызов безвреден. На отказе
+// правила снимаются, чтобы не осталось и старых, — кроме набора «закрыто»:
+// он строже защиты DNS, и открывать систему из-за отказа незачем.
 func (g *DNSGuard) Enable(dns []netip.Addr) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.session == nil {
-		return errors.New("защита DNS: сессия WFP закрыта")
-	}
-	if err := g.disableLocked(); err != nil {
-		return err
-	}
 	rules, err := dnsGuardRules(dns, g.appID)
-	if err != nil {
+	if err == nil {
+		err = g.replaceLocked(guardTunnel, "защита DNS", rules)
+	}
+	if err == nil || g.state == guardLockdown {
 		return err
 	}
-	for _, r := range rules {
-		if err := g.session.AddRule(r); err != nil {
-			err = fmt.Errorf("защита DNS: правило %q: %w", r.Name, err)
-			return errors.Join(err, g.disableLocked())
-		}
-		g.rules = append(g.rules, r.ID)
+	return errors.Join(err, g.disableLocked())
+}
+
+// replaceLocked ставит rules вместо прежних правил и при успехе запоминает
+// состояние state; what — чьи правила, для ошибок.
+//
+// Транзакций WFP у tailscale/wf нет, поэтому сначала ставятся новые
+// правила, потом снимаются старые: мига без правил на переходе нет. Новые
+// ставятся от тяжёлых к лёгким, старые снимаются от лёгких к тяжёлым, так
+// что разрешение самому tt стоит всё время, а запреты появляются после
+// своих разрешений. Пока стоят оба набора «закрыто» и защиты DNS, действует
+// «закрыто», к которому добавлены резолверы туннеля.
+//
+// Не встало новое правило — снимаются уже поставленные новые, прежний
+// набор остаётся. Не снялось правило — оно остаётся в g.rules (снимет
+// следующий Disable или Close), а ошибка возвращается.
+func (g *DNSGuard) replaceLocked(state guardState, what string, rules []*wf.Rule) error {
+	if g.session == nil {
+		return fmt.Errorf("%s: сессия WFP закрыта", what)
 	}
-	return nil
+	rules = slices.Clone(rules)
+	slices.SortStableFunc(rules, func(a, b *wf.Rule) int { return cmp.Compare(b.Weight, a.Weight) })
+	for i, r := range rules {
+		if err := g.session.AddRule(r); err != nil {
+			err = fmt.Errorf("%s: правило %q: %w", what, r.Name, err)
+			left, derr := g.deleteLocked(rules[:i])
+			g.rules = append(g.rules, left...)
+			return errors.Join(err, derr)
+		}
+	}
+	old := g.rules
+	g.rules, g.state = rules, state
+	left, err := g.deleteLocked(old)
+	g.rules = append(g.rules, left...)
+	return err
 }
 
 // Disable снимает правила; сессия остаётся для следующего Enable. Без
@@ -131,17 +169,32 @@ func (g *DNSGuard) Disable() error {
 }
 
 func (g *DNSGuard) disableLocked() error {
+	left, err := g.deleteLocked(g.rules)
+	g.rules = left
+	if len(left) == 0 {
+		g.state = guardOpen
+	}
+	return err
+}
+
+// deleteLocked снимает rules от лёгких к тяжёлым: запрет всего уходит
+// первым, разрешение самому tt — последним. Возвращает правила, которые
+// снять не удалось.
+func (g *DNSGuard) deleteLocked(rules []*wf.Rule) ([]*wf.Rule, error) {
+	rules = slices.Clone(rules)
+	slices.SortStableFunc(rules, func(a, b *wf.Rule) int { return cmp.Compare(a.Weight, b.Weight) })
+	var left []*wf.Rule
 	var errs []error
-	for _, id := range g.rules {
-		if err := g.session.DeleteRule(id); err != nil && !errors.Is(err, windows.Errno(fwpEFilterNotFound)) {
+	for _, r := range rules {
+		if err := g.session.DeleteRule(r.ID); err != nil && !errors.Is(err, windows.Errno(fwpEFilterNotFound)) {
+			left = append(left, r)
 			errs = append(errs, err)
 		}
 	}
-	g.rules = nil
 	if err := errors.Join(errs...); err != nil {
-		return fmt.Errorf("защита DNS: снятие правил: %w", err)
+		return left, fmt.Errorf("защита DNS: снятие правил: %w", err)
 	}
-	return nil
+	return nil, nil
 }
 
 // Close закрывает сессию: система снимает всё, что в ней создано.
@@ -153,7 +206,7 @@ func (g *DNSGuard) Close() error {
 		return nil
 	}
 	err := g.session.Close()
-	g.session, g.rules = nil, nil
+	g.session, g.rules, g.state = nil, nil, guardOpen
 	return err
 }
 
@@ -181,31 +234,17 @@ var dnsGuardLayers = []struct {
 func dnsGuardRules(dns []netip.Addr, appID string) ([]*wf.Rule, error) {
 	var rules []*wf.Rule
 	add := func(layer wf.LayerID, name string, weight uint64, action wf.Action, conds []*wf.Match) error {
-		guid, err := windows.GenerateGUID()
+		r, err := newGuardRule(layer, name, weight, action, conds)
 		if err != nil {
-			return fmt.Errorf("защита DNS: GUID правила: %w", err)
+			return err
 		}
-		rules = append(rules, &wf.Rule{
-			ID:         wf.RuleID(guid),
-			Name:       name,
-			Layer:      layer,
-			Sublayer:   dnsGuardSublayer,
-			Provider:   dnsGuardProvider,
-			Weight:     weight,
-			Conditions: conds,
-			Action:     action,
-		})
+		rules = append(rules, r)
 		return nil
 	}
 
 	for _, layer := range dnsGuardLayers {
-		block := []*wf.Match{
-			{Field: wf.FieldIPRemotePort, Op: wf.MatchTypeEqual, Value: uint16(53)},
-			{Field: wf.FieldIPProtocol, Op: wf.MatchTypeEqual, Value: wf.IPProtoUDP},
-			{Field: wf.FieldIPProtocol, Op: wf.MatchTypeEqual, Value: wf.IPProtoTCP},
-		}
 		if err := add(layer.id, "tt: запрет DNS мимо туннеля, "+layer.name,
-			dnsGuardBlockWeight, wf.ActionBlock, block); err != nil {
+			dnsGuardBlockWeight, wf.ActionBlock, dnsPortMatches()); err != nil {
 			return nil, err
 		}
 
@@ -233,4 +272,31 @@ func dnsGuardRules(dns []netip.Addr, appID string) ([]*wf.Rule, error) {
 		}
 	}
 	return rules, nil
+}
+
+// dnsPortMatches — условия запрета DNS: порт 53, UDP или TCP.
+func dnsPortMatches() []*wf.Match {
+	return []*wf.Match{
+		{Field: wf.FieldIPRemotePort, Op: wf.MatchTypeEqual, Value: uint16(53)},
+		{Field: wf.FieldIPProtocol, Op: wf.MatchTypeEqual, Value: wf.IPProtoUDP},
+		{Field: wf.FieldIPProtocol, Op: wf.MatchTypeEqual, Value: wf.IPProtoTCP},
+	}
+}
+
+// newGuardRule — правило в нашем подслое с новым GUID.
+func newGuardRule(layer wf.LayerID, name string, weight uint64, action wf.Action, conds []*wf.Match) (*wf.Rule, error) {
+	guid, err := windows.GenerateGUID()
+	if err != nil {
+		return nil, fmt.Errorf("защита DNS: GUID правила: %w", err)
+	}
+	return &wf.Rule{
+		ID:         wf.RuleID(guid),
+		Name:       name,
+		Layer:      layer,
+		Sublayer:   dnsGuardSublayer,
+		Provider:   dnsGuardProvider,
+		Weight:     weight,
+		Conditions: conds,
+		Action:     action,
+	}, nil
 }

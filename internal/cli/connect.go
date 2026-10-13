@@ -410,13 +410,17 @@ func requirementProblems(req datapath.Requirements) []string {
 //
 // Сообщения обоих уходят в stderr через out.aside, чтобы статусная строка
 // не встала посреди приглашения; консольный читает ответ со stdin команды.
-// При kill-switch (ks не nil) консольный снимает его на время капчи: её
-// страница открывается в браузере пользователя (plan-e3.md, K4).
+// При kill-switch (ks не nil) оба снимают его на время капчи: страницу
+// открывает браузер пользователя или msedgewebview2.exe, а не tt
+// (plan-e3.md, K4; окно — до W2).
 func captchaSolver(e *env, out *printer, ks *killSwitchGuard) captcha.Solver {
-	var console captcha.Solver = captcha.NewManual(captcha.ManualOptions{In: e.stdin, Out: out.aside(e.stderr), Open: e.openURL})
-	if ks != nil {
-		console = killSwitchCaptcha{Solver: console, guard: ks}
+	wrap := func(s captcha.Solver) captcha.Solver {
+		if ks == nil {
+			return s
+		}
+		return killSwitchCaptcha{Solver: s, guard: ks}
 	}
+	console := wrap(captcha.NewManual(captcha.ManualOptions{In: e.stdin, Out: out.aside(e.stderr), Open: e.openURL}))
 
 	if e.captchaWindow == nil {
 		return console
@@ -435,7 +439,7 @@ func captchaSolver(e *env, out *printer, ks *killSwitchGuard) captcha.Solver {
 		}
 		return console
 	}
-	return window
+	return wrap(window)
 }
 
 // newCaptchaWindow — настоящий решатель с окном для env.captchaWindow.

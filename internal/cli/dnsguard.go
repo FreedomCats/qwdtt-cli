@@ -17,9 +17,9 @@ import (
 )
 
 // dnsGuardSession — то, что CLI получает от winsys.DNSGuard и
-// linuxsys.DNSGuard.
+// linuxsys.DNSGuard: защита DNS с kill-switch.
 type dnsGuardSession interface {
-	datapath.DNSGuard
+	lockdownSession
 	Close() error
 }
 
@@ -73,14 +73,7 @@ func setupDNSGuard(out *printer, warn io.Writer, allowLeak bool, killSwitchOff s
 		out.line("kill-switch выключен (%s): пока туннель не поднят, трафик системы идёт мимо него", killSwitchOff)
 		return setup, nil
 	}
-	lockdown, ok := session.(lockdownSession)
-	if !ok {
-		// Windows до W1: правил «закрыто» в WFP ещё нет.
-		fmt.Fprintln(warn, "Предупреждение: kill-switch на этой системе ещё не сделан — "+
-			"пока туннель не поднят, трафик системы идёт мимо него")
-		return setup, nil
-	}
-	ks, err := newKillSwitchGuard(lockdown, allowLeak, out.logf)
+	ks, err := newKillSwitchGuard(session, allowLeak, out.logf)
 	if err != nil {
 		if !allowLeak {
 			setup.close()

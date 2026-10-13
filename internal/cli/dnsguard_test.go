@@ -24,8 +24,9 @@ func (s *fakeGuardSession) Enable([]netip.Addr) error {
 	s.enabled = true
 	return nil
 }
-func (s *fakeGuardSession) Disable() error { s.enabled = false; return nil }
-func (s *fakeGuardSession) Close() error   { s.closed = true; return nil }
+func (s *fakeGuardSession) Disable() error  { s.enabled = false; return nil }
+func (s *fakeGuardSession) Lockdown() error { s.enabled = false; return nil }
+func (s *fakeGuardSession) Close() error    { s.closed = true; return nil }
 
 func stubOpenDNSGuard(t *testing.T, session *fakeGuardSession, err error) {
 	t.Helper()

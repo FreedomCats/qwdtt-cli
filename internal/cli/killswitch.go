@@ -20,8 +20,8 @@ import (
 	"github.com/FreedomCats/qwdtt-cli/internal/datapath"
 )
 
-// lockdownSession — защита, которая умеет kill-switch: linuxsys.DNSGuard
-// (Lockdown), на Windows — с W1.
+// lockdownSession — защита, которая умеет kill-switch (Lockdown):
+// linuxsys.DNSGuard и winsys.DNSGuard.
 type lockdownSession interface {
 	datapath.DNSGuard
 	// Lockdown ставит набор «закрыто» вместо прежних правил, одним
@@ -121,7 +121,9 @@ func (g *killSwitchGuard) openForCaptcha() {
 		return
 	}
 	if err := g.session.Disable(); err != nil {
-		// Пакет правил атомарен: «закрыто» осталось как было.
+		// На Linux пакет правил атомарен: «закрыто» осталось как было. На
+		// Windows правила снимаются по одному, и часть могла уйти — но
+		// WFP отказывает в снятии своих правил разве что при сбое BFE.
 		g.logf("Внимание: kill-switch не снялся на время капчи: %v — страница капчи в браузере может не открыться", err)
 		return
 	}
@@ -168,10 +170,11 @@ func (g *killSwitchGuard) BlockIPv6(block bool) {
 	}
 }
 
-// killSwitchCaptcha — ручной решатель капчи при kill-switch: на время Solve
+// killSwitchCaptcha — решатель капчи при kill-switch: на время Solve
 // правила сняты (plan-e3.md, решение 1). Решатель о сети не знает, поэтому
-// обёртка — здесь. Окно WebView2 так не оборачивается: оно пойдёт через
-// прокси tt (W2), и kill-switch для него не снимается.
+// обёртка — здесь. Окно WebView2 пока оборачивается так же: его сеть
+// делает msedgewebview2.exe, и при «закрыто» страница не загрузится. С W2
+// оно пойдёт через прокси tt, и обёртка ему станет не нужна.
 type killSwitchCaptcha struct {
 	captcha.Solver
 	guard *killSwitchGuard

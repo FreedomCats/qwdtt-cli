@@ -182,25 +182,6 @@ func TestKillSwitchDisableFailure(t *testing.T) {
 	}
 }
 
-// Защита без Lockdown (Windows до W1) — предупреждение, работа как без
-// kill-switch.
-func TestKillSwitchUnsupportedSession(t *testing.T) {
-	session := &fakeGuardSession{}
-	stubOpenDNSGuard(t, session, nil)
-	var stdout, stderr bytes.Buffer
-	setup, err := setupDNSGuard(newPrinter(&stdout, false), &stderr, false, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer setup.close()
-	if setup.killSwitch != nil || setup.guard != session {
-		t.Errorf("защита %T, признак %v", setup.guard, setup.killSwitch != nil)
-	}
-	if !strings.Contains(stderr.String(), "kill-switch на этой системе ещё не сделан") {
-		t.Errorf("нет предупреждения: %q", stderr.String())
-	}
-}
-
 // stepSolver — решатель капчи для тестов окна: во время Solve зовёт during
 // (подъём или падение туннеля посреди капчи) и запоминает, стояло ли
 // «закрыто», пока человек решал.

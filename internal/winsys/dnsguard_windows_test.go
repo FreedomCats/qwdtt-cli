@@ -167,3 +167,200 @@ func TestDNSGuardUnderGC(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Набор «закрыто» — без WFP: на каждом слое сверху вниз по весу свой
+// процесс и loopback, запрет DNS, служебные протоколы и локальная сеть
+// своего семейства, запрет всего.
+func TestLockdownRules(t *testing.T) {
+	rules, err := lockdownRules("app-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[wf.RuleID]bool{}
+	byLayer := map[wf.LayerID][]*wf.Rule{}
+	for _, r := range rules {
+		if r.Sublayer != dnsGuardSublayer || r.Provider != dnsGuardProvider {
+			t.Errorf("правило %q не в своём подслое или провайдере", r.Name)
+		}
+		if ids[r.ID] || r.ID.IsZero() {
+			t.Errorf("GUID правила %q пустой или повторён", r.Name)
+		}
+		ids[r.ID] = true
+		byLayer[r.Layer] = append(byLayer[r.Layer], r)
+	}
+
+	for _, layer := range dnsGuardLayers {
+		got := byLayer[layer.id]
+		want := 6
+		if layer.ipv6 {
+			want = 7 // и ICMPv6 ND
+		}
+		if len(got) != want {
+			t.Fatalf("%s: правил %d, ждали %d", layer.name, len(got), want)
+		}
+		for i := 1; i < len(got); i++ {
+			if got[i].Weight > got[i-1].Weight {
+				t.Errorf("%s: %q тяжелее %q, стоящего выше", layer.name, got[i].Name, got[i-1].Name)
+			}
+		}
+		self, loopback, dns, dhcp, local, block := got[0], got[1], got[2], got[3], got[len(got)-2], got[len(got)-1]
+
+		for _, r := range []*wf.Rule{self, loopback, dhcp, local} {
+			if r.Action != wf.ActionPermit {
+				t.Errorf("%s: %q — %v, ждали разрешение", layer.name, r.Name, r.Action)
+			}
+		}
+		for _, r := range []*wf.Rule{dns, block} {
+			if r.Action != wf.ActionBlock {
+				t.Errorf("%s: %q — %v, ждали запрет", layer.name, r.Name, r.Action)
+			}
+		}
+		if self.Weight != dnsGuardPermitWeight || loopback.Weight != dnsGuardPermitWeight {
+			t.Errorf("%s: свой процесс и loopback с весами %d и %d", layer.name, self.Weight, loopback.Weight)
+		}
+		if dns.Weight != dnsGuardBlockWeight || dns.Weight <= local.Weight {
+			t.Errorf("%s: запрет DNS с весом %d не тяжелее локальной сети (%d)", layer.name, dns.Weight, local.Weight)
+		}
+		if block.Weight >= local.Weight || block.Weight >= dhcp.Weight || len(block.Conditions) != 0 {
+			t.Errorf("%s: запрет всего — вес %d, условий %d", layer.name, block.Weight, len(block.Conditions))
+		}
+
+		checkMatches(t, layer.name+": свой процесс", self.Conditions, []wf.Match{
+			{Field: wf.FieldALEAppID, Op: wf.MatchTypeEqual, Value: "app-id"},
+		})
+		checkMatches(t, layer.name+": loopback", loopback.Conditions, []wf.Match{
+			{Field: wf.FieldFlags, Op: wf.MatchTypeFlagsAllSet, Value: wf.ConditionFlagIsLoopback},
+		})
+		checkMatches(t, layer.name+": запрет DNS", dns.Conditions, []wf.Match{
+			{Field: wf.FieldIPRemotePort, Op: wf.MatchTypeEqual, Value: uint16(53)},
+			{Field: wf.FieldIPProtocol, Op: wf.MatchTypeEqual, Value: wf.IPProtoUDP},
+			{Field: wf.FieldIPProtocol, Op: wf.MatchTypeEqual, Value: wf.IPProtoTCP},
+		})
+		client, server := uint16(68), uint16(67)
+		if layer.ipv6 {
+			client, server = 546, 547
+		}
+		checkMatches(t, layer.name+": DHCP", dhcp.Conditions, []wf.Match{
+			{Field: wf.FieldIPProtocol, Op: wf.MatchTypeEqual, Value: wf.IPProtoUDP},
+			{Field: wf.FieldIPLocalPort, Op: wf.MatchTypeEqual, Value: client},
+			{Field: wf.FieldIPRemotePort, Op: wf.MatchTypeEqual, Value: server},
+		})
+		if layer.ipv6 {
+			ndp := got[4]
+			want := []wf.Match{{Field: wf.FieldIPProtocol, Op: wf.MatchTypeEqual, Value: wf.IPProtoICMPV6}}
+			for typ := uint16(133); typ <= 137; typ++ {
+				want = append(want, wf.Match{Field: wf.FieldIPLocalPort, Op: wf.MatchTypeEqual, Value: typ})
+			}
+			if ndp.Action != wf.ActionPermit || ndp.Weight != local.Weight {
+				t.Errorf("%s: ND — %v с весом %d", layer.name, ndp.Action, ndp.Weight)
+			}
+			checkMatches(t, layer.name+": ND", ndp.Conditions, want)
+		}
+
+		var wantLocal []wf.Match
+		for _, p := range localNets {
+			if p.Addr().Is6() == layer.ipv6 {
+				wantLocal = append(wantLocal, wf.Match{Field: wf.FieldIPRemoteAddress, Op: wf.MatchTypeEqual, Value: p})
+			}
+		}
+		if len(wantLocal) == 0 {
+			t.Fatalf("%s: локальной сети нет", layer.name)
+		}
+		checkMatches(t, layer.name+": локальная сеть", local.Conditions, wantLocal)
+	}
+}
+
+// Переходы между наборами на настоящем WFP (нужны права администратора):
+// «закрыто» → защита DNS → «закрыто» → без правил. После каждого перехода
+// в сессии ровно правила нового набора — старые сняты, новые на месте.
+func TestDNSGuardLockdownSession(t *testing.T) {
+	g, err := OpenDNSGuard()
+	if err != nil {
+		t.Skipf("сессия WFP не открылась (нужны права администратора): %v", err)
+	}
+	defer g.Close()
+	lockdown, err := lockdownRules(g.appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dns := []netip.Addr{netip.MustParseAddr("1.1.1.1")}
+
+	check := func(what string, state guardState, want int) {
+		t.Helper()
+		if g.state != state || len(g.rules) != want {
+			t.Errorf("%s: состояние %d, правил %d; ждали %d и %d", what, g.state, len(g.rules), state, want)
+		}
+		if inSession := sublayerRules(t, g); inSession != want {
+			t.Errorf("%s: в подслое WFP правил %d, ждали %d", what, inSession, want)
+		}
+	}
+
+	steps := []struct {
+		what  string
+		do    func() error
+		state guardState
+		want  int
+	}{
+		{"Lockdown", g.Lockdown, guardLockdown, len(lockdown)},
+		{"повторный Lockdown", g.Lockdown, guardLockdown, len(lockdown)},
+		{"Enable", func() error { return g.Enable(dns) }, guardTunnel, 3 * len(dnsGuardLayers)},
+		{"Lockdown после Enable", g.Lockdown, guardLockdown, len(lockdown)},
+		{"Disable", g.Disable, guardOpen, 0},
+	}
+	for _, s := range steps {
+		if err := s.do(); err != nil {
+			t.Fatalf("%s: %v", s.what, err)
+		}
+		check(s.what, s.state, s.want)
+	}
+}
+
+// Набор, который не встал целиком, снимается, а прежний остаётся: здесь
+// «закрыто» остаётся «закрыто». Отказ — правило с неверным значением
+// условия: оно легче прочих и ставится последним, после всех верных.
+func TestDNSGuardReplaceRollback(t *testing.T) {
+	g, err := OpenDNSGuard()
+	if err != nil {
+		t.Skipf("сессия WFP не открылась (нужны права администратора): %v", err)
+	}
+	defer g.Close()
+	if err := g.Lockdown(); err != nil {
+		t.Fatal(err)
+	}
+	want := len(g.rules)
+
+	rules, err := dnsGuardRules([]netip.Addr{netip.MustParseAddr("1.1.1.1")}, g.appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad, err := newGuardRule(wf.LayerALEAuthConnectV4, "tt: тест отказа", 1, wf.ActionBlock,
+		[]*wf.Match{{Field: wf.FieldIPRemotePort, Op: wf.MatchTypeEqual, Value: "не порт"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.replaceLocked(guardTunnel, "тест", append(rules, bad)); err == nil {
+		t.Fatal("набор с неверным правилом встал")
+	}
+	if g.state != guardLockdown || len(g.rules) != want {
+		t.Errorf("после отказа: состояние %d, правил %d; ждали «закрыто» и %d", g.state, len(g.rules), want)
+	}
+	if inSession := sublayerRules(t, g); inSession != want {
+		t.Errorf("в подслое WFP правил %d, ждали %d — новые не сняты", inSession, want)
+	}
+}
+
+// sublayerRules — сколько правил стоит в нашем подслое WFP.
+func sublayerRules(t *testing.T, g *DNSGuard) int {
+	t.Helper()
+	all, err := g.session.Rules()
+	if err != nil {
+		t.Fatalf("список правил WFP: %v", err)
+	}
+	n := 0
+	for _, r := range all {
+		if r.Sublayer == dnsGuardSublayer {
+			n++
+		}
+	}
+	return n
+}
