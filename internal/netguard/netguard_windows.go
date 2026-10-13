@@ -20,23 +20,38 @@ const supported = true
 // с понятным текстом, а не уйдут в туннель. Ошибка — только отказ системы
 // отдать таблицу маршрутов.
 func (g *Guard) SelectInterfaces(exclude uint64) (string, error) {
+	c, err := choose(exclude)
+	if err != nil {
+		return "", err
+	}
+	g.commit(c)
+	return c.String(), nil
+}
+
+// choose — выбор интерфейса без установки: Watch сперва сравнивает его
+// с прежним.
+func choose(exclude uint64) (Choice, error) {
 	v4, ok4, err := winsys.DefaultInterface(false, exclude)
 	if err != nil {
-		return "", fmt.Errorf("netguard: выбор интерфейса IPv4: %w", err)
+		return Choice{}, fmt.Errorf("netguard: выбор интерфейса IPv4: %w", err)
 	}
 	v6, ok6, err := winsys.DefaultInterface(true, exclude)
 	if err != nil {
-		return "", fmt.Errorf("netguard: выбор интерфейса IPv6: %w", err)
+		return Choice{}, fmt.Errorf("netguard: выбор интерфейса IPv6: %w", err)
 	}
-	g.SetInterfaces(v4.Index, v6.Index)
-	return "IPv4 — " + describe(v4, ok4) + ", IPv6 — " + describe(v6, ok6), nil
+	var c Choice
+	if ok4 {
+		c.Index4, c.Alias4 = v4.Index, v4.Alias
+	}
+	if ok6 {
+		c.Index6, c.Alias6 = v6.Index, v6.Alias
+	}
+	return c, nil
 }
 
-func describe(iface winsys.Interface, ok bool) string {
-	if !ok {
-		return "нет маршрута"
-	}
-	return fmt.Sprintf("%s (индекс %d)", iface.Alias, iface.Index)
+// subscribe — события смены маршрутов и интерфейсов (winsys.WatchNetwork).
+func subscribe(notify func(luid uint64)) (func(), error) {
+	return winsys.WatchNetwork(notify)
 }
 
 // setUnicastIf привязывает сокет к интерфейсу. Порядок байт — как в

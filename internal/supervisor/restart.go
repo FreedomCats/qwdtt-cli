@@ -371,10 +371,29 @@ func NewRestarter(machine *Machine, hashes *HashPool) *Restarter {
 // Failed объявляет, что попытка кончилась: уводит автомат с линии и говорит,
 // ждать ли следующую и сколько.
 //
-// cause может быть нулевым — перезапуск бывает намеренным (смена сети в Э2).
 // Когда годных хешей не осталось, автомат переводится в StateStopping: ждать
 // нечего, подключаться не к чему.
 func (r *Restarter) Failed(cause error) Decision {
+	return r.decide(cause, false)
+}
+
+// Restart объявляет, что попытку оборвали намеренно — сменилась сеть (S2
+// Э2). Автомат уходит с линии так же, как при отказе, но следующая попытка
+// идёт сразу, а счётчик задержек обнуляется: неудачи прошлой сети к новой
+// отношения не имеют.
+func (r *Restarter) Restart(cause error) Decision {
+	return r.decide(cause, true)
+}
+
+// Reset обнуляет счётчик задержек без смены состояния: сеть сменилась,
+// пока цикл ждал задержку.
+func (r *Restarter) Reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.attempt = 0
+}
+
+func (r *Restarter) decide(cause error, restart bool) Decision {
 	var moves []Transition
 	if tr, ok := r.machine.Reconnect(cause); ok {
 		moves = append(moves, tr)
@@ -383,6 +402,9 @@ func (r *Restarter) Failed(cause error) Decision {
 	r.mu.Lock()
 	attempt := r.attempt
 	r.attempt++
+	if restart {
+		r.attempt = 0
+	}
 	r.mu.Unlock()
 
 	if r.hashes.Exhausted() {
@@ -391,7 +413,11 @@ func (r *Restarter) Failed(cause error) Decision {
 		}
 		return Decision{Stop: true, Attempt: attempt + 1, Transitions: moves}
 	}
-	return Decision{Delay: Backoff(attempt), Attempt: attempt + 1, Transitions: moves}
+	delay := Backoff(attempt)
+	if restart {
+		delay = 0
+	}
+	return Decision{Delay: delay, Attempt: attempt + 1, Transitions: moves}
 }
 
 // Connected сбрасывает счётчик задержек: туннель, проработавший час, должен

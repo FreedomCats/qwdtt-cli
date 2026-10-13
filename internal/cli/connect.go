@@ -25,6 +25,7 @@ import (
 	"github.com/FreedomCats/qwdtt-cli/internal/config"
 	"github.com/FreedomCats/qwdtt-cli/internal/core"
 	"github.com/FreedomCats/qwdtt-cli/internal/datapath"
+	"github.com/FreedomCats/qwdtt-cli/internal/netguard"
 	"github.com/FreedomCats/qwdtt-cli/internal/supervisor"
 )
 
@@ -450,18 +451,20 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	defer dispatcher.Close()
 
 	cfg := plan.cfg
+	var guard *netguard.Guard
 	if req.Netguard || netguardForced() {
-		dialControl, err := setupNetguard(out, verbose)
-		if err != nil {
+		var err error
+		if guard, err = setupNetguard(out, verbose); err != nil {
 			return err
 		}
-		cfg.DialControl = dialControl
+		cfg.DialControl = guard.Control
 	}
+	var own ownAdapter
 	tun, err := supervisor.NewTunnel(supervisor.Options{
 		Config: cfg,
 		Hashes: cfg.Hashes,
 		NewDatapath: func() (datapath.Datapath, error) {
-			return plan.datapath(out.logf), nil
+			return own.track(plan.datapath(out.logf)), nil
 		},
 		DatapathStage: plan.stage,
 		Control:       ctrl,
@@ -481,6 +484,12 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	})
 	if err != nil {
 		return err
+	}
+	// Смена сети: netguard переставляет индексы, попытка перезапускается.
+	// Сокеты, привязанные к ушедшему интерфейсу, иначе молчали бы до
+	// watchdog'а.
+	if guard != nil {
+		defer watchNetwork(out, guard, tun.Restart, own.luid)()
 	}
 
 	out.header(cfg.Workers, len(cfg.Hashes))

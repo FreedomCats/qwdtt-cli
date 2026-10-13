@@ -148,6 +148,18 @@ type Tunnel struct {
 	// строкой; когда datapath поднимется снова, нужно сказать, что вернулись.
 	bypassed bool
 
+	// restartMu охраняет намеренный перезапуск (Restart): что прерывать
+	// и что ещё не исполнено.
+	restartMu sync.Mutex
+	// current — идущая попытка; nil между попытками.
+	current *attempt
+	// wake прерывает идущую задержку; nil вне задержки.
+	wake context.CancelFunc
+	// restartReq — причина перезапуска, который ещё не исполнен: просьба
+	// пришла, когда прерывать было нечего, или попытка уже кончалась.
+	// Снимается в начале следующей попытки — она и есть перезапуск.
+	restartReq error
+
 	// runCore и sleep подменяются в тестах: без первого понадобился бы живой
 	// сервер VK, без второго тест на последовательность задержек шёл бы минуту.
 	runCore func(context.Context, core.Config, core.Sink, *core.Control) error
@@ -204,6 +216,80 @@ func (t *Tunnel) Hashes() *HashPool { return t.hashes }
 // Attempts — сколько попыток подряд кончилось неудачей.
 func (t *Tunnel) Attempts() int { return t.restarter.Attempts() }
 
+// Restart обрывает идущую попытку с причиной reason и начинает новую сразу,
+// без задержки и с обнулённым счётчиком задержек (Restarter.Restart). Если
+// цикл ждёт задержку, ожидание прерывается. Зовётся при смене сети (S2 Э2)
+// из любой горутины; до Run и после него ничего не делает.
+//
+// Маршруты на время перезапуска снимаются, как после любой неудачной
+// попытки: на новой сети может понадобиться капча.
+func (t *Tunnel) Restart(reason error) {
+	t.restartMu.Lock()
+	t.restartReq = reason
+	a, wake := t.current, t.wake
+	t.restartMu.Unlock()
+
+	if a != nil {
+		a.fail(reason)
+		a.cancel()
+	}
+	if wake != nil {
+		wake()
+	}
+}
+
+// takeRestart забирает неисполненную просьбу о перезапуске.
+func (t *Tunnel) takeRestart() error {
+	t.restartMu.Lock()
+	defer t.restartMu.Unlock()
+	reason := t.restartReq
+	t.restartReq = nil
+	return reason
+}
+
+// track отмечает идущую попытку (nil — попытка кончилась). Начало попытки
+// исполняет просьбу о перезапуске: попытка и есть перезапуск.
+func (t *Tunnel) track(a *attempt) {
+	t.restartMu.Lock()
+	defer t.restartMu.Unlock()
+	t.current = a
+	if a != nil {
+		t.restartReq = nil
+	}
+}
+
+// pause ждёт задержку перед следующей попыткой. Restart прерывает её
+// и обнуляет счётчик задержек. Возвращает false, если цикл остановлен.
+func (t *Tunnel) pause(ctx context.Context, d time.Duration) bool {
+	sctx, wake := context.WithCancel(ctx)
+	defer wake()
+
+	t.restartMu.Lock()
+	if t.restartReq != nil {
+		// Перезапуск попросили после конца попытки, но до задержки.
+		t.restartMu.Unlock()
+		t.restarter.Reset()
+		return true
+	}
+	t.wake = wake
+	t.restartMu.Unlock()
+
+	slept := t.sleep(sctx, d)
+
+	t.restartMu.Lock()
+	t.wake = nil
+	woken := t.restartReq != nil
+	t.restartMu.Unlock()
+
+	if ctx.Err() != nil || (!slept && !woken) {
+		return false
+	}
+	if woken {
+		t.restarter.Reset()
+	}
+	return true
+}
+
 // Run держит туннель, пока не отменят ctx или пока не кончатся годные хеши.
 //
 // Остановка по ctx ошибкой не считается и даёт nil — как и у core.Run. Ошибка
@@ -234,7 +320,14 @@ func (t *Tunnel) Run(ctx context.Context) error {
 		// капча следующей попытки не загрузится.
 		t.suspend()
 
-		decision := t.restarter.Failed(err)
+		var decision Decision
+		if reason := t.takeRestart(); reason != nil {
+			// Перезапуск попросили, пока шла попытка или сразу после неё.
+			// Сменилась сеть — её причина важнее отказа на старой.
+			decision = t.restarter.Restart(reason)
+		} else {
+			decision = t.restarter.Failed(err)
+		}
 		t.reportAll(decision.Transitions)
 
 		if decision.Stop {
@@ -243,7 +336,7 @@ func (t *Tunnel) Run(ctx context.Context) error {
 			}
 			return ErrHashesExhausted
 		}
-		if !t.sleep(ctx, decision.Delay) {
+		if !t.pause(ctx, decision.Delay) {
 			return nil
 		}
 	}
@@ -274,6 +367,8 @@ func (t *Tunnel) attempt(parent context.Context) (err error) {
 	defer cancel()
 
 	a := &attempt{tunnel: t, dp: dp, ctx: ctx, cancel: cancel}
+	t.track(a)
+	defer t.track(nil)
 
 	// Паника в ядре становится обычным отказом попытки: клиент, который
 	// держит туннель часами, не должен умирать от бага в одном воркере.

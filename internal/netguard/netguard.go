@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 )
@@ -25,6 +26,11 @@ import (
 type Guard struct {
 	index4 atomic.Uint32
 	index6 atomic.Uint32
+
+	// mu и choice — последний выбор интерфейса (SelectInterfaces, Watch):
+	// с ним Watch сравнивает новый, чтобы понять, сменилась ли сеть.
+	mu     sync.Mutex
+	choice Choice
 
 	// Logf, если задан, получает строку на каждый привязанный сокет:
 	// «[NETGUARD] tcp4 203.0.113.80:443 → интерфейс 3». Главный инструмент
@@ -43,6 +49,52 @@ func (g *Guard) SetInterfaces(index4, index6 uint32) {
 // Interfaces возвращает текущие индексы для IPv4 и IPv6.
 func (g *Guard) Interfaces() (index4, index6 uint32) {
 	return g.index4.Load(), g.index6.Load()
+}
+
+// Choice — выбор физического интерфейса для обоих семейств. Индекс 0 —
+// маршрута по умолчанию для семейства нет.
+type Choice struct {
+	Index4, Index6 uint32
+	// Alias4, Alias6 — имена интерфейсов для вывода («Ethernet 3», «Wi-Fi»).
+	Alias4, Alias6 string
+}
+
+// Same — тот же выбор: индексы совпадают. Имена не сравниваются, их
+// переименование сети не меняет.
+func (c Choice) Same(o Choice) bool {
+	return c.Index4 == o.Index4 && c.Index6 == o.Index6
+}
+
+// Empty — сети нет: маршрута по умолчанию нет ни для одного семейства.
+func (c Choice) Empty() bool { return c.Index4 == 0 && c.Index6 == 0 }
+
+// String — выбор словами: «IPv4 — Ethernet 3 (индекс 3), IPv6 — нет маршрута».
+func (c Choice) String() string {
+	return "IPv4 — " + describe(c.Index4, c.Alias4) + ", IPv6 — " + describe(c.Index6, c.Alias6)
+}
+
+func describe(index uint32, alias string) string {
+	if index == 0 {
+		return "нет маршрута"
+	}
+	return fmt.Sprintf("%s (индекс %d)", alias, index)
+}
+
+// Choice — последний выбор, который поставил SelectInterfaces или Watch.
+func (g *Guard) Choice() Choice {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.choice
+}
+
+// commit ставит выбор: индексы для новых сокетов и запись для сравнения.
+// Возвращает прежний выбор.
+func (g *Guard) commit(c Choice) (before Choice) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	before, g.choice = g.choice, c
+	g.SetInterfaces(c.Index4, c.Index6)
+	return before
 }
 
 // Control — хук под поле Control у net.Dialer и net.ListenConfig.

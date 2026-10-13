@@ -121,10 +121,11 @@ func (plan *diagPlan) ping(ctx context.Context, e *env, verbose bool) error {
 	out.line("профиль %s: сервер %s, хешей %d, DNS %s",
 		plan.profile.Name, cfg.Peer, len(cfg.Hashes), cfg.DNS)
 	if netguardForced() {
-		var err error
-		if cfg.DialControl, err = setupNetguard(out, verbose); err != nil {
+		guard, err := setupNetguard(out, verbose)
+		if err != nil {
 			return err
 		}
+		cfg.DialControl = guard.Control
 	}
 	return core.RunPing(ctx, cfg, core.SinkFunc(out.event))
 }
@@ -215,10 +216,11 @@ func (plan *diagPlan) hashes(ctx context.Context, e *env, verbose bool) error {
 
 	out.line("профиль %s: хешей %d, DNS %s", plan.profile.Name, len(cfg.Hashes), cfg.DNS)
 	if netguardForced() {
-		var err error
-		if cfg.DialControl, err = setupNetguard(out, verbose); err != nil {
+		guard, err := setupNetguard(out, verbose)
+		if err != nil {
 			return err
 		}
+		cfg.DialControl = guard.Control
 	}
 
 	// Счётчик годных ведётся здесь, а не в принтере: принтер печатает, а

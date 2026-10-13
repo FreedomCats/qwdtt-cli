@@ -14,3 +14,10 @@ func setUnicastIf(uintptr, bool, uint32) error { return nil }
 func (g *Guard) SelectInterfaces(uint64) (string, error) {
 	return "не нужен на этой системе", nil
 }
+
+// choose вне Windows выбирать нечего.
+func choose(uint64) (Choice, error) { return Choice{}, nil }
+
+// subscribe вне Windows событий не даёт: следить за сетью незачем, пока
+// Control ничего не делает.
+func subscribe(func(luid uint64)) (func(), error) { return func() {}, nil }
