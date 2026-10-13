@@ -1,7 +1,7 @@
 package core
+
 import (
 	"context"
-	"log"
 	"math/rand"
 	"net"
 	"strings"
@@ -35,7 +35,7 @@ func WorkerGroup(
 ) {
 	// Каскадный запуск: ждем свою очередь
 	if waitReady != nil {
-		log.Printf("[ГРУППА #%d] Ожидание сигнала от предыдущей группы...", groupID)
+		logf("[ГРУППА #%d] Ожидание сигнала от предыдущей группы...", groupID)
 		select {
 		case <-waitReady:
 		case <-ctx.Done():
@@ -61,7 +61,7 @@ func WorkerGroup(
 	if len(shortHash) > 8 {
 		shortHash = shortHash[:8]
 	}
-	log.Printf("[ГРУППА #%d] Запрос кредов (хеш: %s...)", groupID, shortHash)
+	logf("[ГРУППА #%d] Запрос кредов (хеш: %s...)", groupID, shortHash)
 
 	credStreamID := groupID * 100
 	user, pass, turnURLs, err := GetCreds(ctx, hash, credStreamID)
@@ -69,11 +69,11 @@ func WorkerGroup(
 	if err == nil {
 		creds = &Credentials{User: user, Pass: pass, TurnURLs: turnURLs, CacheStreamID: credStreamID}
 	} else {
-		log.Printf("[ГРУППА #%d] Ошибка кредов: %v", groupID, err)
+		logf("[ГРУППА #%d] Ошибка кредов: %v", groupID, err)
 		return
 	}
 
-	log.Printf("[ГРУППА #%d] Креды OK, TURN: %v, %d воркеров", groupID, creds.TurnURLs, len(workerIDs))
+	logf("[ГРУППА #%d] Креды OK, TURN: %v, %d воркеров", groupID, creds.TurnURLs, len(workerIDs))
 	emitStage(StageVK, StageOK, 0, "")
 
 	var configRequestInFlight int32
@@ -89,7 +89,7 @@ func WorkerGroup(
 		now := time.Now().Unix()
 		last := lastCredRefresh.Load()
 		if last > 0 && now-last < 15 {
-			log.Printf("[TURN] Креды уже обновлялись %d сек назад, ждём следующий retry (%s)", now-last, reason)
+			logf("[TURN] Креды уже обновлялись %d сек назад, ждём следующий retry (%s)", now-last, reason)
 			return true
 		}
 
@@ -99,7 +99,7 @@ func WorkerGroup(
 		}
 		u, p, urls, refreshErr := GetCreds(ctx, hash, credStreamID)
 		if refreshErr != nil {
-			log.Printf("[TURN] Не удалось обновить креды после %s: %v", reason, refreshErr)
+			logf("[TURN] Не удалось обновить креды после %s: %v", reason, refreshErr)
 			return false
 		}
 
@@ -107,7 +107,7 @@ func WorkerGroup(
 		creds = &Credentials{User: u, Pass: p, TurnURLs: urls, CacheStreamID: credStreamID}
 		credsMu.Unlock()
 		lastCredRefresh.Store(time.Now().Unix())
-		log.Printf("[TURN] Креды обновлены после %s, TURN urls=%d", reason, len(urls))
+		logf("[TURN] Креды обновлены после %s, TURN urls=%d", reason, len(urls))
 		return true
 	}
 
@@ -117,7 +117,7 @@ func WorkerGroup(
 			delayMs := 500 + rand.Intn(250)
 			time.Sleep(time.Duration(delayMs) * time.Millisecond)
 			close(signalReady)
-			log.Printf("[ГРУППА #%d] Успешный старт! Передача эстафеты следующей группе...", groupID)
+			logf("[ГРУППА #%d] Успешный старт! Передача эстафеты следующей группе...", groupID)
 		}()
 	}
 
@@ -215,21 +215,21 @@ func WorkerGroup(
 
 					if strings.Contains(errStr, "хеш мёртв") ||
 						strings.Contains(errStr, "FATAL_AUTH") {
-						log.Printf("[ВОРКЕР #%d] Фатальная ошибка: %s", wid, errStr)
+						logf("[ВОРКЕР #%d] Фатальная ошибка: %s", wid, errStr)
 						return
 					}
 
 					attempt++
 					if isTurnQuota {
-						log.Printf("[ВОРКЕР #%d] [TURN] Квота relay исчерпана (один аккаунт VK = мало слотов), ждём: %s", wid, errStr)
+						logf("[ВОРКЕР #%d] [TURN] Квота relay исчерпана (один аккаунт VK = мало слотов), ждём: %s", wid, errStr)
 					} else if turnAllocAttrMissing {
-						log.Printf("[ВОРКЕР #%d] [TURN] Allocate вернул неполный ответ, обновляем TURN-креды и повторяем (попытка %d): %s", wid, attempt, errStr)
+						logf("[ВОРКЕР #%d] [TURN] Allocate вернул неполный ответ, обновляем TURN-креды и повторяем (попытка %d): %s", wid, attempt, errStr)
 						refreshCreds("TURN Allocate attribute-not-found")
 					} else if turnCredRefreshNeeded {
-						log.Printf("[ВОРКЕР #%d] [TURN] Ошибка allocation/кредов, обновляем TURN-креды и повторяем (попытка %d): %s", wid, attempt, errStr)
+						logf("[ВОРКЕР #%d] [TURN] Ошибка allocation/кредов, обновляем TURN-креды и повторяем (попытка %d): %s", wid, attempt, errStr)
 						refreshCreds("TURN allocation error")
 					} else {
-						log.Printf("[ВОРКЕР #%d] Ошибка (попытка %d): %s", wid, attempt, errStr)
+						logf("[ВОРКЕР #%d] Ошибка (попытка %d): %s", wid, attempt, errStr)
 					}
 
 					// Если ошибка STUN (credentials invalid), воркер не сможет переподключиться. Завершаем.
@@ -237,7 +237,7 @@ func WorkerGroup(
 						strings.Contains(errStrLower, "cannot create socket")
 
 					if isStunDeath {
-						log.Printf("[ВОРКЕР #%d] Невосстановимая TURN/STUN ошибка, завершение: %s", wid, errStr)
+						logf("[ВОРКЕР #%d] Невосстановимая TURN/STUN ошибка, завершение: %s", wid, errStr)
 						return
 					}
 				}
@@ -262,7 +262,7 @@ func WorkerGroup(
 	}
 
 	wg.Wait()
-	log.Printf("[ГРУППА #%d] Все воркеры группы завершились.", groupID)
+	logf("[ГРУППА #%d] Все воркеры группы завершились.", groupID)
 }
 
 // ParseHashes — парсит строку хешей

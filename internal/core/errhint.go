@@ -1,4 +1,5 @@
 package core
+
 import "strings"
 
 // workerErrorHint возвращает короткую подсказку для пользователя по тексту ошибки воркера.

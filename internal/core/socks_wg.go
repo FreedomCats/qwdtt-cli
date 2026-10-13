@@ -1,9 +1,9 @@
 package core
+
 import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -176,6 +176,6 @@ func startUserspaceWireGuard(conf string) (*device.Device, *netstack.Net, error)
 		dev.Close()
 		return nil, nil, fmt.Errorf("Up: %w", err)
 	}
-	log.Printf("[SOCKS] Userspace WireGuard up (addr=%v endpoint=%s)", cfg.addresses, cfg.endpoint)
+	logf("[SOCKS] Userspace WireGuard up (addr=%v endpoint=%s)", cfg.addresses, cfg.endpoint)
 	return dev, tnet, nil
 }

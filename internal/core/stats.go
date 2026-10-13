@@ -1,6 +1,6 @@
 package core
+
 import (
-	"log"
 	"sync/atomic"
 	"time"
 )
@@ -31,7 +31,7 @@ func (s *Stats) RunLoop(shutdown <-chan struct{}) {
 			upMB := float64(up) / (1024.0 * 1024.0)
 			downMB := float64(down) / (1024.0 * 1024.0)
 
-			log.Printf("[СТАТИСТИКА] Активных: %d | Трафик: %.2f МБ | ↓%.2f МБ / ↑%.2f МБ", active, totalMB, downMB, upMB)
+			logf("[СТАТИСТИКА] Активных: %d | Трафик: %.2f МБ | ↓%.2f МБ / ↑%.2f МБ", active, totalMB, downMB, upMB)
 			emit(EventStats{ActiveWorkers: active, BytesUp: up, BytesDown: down})
 		}
 	}

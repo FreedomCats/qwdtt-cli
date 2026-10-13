@@ -1,10 +1,10 @@
 package core
+
 import (
 	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
-	"log"
 	"math/rand"
 	"net"
 	"strings"
@@ -198,9 +198,9 @@ func RunSession(
 	defer turnConnCloser.Close()
 
 	if tp.TCPTransport {
-		log.Printf("[СЕССИЯ #%d] TURN TCP (%s)", sessionID, turnAddr)
+		logf("[СЕССИЯ #%d] TURN TCP (%s)", sessionID, turnAddr)
 	} else {
-		log.Printf("[СЕССИЯ #%d] TURN UDP (%s)", sessionID, turnAddr)
+		logf("[СЕССИЯ #%d] TURN UDP (%s)", sessionID, turnAddr)
 	}
 
 	// RequestedAddressFamily
@@ -266,7 +266,7 @@ func RunSession(
 	// Reset error count on successful allocation
 	getStreamCache(creds.CacheStreamID).errorCount.Store(0)
 
-	log.Printf("[СЕССИЯ #%d] Relay: %s", sessionID, relay.LocalAddr())
+	logf("[СЕССИЯ #%d] Relay: %s", sessionID, relay.LocalAddr())
 	emitStage(StageTURN, StageOK, sessionID, relay.LocalAddr().String())
 
 	sessCtx, sessCancel := context.WithCancel(ctx)
@@ -311,7 +311,7 @@ func RunSession(
 			cfg:        obfsCfg,
 			writeState: obfsWriteState,
 		}
-		log.Printf("[ВОРКЕР #%d] [ПРЯМОЙ] Без DTLS, только RTP-obfs AEAD ✓", sessionID)
+		logf("[ВОРКЕР #%d] [ПРЯМОЙ] Без DTLS, только RTP-obfs AEAD ✓", sessionID)
 		emitStage(StageDTLS, StageOK, sessionID, "без DTLS, только RTP-obfs AEAD")
 	} else {
 		// ─── Классический режим: DTLS поверх RTP-obfs (обратная совместимость) ───
@@ -356,12 +356,12 @@ func RunSession(
 				payload := buf[:n]
 				if useWrap {
 					if !obfsIsRTPPacket(payload) {
-						log.Printf("[СЕССИЯ #%d] OBFS unwrap: unexpected packet (n=%d)", sessionID, n)
+						logf("[СЕССИЯ #%d] OBFS unwrap: unexpected packet (n=%d)", sessionID, n)
 						continue
 					}
 					m, wrapErr := obfsUnwrapPacket(tp.WrapKey, payload, plain)
 					if wrapErr != nil {
-						log.Printf("[СЕССИЯ #%d] OBFS unwrap: %v (n=%d)", sessionID, wrapErr, n)
+						logf("[СЕССИЯ #%d] OBFS unwrap: %v (n=%d)", sessionID, wrapErr, n)
 						continue
 					}
 					if !replay.accept(payload) {
@@ -370,7 +370,7 @@ func RunSession(
 					payload = plain[:m]
 				}
 				if atomic.CompareAndSwapUint32(&firstWrapUp, 0, 1) {
-					log.Printf("[СЕССИЯ #%d] [ДЕБАГ] Успешно расшифрован/получен ПЕРВЫЙ пакет от TURN Relay (%d байт)", sessionID, len(payload))
+					logf("[СЕССИЯ #%d] [ДЕБАГ] Успешно расшифрован/получен ПЕРВЫЙ пакет от TURN Relay (%d байт)", sessionID, len(payload))
 				}
 				if _, writeErr := pipeA.WriteTo(payload, peer); writeErr != nil {
 					return
@@ -393,14 +393,14 @@ func RunSession(
 					if dtlsObfsCfg != nil && obfsWriteState != nil {
 						wrapped, wrapErr := obfsWrapPacket(tp.WrapKey, out, dtlsObfsCfg, obfsWriteState)
 						if wrapErr != nil {
-							log.Printf("[СЕССИЯ #%d] OBFS wrap: %v", sessionID, wrapErr)
+							logf("[СЕССИЯ #%d] OBFS wrap: %v", sessionID, wrapErr)
 							return
 						}
 						out = wrapped
 					}
 				}
 				if atomic.CompareAndSwapUint32(&firstWrapDown, 0, 1) {
-					log.Printf("[СЕССИЯ #%d] [ДЕБАГ] Успешно зашифрован/отправлен ПЕРВЫЙ пакет на TURN Relay (%d байт)", sessionID, len(out))
+					logf("[СЕССИЯ #%d] [ДЕБАГ] Успешно зашифрован/отправлен ПЕРВЫЙ пакет на TURN Relay (%d байт)", sessionID, len(out))
 				}
 				if _, writeErr := relay.WriteTo(out, peer); writeErr != nil {
 					return
@@ -438,7 +438,7 @@ func RunSession(
 		}
 
 		hctx, hcancel := context.WithTimeout(sessCtx, 50*time.Second)
-		log.Printf("[ВОРКЕР #%d] [DTLS] Рукопожатие (Handshake)...", sessionID)
+		logf("[ВОРКЕР #%d] [DTLS] Рукопожатие (Handshake)...", sessionID)
 		emitStage(StageDTLS, StageRunning, sessionID, "")
 		err = dtlsConn.HandshakeContext(hctx)
 		hcancel()
@@ -455,7 +455,7 @@ func RunSession(
 			emitStage(StageDTLS, StageFailed, sessionID, err.Error())
 			return false, fmt.Errorf("DTLS хендшейк: %w", err)
 		}
-		log.Printf("[ВОРКЕР #%d] [DTLS] Соединение установлено ✓", sessionID)
+		logf("[ВОРКЕР #%d] [DTLS] Соединение установлено ✓", sessionID)
 		emitStage(StageDTLS, StageOK, sessionID, "")
 		activeConn = dtlsConn
 	}
@@ -472,19 +472,19 @@ func RunSession(
 			if strings.Contains(errStr, "FATAL_AUTH") {
 				return false, confErr
 			}
-			log.Printf("[ВОРКЕР #%d] Ошибка RAW-конфига: %v", sessionID, confErr)
+			logf("[ВОРКЕР #%d] Ошибка RAW-конфига: %v", sessionID, confErr)
 		} else if ip != "" {
 			conf := fmt.Sprintf("RAWCONF:%s|%s|%d", ip, dnsCSV, mtu)
 			select {
 			case configCh <- conf:
 				configDelivered = true
-				log.Printf("[ВОРКЕР #%d] RAW-конфиг получен (ip=%s)", sessionID, ip)
+				logf("[ВОРКЕР #%d] RAW-конфиг получен (ip=%s)", sessionID, ip)
 			default:
 				configDelivered = true
-				log.Printf("[ВОРКЕР #%d] RAW-конфиг уже был доставлен другим воркером", sessionID)
+				logf("[ВОРКЕР #%d] RAW-конфиг уже был доставлен другим воркером", sessionID)
 			}
 		} else {
-			log.Printf("[ВОРКЕР #%d] Сервер ещё не назначил raw IP, повторим позже", sessionID)
+			logf("[ВОРКЕР #%d] Сервер ещё не назначил raw IP, повторим позже", sessionID)
 		}
 	} else if getConfig && configCh != nil {
 		conf, confErr := RequestConfig(activeConn, localPort, deviceID, password)
@@ -493,26 +493,26 @@ func RunSession(
 			if strings.Contains(errStr, "FATAL_AUTH") {
 				return false, confErr
 			}
-			log.Printf("[ВОРКЕР #%d] Ошибка конфига: %v", sessionID, confErr)
+			logf("[ВОРКЕР #%d] Ошибка конфига: %v", sessionID, confErr)
 		} else if conf != "" {
 			select {
 			case configCh <- conf:
 				configDelivered = true
-				log.Printf("[ВОРКЕР #%d] Конфиг получен", sessionID)
+				logf("[ВОРКЕР #%d] Конфиг получен", sessionID)
 			default:
 				configDelivered = true
-				log.Printf("[ВОРКЕР #%d] Конфиг уже был доставлен другим воркером", sessionID)
+				logf("[ВОРКЕР #%d] Конфиг уже был доставлен другим воркером", sessionID)
 			}
 		} else {
-			log.Printf("[ВОРКЕР #%d] Сервер ещё не выдал WireGuard-конфиг, повторим позже", sessionID)
+			logf("[ВОРКЕР #%d] Сервер ещё не выдал WireGuard-конфиг, повторим позже", sessionID)
 		}
 	} else {
 		if authErr := SendAuth(activeConn, deviceID, password); authErr != nil {
-			log.Printf("[ВОРКЕР #%d] Ошибка авторизации: %v", sessionID, authErr)
+			logf("[ВОРКЕР #%d] Ошибка авторизации: %v", sessionID, authErr)
 		}
 	}
 
-	log.Printf("[ВОРКЕР #%d] [READY] Туннель готов к работе ✓", sessionID)
+	logf("[ВОРКЕР #%d] [READY] Туннель готов к работе ✓", sessionID)
 	emitStage(StageWorkers, StageOK, sessionID, "")
 
 	// Регистрация в диспетчере
@@ -634,12 +634,12 @@ func RunSession(
 			// диспетчером выше (см. readLoop в dispatcher.go).
 			_ = activeConn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 			if atomic.CompareAndSwapUint32(&firstWireWrite, 0, 1) {
-				log.Printf("[ВОРКЕР #%d] [ДЕБАГ] Отправлен ПЕРВЫЙ пакет в соединение (%d байт)", sessionID, len(pkt))
+				logf("[ВОРКЕР #%d] [ДЕБАГ] Отправлен ПЕРВЫЙ пакет в соединение (%d байт)", sessionID, len(pkt))
 			}
 			_, writeErr := activeConn.Write(pkt)
 			putPktBuf(pkt)
 			if writeErr != nil {
-				log.Printf("[ВОРКЕР #%d] Ошибка Writer: %v", sessionID, writeErr)
+				logf("[ВОРКЕР #%d] Ошибка Writer: %v", sessionID, writeErr)
 				select {
 				case sessionErrCh <- fmt.Errorf("transport writer: %w", writeErr):
 				default:
@@ -664,7 +664,7 @@ func RunSession(
 				if ne, ok := readErr.(net.Error); ok && ne.Timeout() {
 					continue
 				}
-				log.Printf("[ВОРКЕР #%d] Ошибка Reader: %v", sessionID, readErr)
+				logf("[ВОРКЕР #%d] Ошибка Reader: %v", sessionID, readErr)
 				select {
 				case sessionErrCh <- fmt.Errorf("transport reader: %w", readErr):
 				default:
@@ -678,7 +678,7 @@ func RunSession(
 			}
 
 			if atomic.CompareAndSwapUint32(&firstWireRead, 0, 1) {
-				log.Printf("[ВОРКЕР #%d] [ДЕБАГ] Получен ПЕРВЫЙ пакет из соединения (%d байт)", sessionID, n)
+				logf("[ВОРКЕР #%d] [ДЕБАГ] Получен ПЕРВЫЙ пакет из соединения (%d байт)", sessionID, n)
 			}
 
 			pkt := getPktBuf(n)
@@ -708,7 +708,7 @@ func RunSession(
 	sessCancel()
 	relayWg.Wait()
 	sessionWg.Wait()
-	log.Printf("[СЕССИЯ #%d] Завершена", sessionID)
+	logf("[СЕССИЯ #%d] Завершена", sessionID)
 	select {
 	case sessionErr := <-sessionErrCh:
 		return configDelivered, sessionErr

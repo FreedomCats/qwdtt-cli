@@ -1,4 +1,5 @@
 package core
+
 import (
 	"context"
 	"fmt"
@@ -54,7 +55,7 @@ func (socksLogFilter) Write(p []byte) (n int, err error) {
 	if isBenignSocksNoise(msg) {
 		return len(p), nil
 	}
-	log.Print(strings.TrimRight(msg, "\r\n"))
+	logln(strings.TrimRight(msg, "\r\n"))
 	return len(p), nil
 }
 
@@ -116,7 +117,7 @@ func runSocks5Server(ctx context.Context, listenAddr string, tnet *netstack.Net,
 		_ = ln.Close()
 	}()
 
-	log.Printf("[SOCKS] listening %s", listenAddr)
+	logf("[SOCKS] listening %s", listenAddr)
 	err = server.Serve(ln)
 	if ctx.Err() != nil {
 		return nil

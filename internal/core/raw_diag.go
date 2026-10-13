@@ -1,6 +1,6 @@
 package core
+
 import (
-	"log"
 	"time"
 )
 
@@ -10,5 +10,5 @@ import (
 // таймлайна подъёма Raw TUN на устройствах, где он подвисает.
 func rawDiagf(format string, args ...any) {
 	ts := time.Now().Format("15:04:05.000")
-	log.Printf("[RAW-DIAG %s] "+format, append([]any{ts}, args...)...)
+	logf("[RAW-DIAG %s] "+format, append([]any{ts}, args...)...)
 }

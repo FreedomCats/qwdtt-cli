@@ -1,11 +1,11 @@
 package core
+
 import (
 	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	neturl "net/url"
@@ -314,7 +314,7 @@ func (c *dohConn) SetWriteDeadline(time.Time) error { return nil }
 func setupDoHResolver(arg string, endpoints []string) {
 	client := newDoHHTTPClient()
 
-	log.Printf(
+	logf(
 		"[КЛИЕНТ] DNS для VK: %s (%s) — DoH",
 		goDNSLabel(arg),
 		formatDoHEndpoints(endpoints),

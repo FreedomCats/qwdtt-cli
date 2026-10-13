@@ -16,6 +16,7 @@
 // client always WRITES the plain 12-byte form.
 
 package core
+
 import (
 	"crypto/cipher"
 	"crypto/rand"

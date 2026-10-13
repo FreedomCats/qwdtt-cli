@@ -1,7 +1,7 @@
 package core
+
 import (
 	"encoding/json"
-	"log"
 	"math/rand"
 	"os"
 )
@@ -65,7 +65,7 @@ func rotateCaptchaProfile() (*SavedProfile, error) {
 	if err := os.WriteFile(captchaBrowserFpFile, []byte(fp), 0644); err != nil {
 		return nil, err
 	}
-	log.Printf("[КАПЧА] captcha profile rotated (fp=%s...)", fp[:8])
+	logf("[КАПЧА] captcha profile rotated (fp=%s...)", fp[:8])
 	return sp, nil
 }
 

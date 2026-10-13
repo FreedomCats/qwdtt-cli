@@ -1,7 +1,7 @@
 package core
+
 import (
 	"context"
-	"log"
 	"net"
 	"os"
 	"sync"
@@ -174,7 +174,7 @@ func (d *Dispatcher) Register(w *WorkerSlot) {
 	d.workers = append(d.workers, w)
 	count := len(d.workers)
 	d.mu.Unlock()
-	log.Printf("[ДИСП] Воркер #%d зарегистрирован (всего: %d)", w.ID, count)
+	logf("[ДИСП] Воркер #%d зарегистрирован (всего: %d)", w.ID, count)
 }
 
 func (d *Dispatcher) Unregister(slot *WorkerSlot) {
@@ -192,7 +192,7 @@ func (d *Dispatcher) Unregister(slot *WorkerSlot) {
 	}
 	d.rrCount = 0
 	d.mu.Unlock()
-	log.Printf("[ДИСП] Воркер #%d отключён (осталось: %d)", slot.ID, remaining)
+	logf("[ДИСП] Воркер #%d отключён (осталось: %d)", slot.ID, remaining)
 }
 
 // readLoop читает пакеты (из локального WG-loopback или TUN) и распределяет
@@ -265,9 +265,9 @@ func (d *Dispatcher) readLoop() {
 
 		if atomic.CompareAndSwapUint32(&d.firstPktUp, 0, 1) {
 			if d.tunFile != nil {
-				log.Printf("[ДИСП] [ДЕБАГ] Получен ПЕРВЫЙ пакет от TUN (%d байт)", n)
+				logf("[ДИСП] [ДЕБАГ] Получен ПЕРВЫЙ пакет от TUN (%d байт)", n)
 			} else {
-				log.Printf("[ДИСП] [ДЕБАГ] Получен ПЕРВЫЙ пакет от локального WireGuard (%d байт) с адреса %s", n, addr.String())
+				logf("[ДИСП] [ДЕБАГ] Получен ПЕРВЫЙ пакет от локального WireGuard (%d байт) с адреса %s", n, addr.String())
 			}
 		}
 
@@ -406,7 +406,7 @@ func (d *Dispatcher) writeLoop() {
 		case pkt := <-d.ReturnCh:
 			if d.tunFile != nil {
 				if atomic.CompareAndSwapUint32(&d.firstPktDown, 0, 1) {
-					log.Printf("[ДИСП] [ДЕБАГ] Отправляем ПЕРВЫЙ пакет обратно в TUN (%d байт)", len(pkt))
+					logf("[ДИСП] [ДЕБАГ] Отправляем ПЕРВЫЙ пакет обратно в TUN (%d байт)", len(pkt))
 				}
 				if _, err := d.tunFile.Write(pkt); err != nil {
 					if d.ctx.Err() != nil {
@@ -429,7 +429,7 @@ func (d *Dispatcher) writeLoop() {
 			}
 			addr := *addrPtr
 			if atomic.CompareAndSwapUint32(&d.firstPktDown, 0, 1) {
-				log.Printf("[ДИСП] [ДЕБАГ] Отправляем ПЕРВЫЙ пакет обратно локальному WireGuard (%d байт) на адрес %s", len(pkt), addr.String())
+				logf("[ДИСП] [ДЕБАГ] Отправляем ПЕРВЫЙ пакет обратно локальному WireGuard (%d байт) на адрес %s", len(pkt), addr.String())
 			}
 			if _, err := d.localConn.WriteTo(pkt, addr); err != nil {
 				if d.ctx.Err() != nil {

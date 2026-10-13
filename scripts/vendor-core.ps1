@@ -279,6 +279,16 @@ $replacements = @(
         InsertAfter = 'emitStage(StageWorkers, StageOK, sessionID, "")'
     }
 
+    # --- формат вывода перестаёт быть делом ядра ---
+    # Библиотека не вправе переставлять флаги глобального логгера: как выглядит
+    # строка лога, решает CLI, который получает EventLog (задача B3).
+    @{
+        File    = 'main.go'
+        Count   = 1
+        Pattern = '(?m)^\t+log\.SetFlags\(log\.Ldate \| log\.Ltime \| log\.Lmicroseconds\)\n\n'
+        Replace = ''
+    }
+
     # --- счётчики трафика ---
     @{
         File        = 'stats.go'
@@ -287,6 +297,20 @@ $replacements = @(
         InsertAfter = 'emit(EventStats{ActiveWorkers: active, BytesUp: up, BytesDown: down})'
     }
 )
+
+# Логи ядра уходят в Sink (задача B3). Замена сплошная — вызовов больше сотни
+# и они во всех файлах, поэтому она идёт отдельным проходом, а не правилами
+# со счётчиком: ноль совпадений в конкретном файле здесь норма.
+#
+# Тела logf, logln, fatalf и fatalln — в internal/core/log.go.
+$logReplacements = [ordered]@{
+    '\blog\.Printf\('  = 'logf('
+    '\blog\.Println\(' = 'logln('
+    '\blog\.Print\('   = 'logln('
+    '\blog\.Fatalf\('  = 'fatalf('
+    '\blog\.Fatalln\(' = 'fatalln('
+    '\blog\.Fatal\('   = 'fatalln('
+}
 
 # ================================================================================
 
@@ -321,8 +345,12 @@ function Convert-CoreFile {
     # Шаблоны замен написаны под LF: с CRLF не совпал бы ни один якорь строки.
     $Text = $Text -replace "`r`n", "`n"
 
-    # package main -> package core
-    $Text = [regex]::Replace($Text, '(?m)^package\s+main\s*$', 'package core')
+    # package main -> package core.
+    #
+    # Пробельные классы здесь строго горизонтальные: \s захватывает и перевод
+    # строки, поэтому вариант со \s*$ съедал пустую строку после объявления
+    # пакета, и gofmt считал неотформатированным всё ядро разом.
+    $Text = [regex]::Replace($Text, '(?m)^package[ \t]+main[ \t]*$', 'package core')
 
     foreach ($rule in $replacements) {
         if ($rule.File -ne $Name) { continue }
@@ -348,6 +376,17 @@ function Convert-CoreFile {
         }
 
         $Text = [regex]::Replace($Text, $rule.Pattern, $replacement)
+    }
+
+    foreach ($pattern in $logReplacements.Keys) {
+        $Text = [regex]::Replace($Text, $pattern, $logReplacements[$pattern])
+    }
+
+    # Импорт "log" остаётся только там, где ядро всё ещё им пользуется:
+    # socks5.go отдаёт *log.Logger чужой библиотеке SOCKS5, и это не наш вывод,
+    # а её собственный — он проходит через фильтр и уже оттуда попадает в logln.
+    if ($Text -notmatch '\blog\.') {
+        $Text = [regex]::Replace($Text, '(?m)^\t"log"\n', '')
     }
 
     if ($buildTags.ContainsKey($Name)) {
@@ -398,6 +437,20 @@ foreach ($name in ($generatedFiles.Keys | Sort-Object)) {
 }
 $planned['CORE_VERSION'] = ($header -join "`n") + "`n"
 
+# Единый вид записи: LF и ровно один перевод строки в конце.
+#
+# Хвостовой перевод строки обязателен: без него gofmt считает файл
+# неотформатированным, а here-string его не даёт — и тогда `gofmt -l` показывает
+# всё ядро разом и перестаёт что-либо значить. Ключи копируются в массив,
+# потому что коллекцию нельзя менять прямо во время обхода.
+foreach ($name in @($planned.Keys)) {
+    $text = $planned[$name] -replace "`r`n", "`n"
+    if (-not $text.EndsWith("`n")) {
+        $text += "`n"
+    }
+    $planned[$name] = $text
+}
+
 # Имена, которыми распоряжается скрипт. Всё остальное в internal/core — наше.
 $ownedNames = @($sourceFiles | ForEach-Object { $_.Name }) + @($generatedFiles.Keys)
 
@@ -413,7 +466,7 @@ if ($Check) {
             continue
         }
         $current = (Get-Content -LiteralPath $path -Raw -Encoding UTF8) -replace "`r`n", "`n"
-        if ($current -ne ($planned[$name] -replace "`r`n", "`n")) {
+        if ($current -ne $planned[$name]) {
             $problems += "расходится: $name"
         }
     }
@@ -444,8 +497,7 @@ foreach ($file in $stale) {
 foreach ($name in $planned.Keys) {
     $path = Join-Path $target $name
     # UTF8 без BOM и с LF: так дифф против апстрима не забивается концами строк.
-    $text = $planned[$name] -replace "`r`n", "`n"
-    [System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding($false)))
+    [System.IO.File]::WriteAllText($path, $planned[$name], (New-Object System.Text.UTF8Encoding($false)))
 }
 
 Write-Host "Перенесено из апстрима: $($sourceFiles.Count)" -ForegroundColor Green

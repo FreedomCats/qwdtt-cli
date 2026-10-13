@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 package core
+
 import (
 	"crypto/sha256"
 	"errors"

@@ -1,10 +1,10 @@
 package core
+
 import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 	"sync"
@@ -145,7 +145,7 @@ func loadVkCredsFile(path string) error {
 	for link, payload := range file.Hashes {
 		injectTurnCreds(link, payload.User, payload.Pass, payload.URLs)
 	}
-	log.Printf("[VK Auth] Loaded %d account TURN credential set(s) from file", len(file.Hashes))
+	logf("[VK Auth] Loaded %d account TURN credential set(s) from file", len(file.Hashes))
 	return nil
 }
 
@@ -164,16 +164,16 @@ func handleTurnCredsStdinLine(line string) {
 	link := strings.TrimSpace(parts[0])
 	payloadRaw, err := base64.StdEncoding.DecodeString(parts[1])
 	if err != nil {
-		log.Printf("[VK Auth] TURN_CREDS decode error: %v", err)
+		logf("[VK Auth] TURN_CREDS decode error: %v", err)
 		return
 	}
 	var payload turnCredsPayload
 	if err := json.Unmarshal(payloadRaw, &payload); err != nil {
-		log.Printf("[VK Auth] TURN_CREDS JSON error: %v", err)
+		logf("[VK Auth] TURN_CREDS JSON error: %v", err)
 		return
 	}
 	if payload.User == "" || payload.Pass == "" || len(payload.URLs) == 0 {
-		log.Printf("[VK Auth] TURN_CREDS rejected: empty fields for link %s", link)
+		logf("[VK Auth] TURN_CREDS rejected: empty fields for link %s", link)
 		return
 	}
 		injectTurnCreds(link, payload.User, payload.Pass, payload.URLs)
@@ -181,7 +181,7 @@ func handleTurnCredsStdinLine(line string) {
 		payload.URLs = cloneStringSlice(normalized)
 		drainTurnCredsResult()
 		TurnCredsResultChan <- payload
-	log.Printf("[VK Auth] Account TURN creds received for link %s (urls=%d)", link, len(payload.URLs))
+	logf("[VK Auth] Account TURN creds received for link %s (urls=%d)", link, len(payload.URLs))
 }
 
 func requestAccountTurnCreds(ctx context.Context, link string, streamID int) (string, string, []string, error) {
@@ -192,7 +192,7 @@ func requestAccountTurnCreds(ctx context.Context, link string, streamID int) (st
 
 	drainTurnCredsResult()
 	emit(EventVkAuthRequired{Link: link})
-	log.Printf("[STREAM %d] [VK Auth] Waiting for account TURN creds (link=%s...)", streamID, shortLink(link))
+	logf("[STREAM %d] [VK Auth] Waiting for account TURN creds (link=%s...)", streamID, shortLink(link))
 
 	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
@@ -221,7 +221,7 @@ func shortLink(link string) string {
 
 func fetchAccountVkCreds(ctx context.Context, link string, streamID int) (string, string, []string, error) {
 	if u, p, urls, ok := getInjectedTurnCreds(link); ok {
-		log.Printf("[STREAM %d] [VK Auth] Using injected account creds (urls=%d)", streamID, len(urls))
+		logf("[STREAM %d] [VK Auth] Using injected account creds (urls=%d)", streamID, len(urls))
 		return u, p, urls, nil
 	}
 	return requestAccountTurnCreds(ctx, link, streamID)

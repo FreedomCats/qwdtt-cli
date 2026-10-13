@@ -1,4 +1,5 @@
 package core
+
 import (
 	"fmt"
 	"math/rand"
