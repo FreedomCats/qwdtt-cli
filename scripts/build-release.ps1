@@ -3,7 +3,8 @@
     Собирает релиз tt: три бинаря и zip для Windows.
 
 .DESCRIPTION
-    Сборка воспроизводима из чистого клона: скрипту нужны только go и git.
+    Сборка воспроизводима из чистого клона: скрипту нужны go, git и доступ
+    к wintun.net (или уже скачанный архив Wintun, см. -WintunArchive).
     Для каждой платформы из $Platforms делается
 
         go build -trimpath -ldflags "-s -w -X main.version=… -X main.commit=…"
@@ -17,7 +18,12 @@
         dist/tt_<версия>_windows_amd64/tt.exe
         dist/tt_<версия>_linux_amd64/tt
         dist/tt_<версия>_darwin_arm64/tt
-        dist/tt_<версия>_windows_amd64.zip   — tt.exe, tt.example.toml, LICENSE, README.md
+        dist/tt_<версия>_windows_amd64.zip   — tt.exe, wintun.dll, wintun-LICENSE.txt,
+                                               tt.example.toml, LICENSE, README.md
+
+    wintun.dll (режим -datapath wintun) кладётся в zip скриптом
+    scripts/fetch-wintun.ps1: фиксированная версия, проверка SHA256 архива и
+    подписи DLL. В репозитории её нет.
 
     Zip собирается только для Windows: это единственная платформа, для которой
     в Э1 есть все datapath и живая проверка. Остальные бинари лежат рядом как есть.
@@ -39,7 +45,10 @@
     darwin/arm64.
 
 .PARAMETER NoZip
-    Не собирать zip.
+    Не собирать zip (и не брать wintun.dll).
+
+.PARAMETER WintunArchive
+    Уже скачанный wintun-<версия>.zip для fetch-wintun.ps1 — сборка без сети.
 
 .EXAMPLE
     pwsh scripts/build-release.ps1
@@ -51,7 +60,8 @@ param(
     [string]   $Version,
     [string]   $Out,
     [string[]] $Platforms = @('windows/amd64', 'linux/amd64', 'darwin/arm64'),
-    [switch]   $NoZip
+    [switch]   $NoZip,
+    [string]   $WintunArchive
 )
 
 $ErrorActionPreference = 'Stop'
@@ -121,6 +131,7 @@ foreach ($platform in $Platforms) {
     $built += [pscustomobject]@{
         Platform = $platform
         GOOS     = $goos
+        GOARCH   = $goarch
         Dir      = $dir
         Name     = $name
         Exe      = $target
@@ -135,6 +146,9 @@ if (-not $NoZip) {
         foreach ($extra in @('tt.example.toml', 'LICENSE', 'README.md')) {
             Copy-Item (Join-Path $root $extra) (Join-Path $b.Dir $extra)
         }
+        $fetch = @{ Arch = $b.GOARCH; Dest = $b.Dir }
+        if ($WintunArchive) { $fetch.Archive = $WintunArchive }
+        & (Join-Path $PSScriptRoot 'fetch-wintun.ps1') @fetch
         $zip = Join-Path $Out "$($b.Name).zip"
         if (Test-Path $zip) { Remove-Item -Force $zip }
         # Внутри архива — файлы без каталога: распаковал и запустил.
