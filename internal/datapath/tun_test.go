@@ -30,6 +30,8 @@ type fakeTun struct {
 	// routed — стоят ли маршруты; routesErr — отказ их постановки.
 	routed    atomic.Bool
 	routesErr error
+	// noIPv6 — туннель не везёт IPv6 (Linux, MTU < 1280).
+	noIPv6 atomic.Bool
 	// configured — сколько раз адаптер перенастраивался (без создания).
 	configured atomic.Int32
 	// flushed — сброс адаптера; flushedBeforeTUN — пока TUN ещё открыт
@@ -65,6 +67,7 @@ func (f *fakeTun) open(name string, conf *WGConfig, logf func(string, ...any)) (
 			f.routed.Store(false)
 			return nil
 		},
+		ipv6Routed: func() bool { return !f.noIPv6.Load() },
 		flush: func() error {
 			f.flushed.Add(1)
 			f.flushedBeforeTUN.Store(f.tun.closed.Load() == 0)

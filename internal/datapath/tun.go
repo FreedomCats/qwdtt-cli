@@ -81,6 +81,9 @@ type tunAdapter struct {
 	// адаптер; оба безвредны повторно. Сам адаптер при этом остаётся.
 	addRoutes    func() error
 	removeRoutes func() error
+	// ipv6Routed — везёт ли туннель IPv6 после addRoutes: на Linux при MTU
+	// меньше 1280 маршрутов IPv6 нет. nil — везёт всегда (Windows).
+	ipv6Routed func() bool
 	// flush снимает с адаптера маршруты, адреса и DNS перед закрытием;
 	// nil — нечего снимать (подделки в тестах).
 	flush func() error
@@ -278,6 +281,7 @@ func (w *Tun) route(adapter *tunAdapter, conf *WGConfig) error {
 	if err := adapter.addRoutes(); err != nil {
 		return fmt.Errorf("tun: маршруты: %w", err)
 	}
+	w.blockIPv6(adapter.ipv6Routed != nil && !adapter.ipv6Routed())
 	if err := w.enableDNSGuard(conf.DNS); err != nil {
 		_ = adapter.removeRoutes()
 		return fmt.Errorf("tun: %w", err)
@@ -366,6 +370,23 @@ func (w *Tun) enableDNSGuard(dns []netip.Addr) error {
 		return nil
 	}
 	return w.opts.DNSGuard.Enable(dns)
+}
+
+// blockIPv6 передаёт защите DNS, закрывать ли IPv6 системы: туннель его не
+// везёт, и без запрета он шёл бы мимо туннеля (plan-e4.md, D1).
+func (w *Tun) blockIPv6(block bool) {
+	blocker, ok := w.opts.DNSGuard.(IPv6Blocker)
+	if ok {
+		blocker.BlockIPv6(block)
+	}
+	switch {
+	case !block:
+	case ok:
+		w.logf("[TUN] IPv6 системы, кроме loopback и сокетов tt, закрыт защитой DNS: туннель его не везёт")
+	default:
+		w.logf("[TUN] Внимание: туннель не везёт IPv6, а закрыть его без защиты DNS нечем — " +
+			"IPv6 системы идёт мимо туннеля")
+	}
 }
 
 // disableDNSGuard снимает защиту DNS. Отказ только пишется: адаптера уже

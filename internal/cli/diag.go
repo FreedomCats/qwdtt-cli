@@ -121,7 +121,7 @@ func (plan *diagPlan) ping(ctx context.Context, e *env, verbose bool) error {
 	out.line("профиль %s: сервер %s, хешей %d, DNS %s",
 		plan.profile.Name, cfg.Peer, len(cfg.Hashes), cfg.DNS)
 	if netguardForced() {
-		guard, err := setupNetguard(out, verbose, false)
+		guard, err := setupNetguard(out, verbose, false, 0)
 		if err != nil {
 			return err
 		}
@@ -216,7 +216,7 @@ func (plan *diagPlan) hashes(ctx context.Context, e *env, verbose bool) error {
 
 	out.line("профиль %s: хешей %d, DNS %s", plan.profile.Name, len(cfg.Hashes), cfg.DNS)
 	if netguardForced() {
-		guard, err := setupNetguard(out, verbose, false)
+		guard, err := setupNetguard(out, verbose, false, 0)
 		if err != nil {
 			return err
 		}

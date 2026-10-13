@@ -98,13 +98,20 @@ type Requirements struct {
 }
 
 // DNSGuard — защита от утечки DNS, общая на весь tt connect (на Windows —
-// winsys.DNSGuard). Datapath включает её, когда туннель поднят, и выключает
-// в Close; оба вызова безвредны повторно.
+// winsys.DNSGuard, на Linux — linuxsys.DNSGuard). Datapath включает её,
+// когда туннель поднят, и выключает в Close; оба вызова безвредны повторно.
 type DNSGuard interface {
 	// Enable пускает DNS только к резолверам dns (и запросы самого tt).
 	Enable(dns []netip.Addr) error
 	// Disable снимает запрет.
 	Disable() error
+}
+
+// IPv6Blocker — необязательная часть DNSGuard (Linux): защита, которая
+// умеет заодно закрыть IPv6 системы, когда туннель его не везёт.
+type IPv6Blocker interface {
+	// BlockIPv6 задаёт, закрывать ли IPv6 при следующем Enable.
+	BlockIPv6(block bool)
 }
 
 // Reserver — необязательная часть Datapath: реализация, которой до

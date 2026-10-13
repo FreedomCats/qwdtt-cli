@@ -1,8 +1,9 @@
 // dnsguard.go — защита от утечки DNS для datapath, которые забирают весь
 // трафик системы (задача W4 Э2, Requirements.DNSGuard).
 //
-// Сессия WFP открывается здесь, до первой попытки, и живёт весь tt connect;
-// правила ставит и снимает сам datapath. Отказ — по умолчанию ошибка с
+// Сессия WFP (на Linux — таблица nftables, plan-e4.md, D1) открывается здесь,
+// до первой попытки, и живёт весь tt connect; правила ставит и снимает сам
+// datapath. Отказ — по умолчанию ошибка с
 // подсказкой про -allow-dns-leak (решение пользователя: подключение без
 // защиты — только явным согласием).
 package cli
@@ -13,24 +14,18 @@ import (
 	"net/netip"
 
 	"github.com/FreedomCats/qwdtt-cli/internal/datapath"
-	"github.com/FreedomCats/qwdtt-cli/internal/winsys"
 )
 
-// dnsGuardSession — то, что CLI получает от winsys.DNSGuard.
+// dnsGuardSession — то, что CLI получает от winsys.DNSGuard и
+// linuxsys.DNSGuard.
 type dnsGuardSession interface {
 	datapath.DNSGuard
 	Close() error
 }
 
-// openDNSGuard — переменная ради тестов: настоящая сессия WFP требует прав
-// администратора.
-var openDNSGuard = func() (dnsGuardSession, error) {
-	g, err := winsys.OpenDNSGuard()
-	if err != nil {
-		return nil, err
-	}
-	return g, nil
-}
+// openDNSGuard — переменная ради тестов: настоящая защита требует прав
+// администратора (root на Linux). Платформенная — openSystemDNSGuard.
+var openDNSGuard = openSystemDNSGuard
 
 // setupDNSGuard открывает защиту DNS и возвращает её для datapath вместе
 // с функцией закрытия. Без -allow-dns-leak отказ — ошибка, с ним —
@@ -71,3 +66,10 @@ func (g tolerantDNSGuard) Enable(dns []netip.Addr) error {
 }
 
 func (g tolerantDNSGuard) Disable() error { return g.guard.Disable() }
+
+// BlockIPv6 передаётся защите, если она это умеет (datapath.IPv6Blocker).
+func (g tolerantDNSGuard) BlockIPv6(block bool) {
+	if blocker, ok := g.guard.(datapath.IPv6Blocker); ok {
+		blocker.BlockIPv6(block)
+	}
+}

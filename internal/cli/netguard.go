@@ -32,10 +32,14 @@ func netguardForced() bool { return os.Getenv(netguardEnv) == "1" }
 // интерфейсе — отказ до подключения, строгий фильтр IPv6 — сокеты ядра
 // только IPv4 (plan-e4.md, T3).
 //
+// mark — метка SO_MARK сокетов ядра (Guard.Mark), 0 — без неё: по ней
+// защита DNS на Linux пропускает tt к DNS VK. Ставится, только когда защита
+// включена: без прав SO_MARK отказал бы (plan-e4.md, врезка N1, п. 1).
+//
 // Интерфейс выбирается здесь один раз; tt connect дальше следит за сменой
 // сети (watchNetwork), tt ping и tt hashes — нет: они короткие.
-func setupNetguard(out *printer, verbose, fullTunnel bool) (*netguard.Guard, error) {
-	guard := &netguard.Guard{}
+func setupNetguard(out *printer, verbose, fullTunnel bool, mark uint32) (*netguard.Guard, error) {
+	guard := &netguard.Guard{Mark: mark}
 	if verbose {
 		guard.Logf = out.logf
 	}

@@ -446,8 +446,9 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 		}
 		defer release()
 	}
-	// Сессия WFP — тоже до сети и на весь сеанс: отказ в Start супервизор
-	// принял бы за сбой попытки и ушёл бы в переподключения.
+	// Защита DNS (сессия WFP, на Linux — таблица nftables) — тоже до сети и
+	// на весь сеанс: отказ в Start супервизор принял бы за сбой попытки и
+	// ушёл бы в переподключения.
 	if req.DNSGuard {
 		guard, closeGuard, err := setupDNSGuard(out, e.stderr, plan.allowDNSLeak)
 		if err != nil {
@@ -467,8 +468,14 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	cfg := plan.cfg
 	var guard *netguard.Guard
 	if req.Netguard || netguardForced() {
+		// Метка сокетов ядра — только при включённой защите DNS: по ней
+		// nftables пропускает tt к DNS VK.
+		var mark uint32
+		if plan.dnsGuard != nil {
+			mark = dnsGuardMark
+		}
 		var err error
-		if guard, err = setupNetguard(out, verbose, req.Netguard); err != nil {
+		if guard, err = setupNetguard(out, verbose, req.Netguard, mark); err != nil {
 			return err
 		}
 		cfg.DialControl = guard.Control

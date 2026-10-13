@@ -95,21 +95,25 @@ func openTunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (*tu
 		configure: configure,
 		addRoutes: func() error {
 			routes := fullTunnelRoutes
-			if mtu > 0 && mtu < minMTU6 {
+			if !ipv6Routed(mtu) {
 				routes = ipv4Only(routes)
-				logf("[TUN] Внимание: при MTU %d ядро не держит IPv6 на %s — маршруты IPv6 не ставятся, "+
-					"и IPv6 системы идёт мимо туннеля", mtu, name)
+				logf("[TUN] при MTU %d ядро не держит IPv6 на %s — маршруты IPv6 не ставятся", mtu, name)
 			}
 			return linuxsys.SetTunnelRoutes(index, routes)
 		},
 		removeRoutes: func() error {
 			return linuxsys.ClearTunnelRoutes(index, fullTunnelRoutes)
 		},
+		ipv6Routed: func() bool { return ipv6Routed(mtu) },
 		// flush не нужен: адреса и маршруты уходят вместе с интерфейсом,
 		// когда закрывается TUN.
 		release: release,
 	}, nil
 }
+
+// ipv6Routed — ставятся ли при таком MTU маршруты IPv6 в туннель; 0 и
+// меньше — MTU не задан, ядро берёт своё.
+func ipv6Routed(mtu int) bool { return mtu <= 0 || mtu >= minMTU6 }
 
 // ipv4Only — маршруты только IPv4.
 func ipv4Only(routes []netip.Prefix) []netip.Prefix {

@@ -43,9 +43,15 @@ require (
 // сети на Linux, задача N2 Э4; тянет vishvananda/netns (Apache-2.0). Только из
 // *_linux.go. Модуль и раньше был в графе (требование gvisor), но в сборку не
 // попадал; версия поднята с v1.1.1-0.20211118161826-650dca95af54.
+// google/nftables (Apache-2.0) — защита от утечки DNS на Linux, задача D1 Э4;
+// тянет mdlayher/netlink и mdlayher/socket (MIT). Взят из ветки main, а не из
+// релиза: флаг таблицы owner (таблица уходит вместе с процессом) есть только
+// там. Только из *_linux.go. go-cmp (BSD-3) нужен лишь тестам mdlayher/netlink
+// и в бинарь не попадает.
 // Все лицензии с GPL v3 совместимы.
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/google/nftables v0.3.1-0.20260430172505-f9b52ed2ba65
 	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
 	github.com/tailscale/wf v0.0.0-20240214030419-6fbb0a674ee6
 	github.com/vishvananda/netlink v1.3.1
@@ -61,8 +67,11 @@ require (
 	github.com/bogdanfinn/utls v1.7.7-barnius // indirect
 	github.com/bogdanfinn/websocket v1.5.5-barnius // indirect
 	github.com/google/btree v1.1.2 // indirect
+	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/klauspost/compress v1.18.2 // indirect
+	github.com/mdlayher/netlink v1.8.1-0.20251028132421-dcc6cab9a6eb // indirect
+	github.com/mdlayher/socket v0.5.1 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pion/stun/v3 v3.1.6 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect

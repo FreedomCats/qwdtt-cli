@@ -6,6 +6,8 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+
+	"github.com/FreedomCats/qwdtt-cli/internal/datapath"
 )
 
 // fakeGuardSession — сессия защиты DNS без WFP.
@@ -118,6 +120,37 @@ func TestSetupDNSGuardAllowLeakTolerantEnable(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "[DNS] Внимание: правило не встало") {
 		t.Errorf("нет предупреждения об отказе правил: %q", stdout.String())
+	}
+}
+
+// blockingGuardSession — сессия, которая умеет закрывать IPv6.
+type blockingGuardSession struct {
+	fakeGuardSession
+	blockIPv6 bool
+}
+
+func (s *blockingGuardSession) BlockIPv6(block bool) { s.blockIPv6 = block }
+
+// С -allow-dns-leak обёртка не прячет от datapath умение закрыть IPv6.
+func TestSetupDNSGuardAllowLeakBlocksIPv6(t *testing.T) {
+	session := &blockingGuardSession{}
+	prev := openDNSGuard
+	openDNSGuard = func() (dnsGuardSession, error) { return session, nil }
+	t.Cleanup(func() { openDNSGuard = prev })
+	var stdout, stderr bytes.Buffer
+
+	guard, closeGuard, err := setupDNSGuard(newPrinter(&stdout, false), &stderr, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeGuard()
+	blocker, ok := guard.(datapath.IPv6Blocker)
+	if !ok {
+		t.Fatalf("%T не IPv6Blocker", guard)
+	}
+	blocker.BlockIPv6(true)
+	if !session.blockIPv6 {
+		t.Error("BlockIPv6 не дошёл до сессии")
 	}
 }
 

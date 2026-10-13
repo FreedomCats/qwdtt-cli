@@ -119,6 +119,65 @@ func TestTunDNSGuardFailure(t *testing.T) {
 	}
 }
 
+// blockingDNSGuard — защита, которая умеет закрывать IPv6 (IPv6Blocker).
+type blockingDNSGuard struct {
+	fakeDNSGuard
+	blocks []bool
+}
+
+func (g *blockingDNSGuard) BlockIPv6(block bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.blocks = append(g.blocks, block)
+}
+
+// Туннель не везёт IPv6 — защита узнаёт об этом до Enable и закрывает его;
+// везёт снова — запрет снимается. Без IPv6Blocker — строка «Внимание».
+func TestTunBlocksIPv6(t *testing.T) {
+	guard := &blockingDNSGuard{}
+	w, f, rec := newTestTun(t)
+	w.opts.DNSGuard = guard
+	f.noIPv6.Store(true)
+	guard.onEnable = func() {
+		if len(guard.blocks) == 0 {
+			t.Error("Enable до BlockIPv6")
+		}
+	}
+	conf := testWGConfig(t, "127.0.0.1:9")
+
+	if err := w.Start(context.Background(), conf); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !strings.Contains(rec.dump(), "закрыт защитой DNS") {
+		t.Errorf("нет строки о закрытом IPv6:\n%s", rec.dump())
+	}
+	f.noIPv6.Store(false)
+	if err := w.Start(context.Background(), conf); err != nil {
+		t.Fatalf("повторный Start: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	guard.mu.Lock()
+	blocks := guard.blocks
+	guard.mu.Unlock()
+	if len(blocks) != 2 || !blocks[0] || blocks[1] {
+		t.Errorf("BlockIPv6: %v; ждали [true false]", blocks)
+	}
+
+	plain := &fakeDNSGuard{}
+	w, f, rec = newTestTun(t)
+	w.opts.DNSGuard = plain
+	f.noIPv6.Store(true)
+	if err := w.Start(context.Background(), conf); err != nil {
+		t.Fatalf("Start без IPv6Blocker: %v", err)
+	}
+	defer w.Close()
+	if !strings.Contains(rec.dump(), "IPv6 системы идёт мимо туннеля") {
+		t.Errorf("нет предупреждения об IPv6 мимо туннеля:\n%s", rec.dump())
+	}
+}
+
 func TestExternalDNSGuard(t *testing.T) {
 	x := newExternalEnv(t)
 	guard := &fakeDNSGuard{}

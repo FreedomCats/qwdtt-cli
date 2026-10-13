@@ -1,13 +1,19 @@
 package linuxsys
 
 import (
+	"errors"
 	"net"
+	"net/netip"
 	"os"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/google/nftables"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
 // netnsEnv включает проверки, которые меняют сеть: заводят интерфейс
@@ -116,4 +122,201 @@ func demoteDefault(t *testing.T, index uint32) {
 		}
 		return
 	}
+}
+
+// Защита DNS на настоящих nftables: что пропускает и что отбрасывает
+// (отброшенное на выходе — EPERM при отправке), повторное открытие при
+// живой таблице, закрытие IPv6 и исчезновение таблицы с соединением.
+// Резолвер туннеля — 192.0.2.53, чужой — 198.51.100.1; ответы не нужны.
+// TCP проверяется на шлюзе контейнера: он сразу отказывает, а отброшенный
+// SYN ядро повторяет, и соединение уходит в таймаут.
+//
+// Для части про IPv6 контейнеру нужен IPv6:
+// --sysctl net.ipv6.conf.all.disable_ipv6=0.
+func TestDNSGuardNetns(t *testing.T) {
+	if os.Getenv(netnsEnv) != "1" || os.Geteuid() != 0 {
+		t.Skipf("меняет сеть: только в контейнере, %s=1 и root", netnsEnv)
+	}
+	const mark = 0x1074
+	tunnelDNS := netip.MustParseAddr("192.0.2.53")
+
+	g, err := OpenDNSGuard(mark)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+	if !dnsGuardTableExists(t) {
+		t.Fatal("после OpenDNSGuard таблицы inet tt нет")
+	}
+	if _, err := OpenDNSGuard(mark); err == nil || !strings.Contains(err.Error(), "уже работает другой tt") {
+		t.Errorf("второе открытие при живой таблице: %v", err)
+	}
+
+	// Пустые цепочки ничего не запрещают.
+	expectSend(t, "udp", "198.51.100.1:53", 0, nil)
+
+	if err := g.Enable([]netip.Addr{tunnelDNS}); err != nil {
+		t.Fatal(err)
+	}
+	expectSend(t, "udp", "198.51.100.1:53", 0, unix.EPERM)
+	expectSend(t, "udp", "192.0.2.53:53", 0, nil)
+	expectSend(t, "udp", "127.0.0.1:53", 0, nil)
+	expectSend(t, "udp", "198.51.100.1:443", 0, nil)
+	expectSend(t, "udp", "198.51.100.1:53", mark, nil)
+	expectSend(t, "udp", "198.51.100.1:53", mark+1, unix.EPERM)
+	gw := defaultGateway(t)
+	expectTCP(t, gw, 0, true)
+	expectTCP(t, gw, mark, false)
+
+	// Повторный Enable заменяет правила, а не добавляет.
+	if err := g.Enable([]netip.Addr{netip.MustParseAddr("198.51.100.1")}); err != nil {
+		t.Fatal(err)
+	}
+	expectSend(t, "udp", "198.51.100.1:53", 0, nil)
+	expectSend(t, "udp", "192.0.2.53:53", 0, unix.EPERM)
+
+	if err := g.Disable(); err != nil {
+		t.Fatal(err)
+	}
+	expectSend(t, "udp", "192.0.2.53:53", 0, nil)
+	expectTCP(t, gw, 0, false)
+	if err := g.Disable(); err != nil {
+		t.Errorf("повторный Disable: %v", err)
+	}
+
+	if ipv6Dummy(t) {
+		g.BlockIPv6(true)
+		if err := g.Enable([]netip.Addr{tunnelDNS}); err != nil {
+			t.Fatal(err)
+		}
+		expectSend(t, "udp", "[2001:db8:1::5]:443", 0, unix.EPERM)
+		expectSend(t, "udp", "[2001:db8:1::5]:443", mark, nil)
+		expectSend(t, "udp", "[::1]:443", 0, nil)
+		expectSend(t, "udp", "192.0.2.53:53", 0, nil)
+		g.BlockIPv6(false)
+		if err := g.Enable([]netip.Addr{tunnelDNS}); err != nil {
+			t.Fatal(err)
+		}
+		expectSend(t, "udp", "[2001:db8:1::5]:443", 0, nil)
+	}
+
+	if err := g.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if dnsGuardTableExists(t) {
+		t.Error("после Close таблица inet tt осталась")
+	}
+	expectSend(t, "udp", "198.51.100.1:53", 0, nil)
+	if err := g.Enable([]netip.Addr{tunnelDNS}); err == nil {
+		t.Error("Enable после Close прошёл")
+	}
+	if err := g.Close(); err != nil {
+		t.Errorf("повторный Close: %v", err)
+	}
+}
+
+// expectSend отправляет пакет на address сокетом с меткой mark (0 — без
+// неё) и сверяет ошибку отправки с want: отброшенный на выходе пакет UDP —
+// EPERM при отправке.
+func expectSend(t *testing.T, network, address string, mark int, want error) {
+	t.Helper()
+	conn, err := markedDialer(mark).Dial(network, address)
+	if err == nil {
+		_, err = conn.Write([]byte("tt"))
+		conn.Close()
+	}
+	switch {
+	case want == nil && err != nil:
+		t.Errorf("%s %s, метка %#x: %v, ждали успех", network, address, mark, err)
+	case want != nil && !errors.Is(err, want):
+		t.Errorf("%s %s, метка %#x: %v, ждали %v", network, address, mark, err, want)
+	}
+}
+
+// expectTCP соединяется с портом 53 шлюза gw: dropped — SYN отброшен, и
+// соединение ждёт до таймаута; иначе шлюз отвечает сразу (успех или отказ).
+func expectTCP(t *testing.T, gw netip.Addr, mark int, dropped bool) {
+	t.Helper()
+	address := netip.AddrPortFrom(gw, 53).String()
+	conn, err := markedDialer(mark).Dial("tcp", address)
+	if err == nil {
+		conn.Close()
+	}
+	var ne net.Error
+	timeout := errors.As(err, &ne) && ne.Timeout()
+	if timeout != dropped {
+		t.Errorf("tcp %s, метка %#x: %v; ждали, что SYN отброшен: %v", address, mark, err, dropped)
+	}
+}
+
+func markedDialer(mark int) *net.Dialer {
+	d := &net.Dialer{Timeout: 2 * time.Second}
+	if mark != 0 {
+		d.Control = func(_, _ string, c syscall.RawConn) error {
+			var serr error
+			if err := c.Control(func(fd uintptr) {
+				serr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_MARK, mark)
+			}); err != nil {
+				return err
+			}
+			return serr
+		}
+	}
+	return d
+}
+
+// defaultGateway — шлюз маршрута по умолчанию IPv4 (в контейнере — docker0).
+func defaultGateway(t *testing.T) netip.Addr {
+	t.Helper()
+	routes, err := netlink.RouteList(nil, netlink.FAMILY_V4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range routes {
+		if isDefault(r) && r.Gw != nil {
+			gw, _ := netip.AddrFromSlice(r.Gw.To4())
+			return gw
+		}
+	}
+	t.Fatal("нет маршрута по умолчанию со шлюзом")
+	return netip.Addr{}
+}
+
+func dnsGuardTableExists(t *testing.T) bool {
+	t.Helper()
+	conn, err := nftables.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tables, err := conn.ListTablesOfFamily(nftables.TableFamilyINet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range tables {
+		if table.Name == dnsGuardTable {
+			return true
+		}
+	}
+	return false
+}
+
+// ipv6Dummy заводит интерфейс с 2001:db8:1::2/64, чтобы пакетам IPv6 было
+// куда уйти; false — IPv6 в контейнере выключен, проверка пропускается.
+func ipv6Dummy(t *testing.T) bool {
+	t.Helper()
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "ttdns0"}}
+	if err := netlink.LinkAdd(link); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { netlink.LinkDel(link) })
+	if err := netlink.LinkSetUp(link); err != nil {
+		t.Fatal(err)
+	}
+	addr, _ := netlink.ParseAddr("2001:db8:1::2/64")
+	addr.Flags = unix.IFA_F_NODAD
+	if err := netlink.AddrAdd(link, addr); err != nil {
+		t.Logf("IPv6 не проверен: %v (нужен --sysctl net.ipv6.conf.all.disable_ipv6=0)", err)
+		return false
+	}
+	return true
 }
