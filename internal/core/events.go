@@ -351,6 +351,11 @@ type EventStats struct {
 	// BytesUp и BytesDown — нарастающий итог с момента запуска.
 	BytesUp   int64
 	BytesDown int64
+	// DroppedUp и DroppedDown — пакеты, выброшенные ядром из-за полных
+	// очередей, нарастающим итогом с момента запуска: туда — к воркерам,
+	// обратно — к WireGuard. В апстриме их не считали вовсе.
+	DroppedUp   uint64
+	DroppedDown uint64
 }
 
 func (EventStats) isCoreEvent() {}

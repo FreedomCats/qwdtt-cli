@@ -320,7 +320,36 @@ var replacements = []rule{
 		File:        "stats.go",
 		Count:       1,
 		Pattern:     `(?m)^(\t+)log\.Printf\("\[СТАТИСТИКА\] Активных: %d \| Трафик: %\.2f МБ \| ↓%\.2f МБ / ↑%\.2f МБ", active, totalMB, downMB, upMB\)$`,
-		InsertAfter: `emit(EventStats{ActiveWorkers: active, BytesUp: up, BytesDown: down})`,
+		InsertAfter: `emit(EventStats{ActiveWorkers: active, BytesUp: up, BytesDown: down, DroppedUp: s.DroppedUp.Load(), DroppedDown: s.DroppedDown.Load()})`,
+	},
+
+	// --- сброшенные пакеты ---
+	// Ядро выбрасывает пакет, когда очередь полна, и в десктопном режиме молча:
+	// единственный счётчик, tunDroppedCount, живёт под if d.tunFile != nil —
+	// для rawtun Android. При поднятом туннеле терялось 5–20% UDP, и понять,
+	// в ядре ли дело, было не по чему. Поведение не меняется — только счёт.
+	{
+		File:    "stats.go",
+		Count:   1,
+		Pattern: `(?m)^(\t+)ActiveConnections atomic\.Int32$`,
+		Replace: to("${0}\n\n" +
+			"${1}// DroppedUp — пакеты от WireGuard, выброшенные потому, что очереди\n" +
+			"${1}// всех воркеров полны (Dispatcher.readLoop). DroppedDown — ответы\n" +
+			"${1}// сервера, выброшенные из-за полной очереди к WireGuard (RunSession).\n" +
+			"${1}DroppedUp   atomic.Uint64\n" +
+			"${1}DroppedDown atomic.Uint64"),
+	},
+	{
+		File:        "dispatcher.go",
+		Count:       1,
+		Pattern:     `(?m)^(\t+)// Все workers перегружены — сдвигаем указатель, пакет дропается$`,
+		InsertAfter: `d.stats.DroppedUp.Add(1)`,
+	},
+	{
+		File:        "session.go",
+		Count:       1,
+		Pattern:     `(?m)^(\t+)// воркера — select должен быть неблокирующим\.$`,
+		InsertAfter: `stats.DroppedDown.Add(1)`,
 	},
 
 	// --- netguard: хук в собственных сокетах ядра (задача N3 Э2) ---

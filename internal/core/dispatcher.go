@@ -376,6 +376,7 @@ func (d *Dispatcher) readLoop() {
 			}
 		} else {
 			// Все workers перегружены — сдвигаем указатель, пакет дропается
+			d.stats.DroppedUp.Add(1)
 			d.rrIndex = (idx + 1) % nw
 			d.rrCount = 0
 			putPktBuf(pkt)

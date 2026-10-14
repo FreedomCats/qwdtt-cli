@@ -91,6 +91,29 @@ func TestVerbosePrintsStatsAndRunningStages(t *testing.T) {
 	}
 }
 
+// Сброшенные ядром пакеты: с -v — в строке счётчиков, а итог за все попытки
+// копится через перезапуски: у каждой попытки ядро считает с нуля.
+func TestDroppedPackets(t *testing.T) {
+	p, buf, _ := testPrinter(true)
+	p.event(core.EventStats{ActiveWorkers: 9, BytesUp: 10, BytesDown: 20})
+	if strings.Contains(buf.String(), "сброшено") {
+		t.Errorf("нулевой сброс напечатан:\n%s", buf.String())
+	}
+
+	move(p, supervisor.StateIdle, supervisor.StateResolving)
+	p.event(core.EventStats{ActiveWorkers: 9, DroppedUp: 3, DroppedDown: 7})
+	if !strings.Contains(buf.String(), "сброшено пакетов туда 3, обратно 7\n") {
+		t.Errorf("нет сброшенных в строке счётчиков:\n%s", buf.String())
+	}
+
+	// Новая попытка: ядро начинает счёт заново, прежние числа не теряются.
+	move(p, supervisor.StateConnected, supervisor.StateResolving)
+	p.event(core.EventStats{ActiveWorkers: 9, DroppedUp: 1})
+	if up, down := p.dropped(); up != 4 || down != 7 {
+		t.Errorf("итог: туда %d, обратно %d; ожидалось 4 и 7", up, down)
+	}
+}
+
 func TestQuietHidesInfoLogsButKeepsWarnings(t *testing.T) {
 	p, buf, _ := testPrinter(false)
 	p.event(core.EventLog{Level: core.LevelInfo, Msg: "тихо"})

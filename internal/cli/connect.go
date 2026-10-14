@@ -604,6 +604,11 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	err = tun.Run(ctx)
 	stopRefresh()
 	out.finish()
+	// Сброс в ядре — повод искать потери у себя, а не на пути через VK:
+	// очереди не успевали. Ноль не печатается — это обычное дело.
+	if up, down := out.dropped(); up+down > 0 {
+		out.line("ядро сбросило пакетов из-за полных очередей: туда %d, обратно %d", up, down)
+	}
 	if err != nil {
 		return err
 	}

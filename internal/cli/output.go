@@ -187,6 +187,13 @@ func (p *printer) finish() {
 	p.status = nil
 }
 
+// dropped — сколько пакетов ядро сбросило за всё подключение: туда и обратно.
+func (p *printer) dropped() (up, down uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.model.droppedTotal()
+}
+
 // aside возвращает Writer для того, кто пишет в терминал мимо принтера и
 // ждёт ответа пользователя, — для ручного решателя капчи, чьё приглашение
 // уходит в stderr. Перед записью статусная строка убирается и не рисуется,
@@ -287,10 +294,15 @@ func (p *printer) event(ev core.Event) {
 		p.model.workers = int(ev.ActiveWorkers)
 		p.model.up = ev.BytesUp
 		p.model.down = ev.BytesDown
+		p.model.dropped = [2]uint64{ev.DroppedUp, ev.DroppedDown}
 		p.mu.Unlock()
 		if p.verbose {
-			p.line("воркеров на линии %d, отправлено %s, получено %s",
-				ev.ActiveWorkers, formatBytes(ev.BytesUp), formatBytes(ev.BytesDown))
+			dropped := ""
+			if ev.DroppedUp+ev.DroppedDown > 0 {
+				dropped = fmt.Sprintf(", сброшено пакетов туда %d, обратно %d", ev.DroppedUp, ev.DroppedDown)
+			}
+			p.line("воркеров на линии %d, отправлено %s, получено %s%s",
+				ev.ActiveWorkers, formatBytes(ev.BytesUp), formatBytes(ev.BytesDown), dropped)
 		} else {
 			p.refresh()
 		}
@@ -409,6 +421,12 @@ type statusModel struct {
 	workers, workersTotal int
 	up, down              int64
 
+	// dropped — пакеты, сброшенные ядром из-за полных очередей в текущей
+	// попытке: [0] — туда, [1] — обратно. Ядро считает их с запуска, а
+	// запуск у каждой попытки свой, поэтому прошлые попытки копятся в
+	// droppedBefore.
+	dropped, droppedBefore [2]uint64
+
 	hashesTotal int
 	// dead — исключённые хеши. Множество, а не счётчик: об одном хеше могут
 	// сообщить несколько групп.
@@ -423,6 +441,9 @@ func (m *statusModel) moved(tr supervisor.Transition, now time.Time) {
 		m.attempt++
 		m.connectedAt = time.Time{}
 		m.workers = 0
+		m.droppedBefore[0] += m.dropped[0]
+		m.droppedBefore[1] += m.dropped[1]
+		m.dropped = [2]uint64{}
 	case supervisor.StateConnected:
 		if tr.From != supervisor.StateDegraded {
 			m.connectedAt = now
@@ -432,6 +453,11 @@ func (m *statusModel) moved(tr supervisor.Transition, now time.Time) {
 	default:
 		m.connectedAt = time.Time{}
 	}
+}
+
+// droppedTotal — сброшенные пакеты за все попытки: туда и обратно.
+func (m *statusModel) droppedTotal() (up, down uint64) {
+	return m.droppedBefore[0] + m.dropped[0], m.droppedBefore[1] + m.dropped[1]
 }
 
 func (m *statusModel) hashFailed(ev core.EventHashFailed) {

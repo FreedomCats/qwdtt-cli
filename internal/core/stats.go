@@ -9,6 +9,12 @@ type Stats struct {
 	TotalBytesUp      atomic.Int64
 	TotalBytesDown    atomic.Int64
 	ActiveConnections atomic.Int32
+
+	// DroppedUp — пакеты от WireGuard, выброшенные потому, что очереди
+	// всех воркеров полны (Dispatcher.readLoop). DroppedDown — ответы
+	// сервера, выброшенные из-за полной очереди к WireGuard (RunSession).
+	DroppedUp   atomic.Uint64
+	DroppedDown atomic.Uint64
 }
 
 func NewStats() *Stats {
@@ -32,7 +38,7 @@ func (s *Stats) RunLoop(shutdown <-chan struct{}) {
 			downMB := float64(down) / (1024.0 * 1024.0)
 
 			logf("[СТАТИСТИКА] Активных: %d | Трафик: %.2f МБ | ↓%.2f МБ / ↑%.2f МБ", active, totalMB, downMB, upMB)
-			emit(EventStats{ActiveWorkers: active, BytesUp: up, BytesDown: down})
+			emit(EventStats{ActiveWorkers: active, BytesUp: up, BytesDown: down, DroppedUp: s.DroppedUp.Load(), DroppedDown: s.DroppedDown.Load()})
 		}
 	}
 }
