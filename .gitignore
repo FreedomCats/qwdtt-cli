@@ -2,6 +2,8 @@
 /build/out/
 /dist/
 *.exe
+# go build ./cmd/qwdtt-cli без -o кладёт бинарь в корень.
+/qwdtt-cli
 *.zip
 
 # Конфигурация и секреты — никогда не в репозиторий.
