@@ -230,7 +230,6 @@ func (d *Dispatcher) solve(req Request) {
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
-		defer d.release()
 
 		ctx, cancel := context.WithDeadline(d.ctx, req.Deadline)
 		defer cancel()
@@ -239,6 +238,10 @@ func (d *Dispatcher) solve(req Request) {
 			req.Session, req.Mode, req.Left(time.Now()).Round(time.Second))
 
 		token, err := d.opts.Solver.Solve(ctx, req)
+		// Решатель освобождается до ответа ядру: получив ответ, ядро может
+		// сразу попросить следующую капчу, и она не должна застать решатель
+		// занятым — её отбросили бы молча (claim), и воркер выстоял бы таймаут.
+		d.release()
 		switch {
 		case err != nil:
 			d.decline(req, err)
