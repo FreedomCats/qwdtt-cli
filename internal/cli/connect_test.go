@@ -51,7 +51,10 @@ func newConnectEnv(t *testing.T) *connectEnv {
 			VkHashesRef: hashesRef,
 			Workers:     18,
 			DNS:         "google",
-			Socks:       config.SocksSection{Listen: "127.0.0.1:1085"},
+			// socks явно: тесты гоняют подключение без прав и без адаптера.
+			// Умолчание (tun) — TestPlanConnectDefaultDatapath.
+			Datapath: config.DatapathSocks,
+			Socks:    config.SocksSection{Listen: "127.0.0.1:1085"},
 		},
 	}}
 	if err := config.Save(path, file); err != nil {
@@ -135,6 +138,26 @@ func TestPlanConnectPicksSingleProfile(t *testing.T) {
 	}
 	if plan.profile.Name != "home" {
 		t.Errorf("профиль = %q, ожидался home", plan.profile.Name)
+	}
+}
+
+// Профиль без поля datapath подключается режимом по умолчанию: на Windows и
+// Linux — весь трафик (tun), на macOS — socks (config.DefaultDatapath).
+func TestPlanConnectDefaultDatapath(t *testing.T) {
+	c := newConnectEnv(t)
+	c.file.Profiles["home"].Datapath = ""
+	c.save()
+
+	plan, err := c.plan("home")
+	if err != nil {
+		t.Fatalf("planConnect: %v", err)
+	}
+	want := core.StageVPN
+	if config.DefaultDatapath == config.DatapathSocks {
+		want = core.StageSocks
+	}
+	if plan.stage != want {
+		t.Errorf("шаг datapath = %q, ожидался %q (умолчание %s)", plan.stage, want, config.DefaultDatapath)
 	}
 }
 

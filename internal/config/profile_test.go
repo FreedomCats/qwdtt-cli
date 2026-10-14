@@ -159,3 +159,19 @@ func TestKillSwitchOn(t *testing.T) {
 		t.Error("kill_switch = true выключил его")
 	}
 }
+
+func TestEffectiveDatapath(t *testing.T) {
+	cases := map[string]string{
+		"":         DefaultDatapath,
+		"  ":       DefaultDatapath,
+		"socks":    DatapathSocks,
+		"wintun":   DatapathTun,
+		" tun ":    DatapathTun,
+		"external": DatapathExternal,
+	}
+	for in, want := range cases {
+		if got := EffectiveDatapath(in); got != want {
+			t.Errorf("EffectiveDatapath(%q) = %q, ожидалось %q", in, got, want)
+		}
+	}
+}

@@ -29,7 +29,8 @@ const (
 // Способы отдать трафик наружу. Значения — те же слова, что в architecture.md §07.
 const (
 	// DatapathSocks — userspace WireGuard и локальный SOCKS5. Прав администратора
-	// не требует, поэтому в Э1 это путь по умолчанию.
+	// не требует; по умолчанию — только на macOS, где других режимов нет
+	// (DefaultDatapath).
 	DatapathSocks = "socks"
 	// DatapathExternal — конфиг отдаётся штатному WireGuard, тот поднимает
 	// туннель сам. Нужны права администратора и установленный WireGuard.
@@ -50,6 +51,16 @@ func NormalizeDatapath(value string) string {
 	value = strings.TrimSpace(value)
 	if value == DatapathWintun {
 		return DatapathTun
+	}
+	return value
+}
+
+// EffectiveDatapath — каким режимом профиль подключится: значение поля после
+// NormalizeDatapath, а пустое — DefaultDatapath. Умолчание читается только
+// здесь, чтобы выбор реализации, проверка прав и показ профиля не разошлись.
+func EffectiveDatapath(value string) string {
+	if value = NormalizeDatapath(value); value == "" {
+		return DefaultDatapath
 	}
 	return value
 }
@@ -123,8 +134,8 @@ type SocksSection struct {
 // Умолчания берутся из core.DefaultConfig целиком.
 //
 // Полей datapath здесь нет: ядру всё равно, кто заберёт у него конфиг. Выбор
-// реализации (Profile.Datapath, по умолчанию socks — единственный режим без
-// прав администратора) и её настройки (Profile.Socks) читает CLI и передаёт
+// реализации (Profile.Datapath, умолчание — EffectiveDatapath) и её
+// настройки (Profile.Socks) читает CLI и передаёт
 // конструктору из internal/datapath, минуя ядро (задача D2).
 func (p *Profile) Core() core.Config {
 	cfg := core.DefaultConfig()

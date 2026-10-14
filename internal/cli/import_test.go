@@ -35,7 +35,7 @@ func TestProfileImport(t *testing.T) {
 	}
 	assertNoSecrets(t, "stdout", stdout)
 	assertNoSecrets(t, "stderr", stderr)
-	for _, want := range []string{`"dom-2" создан`, "203.0.113.10:56000", "хешей:   3", "socks"} {
+	for _, want := range []string{`"dom-2" создан`, "203.0.113.10:56000", "хешей:   3", config.DefaultDatapath} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("в сводке нет %q:\n%s", want, stdout)
 		}

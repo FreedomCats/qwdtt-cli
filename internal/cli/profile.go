@@ -135,7 +135,7 @@ func runProfileList(_ context.Context, e *env, args []string) error {
 			marked = true
 		}
 		fmt.Fprintf(e.stdout, "%s %-*s  %-22s %s\n",
-			marker, width, name, p.Peer, effective(p.Datapath, config.DatapathSocks))
+			marker, width, name, p.Peer, config.EffectiveDatapath(p.Datapath))
 	}
 	if marked {
 		fmt.Fprintln(e.stdout, "\n* — профиль по умолчанию")
@@ -201,7 +201,7 @@ func runProfileShow(_ context.Context, e *env, args []string) error {
 	fmt.Fprintf(e.stdout, "\n%s\n\n", path)
 
 	printField(e.stdout, "peer", p.Peer, "")
-	printSetting(e.stdout, "datapath", p.Datapath, config.DatapathSocks)
+	printSetting(e.stdout, "datapath", p.Datapath, config.DefaultDatapath)
 	printSetting(e.stdout, "workers", numberOrEmpty(p.Workers), fmt.Sprint(def.Workers))
 	printSetting(e.stdout, "obfs", p.Obfs, def.ObfsMode)
 	printSetting(e.stdout, "turn_transport", p.TurnTransport, "udp")
@@ -552,7 +552,7 @@ func printImported(e *env, p *config.Profile, hashes string) {
 	fmt.Fprintf(e.stdout, "  сервер:  %s\n", p.Peer)
 	fmt.Fprintln(e.stdout, "  пароль:  записан")
 	fmt.Fprintf(e.stdout, "  хешей:   %d\n", len(core.ParseHashes(hashes)))
-	fmt.Fprintf(e.stdout, "  режим:   %s (%s)\n", modeText(p.Datapath), effective(p.Datapath, config.DatapathSocks))
+	fmt.Fprintf(e.stdout, "  режим:   %s (%s)\n", modeText(p.Datapath), config.EffectiveDatapath(p.Datapath))
 }
 
 // checkBeforeAsking проверяет настройки до того, как спрашивать секреты:

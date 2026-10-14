@@ -319,8 +319,8 @@ func secretError(what, profile, flag string, err error) error {
 // chooseDatapath выбирает реализацию по профилю. Ядру о выборе знать незачем
 // (D2): настройки datapath идут его конструктору, а не в core.Config.
 func (plan *connectPlan) chooseDatapath() error {
-	switch config.NormalizeDatapath(plan.profile.Datapath) {
-	case "", config.DatapathSocks:
+	switch config.EffectiveDatapath(plan.profile.Datapath) {
+	case config.DatapathSocks:
 		listen := strings.TrimSpace(plan.profile.Socks.Listen)
 		if listen == "" {
 			listen = datapath.DefaultSocksListen

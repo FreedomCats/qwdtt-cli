@@ -219,7 +219,7 @@ func (m *menu) show(file *config.File, name string, items []menuItem) {
 
 // modeText — режим профиля словами, без названий datapath.
 func modeText(datapath string) string {
-	switch config.NormalizeDatapath(effective(datapath, config.DatapathSocks)) {
+	switch config.EffectiveDatapath(datapath) {
 	case config.DatapathTun:
 		return "весь трафик"
 	case config.DatapathExternal:
