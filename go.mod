@@ -49,7 +49,7 @@ require (
 // там. Только из *_linux.go. go-cmp (BSD-3) нужен лишь тестам mdlayher/netlink
 // и в бинарь не попадает.
 // godbus/dbus (BSD-2) — DNS туннеля через systemd-resolved на Linux, задача
-// D2 Э4. Только из *_linux.go.
+// D2 Э4, и секреты в связке ключей (Secret Service). Только из *_linux.go.
 // Все лицензии с GPL v3 совместимы.
 require (
 	github.com/BurntSushi/toml v1.6.0

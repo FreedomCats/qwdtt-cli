@@ -22,10 +22,12 @@ const SecretsFileName = "secrets.json"
 //
 // Что означает «хранилище», решает платформа. На Windows это DPAPI: значение
 // шифруется CryptProtectData и привязано к учётной записи, схема ссылки — dpapi.
-// На прочих системах шифрования нет, защита — права 0600 на самом файле
-// хранилища, схема — file. Ссылка одной платформы на другой не разворачивается:
-// Get отвергает чужую схему, а не отдаёт мусор (см. secret_windows.go,
-// secret_unix.go).
+// На Linux — связка ключей сеанса (Secret Service), схема secretservice, а
+// где её нет (SSH, сервер, консоль без графики) — как на прочих системах:
+// шифрования нет, защита — права 0600 на самом файле хранилища, схема — file.
+// Ссылка одной платформы на другой не разворачивается: Get отвергает чужую
+// схему, а не отдаёт мусор (см. secret_windows.go, secret_unix.go,
+// secret_linux.go).
 type SecretStore interface {
 	// Put кладёт значение под именем name и возвращает ссылку на него.
 	// Повторный вызов с тем же name перезаписывает прежнее значение и
@@ -56,18 +58,51 @@ func NewSecretStore() (SecretStore, error) {
 // что и профили, которые на них ссылаются, иначе перенесённый каталог
 // настроек окажется наполовину рабочим.
 func NewSecretStoreFor(configPath string) SecretStore {
-	return newSecretStoreAt(filepath.Join(filepath.Dir(configPath), SecretsFileName))
+	s := newSecretStoreAt(filepath.Join(filepath.Dir(configPath), SecretsFileName))
+	s.keyring = openKeyring
+	return s
 }
 
-// newSecretStoreAt открывает хранилище по явному пути. Нужен тестам и на случай,
-// если появится флаг с каталогом настроек; публичного двойника пока нет —
-// добавится, когда понадобится.
+// newSecretStoreAt открывает хранилище по явному пути, без связки ключей. Нужен
+// тестам и на случай, если появится флаг с каталогом настроек; публичного
+// двойника пока нет — добавится, когда понадобится.
 func newSecretStoreAt(path string) *store {
 	return &store{path: path}
 }
 
 type store struct {
 	path string
+	// keyring открывает связку ключей; nil — её на этой системе нет.
+	keyring func() (keyring, error)
+}
+
+// keyring — связка ключей: значения лежат в ней, а в файле хранилища — только
+// имя записи и её идентификатор (secret_linux.go).
+type keyring interface {
+	Put(id, label, value string) error
+	// Get: записи нет — errKeyringNotFound.
+	Get(id string) (string, error)
+	// Delete: записи нет — errKeyringNotFound.
+	Delete(id string) error
+	Close() error
+}
+
+var (
+	// errKeyringUnavailable — связки ключей в этом сеансе нет: Put пишет в файл.
+	errKeyringUnavailable = errors.New("связки ключей в этом сеансе нет")
+	errKeyringNotFound    = errors.New("записи нет в связке ключей")
+)
+
+// keyringScheme — схема ссылки на секрет в связке ключей.
+const keyringScheme = "secretservice"
+
+// SecretRefKind — где лежит секрет по ссылке, словами: для вывода
+// `qwdtt-cli profile set`.
+func SecretRefKind(ref string) string {
+	if scheme, _, _ := strings.Cut(strings.TrimSpace(ref), ":"); scheme == keyringScheme {
+		return "связка ключей (Secret Service)"
+	}
+	return SecretsFileName + ", " + secretStoreKind
 }
 
 // secretsData — формат файла хранилища. Записи адресуются коротким
@@ -81,10 +116,21 @@ type secretEntry struct {
 	Name string `json:"name"`
 	// Data — base64 от protect(value). На Windows это DPAPI-шифртекст,
 	// на прочих системах — само значение: там защищает файл, а не шифр.
-	Data string `json:"data"`
+	// У записи в связке ключей пусто.
+	Data string `json:"data,omitempty"`
+	// Store — где значение, если не в Data: keyringScheme. Запись остаётся
+	// в файле ради имени: по нему Put находит идентификатор для перезаписи.
+	Store string `json:"store,omitempty"`
 }
 
 func (s *store) Put(name, value string) (string, error) {
+	if s.keyring != nil {
+		ref, err := s.putKeyring(name, value)
+		if !errors.Is(err, errKeyringUnavailable) {
+			return ref, err
+		}
+	}
+
 	sealed, err := protect([]byte(value))
 	if err != nil {
 		return "", fmt.Errorf("не удалось защитить секрет %q: %w", name, err)
@@ -112,10 +158,44 @@ func (s *store) Put(name, value string) (string, error) {
 	return secretScheme + ":" + id, nil
 }
 
-func (s *store) Get(ref string) (string, error) {
-	_, id, err := splitSecretRef(ref)
+// putKeyring кладёт значение в связку ключей. Прежнее значение под тем же
+// именем — и из связки, и из файла — заменяется: так секрет переезжает из
+// файла в связку при перезаписи.
+func (s *store) putKeyring(name, value string) (string, error) {
+	k, err := s.keyring()
 	if err != nil {
 		return "", err
+	}
+	defer k.Close()
+
+	data, err := s.read()
+	if err != nil {
+		return "", err
+	}
+	id := idForName(data.Secrets, name)
+	if id == "" {
+		if id, err = newSecretID(); err != nil {
+			return "", err
+		}
+	}
+
+	if err := k.Put(id, "qwdtt-cli "+name, value); err != nil {
+		return "", fmt.Errorf("не удалось записать секрет %q: %w", name, err)
+	}
+	data.Secrets[id] = secretEntry{Name: name, Store: keyringScheme}
+	if err := s.write(data); err != nil {
+		return "", err
+	}
+	return keyringScheme + ":" + id, nil
+}
+
+func (s *store) Get(ref string) (string, error) {
+	scheme, id, err := s.splitRef(ref)
+	if err != nil {
+		return "", err
+	}
+	if scheme == keyringScheme {
+		return s.getKeyring(ref, id)
 	}
 
 	data, err := s.read()
@@ -126,6 +206,14 @@ func (s *store) Get(ref string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf(
 			"секрет %q не найден в хранилище %s — возможно, профиль заводили не через `qwdtt-cli profile set`", ref, s.path)
+	}
+	if entry.Store == keyringScheme {
+		// Значение переехало в связку, а ссылка в профиле осталась прежней:
+		// после Put не записался profiles.toml.
+		if s.keyring == nil {
+			return "", fmt.Errorf("секрет %q лежит в связке ключей, а она на этой системе недоступна", ref)
+		}
+		return s.getKeyring(ref, id)
 	}
 
 	sealed, err := base64.StdEncoding.DecodeString(entry.Data)
@@ -139,10 +227,36 @@ func (s *store) Get(ref string) (string, error) {
 	return string(plain), nil
 }
 
+func (s *store) getKeyring(ref, id string) (string, error) {
+	k, err := s.keyring()
+	if err != nil {
+		return "", fmt.Errorf("секрет %q: %w", ref, err)
+	}
+	defer k.Close()
+	value, err := k.Get(id)
+	if errors.Is(err, errKeyringNotFound) {
+		return "", fmt.Errorf("секрет %q не найден в связке ключей — возможно, его удалили из неё вручную", ref)
+	}
+	if err != nil {
+		return "", fmt.Errorf("секрет %q: %w", ref, err)
+	}
+	return value, nil
+}
+
 func (s *store) Delete(ref string) error {
-	_, id, err := splitSecretRef(ref)
+	scheme, id, err := s.splitRef(ref)
 	if err != nil {
 		return err
+	}
+	if scheme == keyringScheme {
+		k, err := s.keyring()
+		if err != nil {
+			return fmt.Errorf("секрет %q: %w", ref, err)
+		}
+		defer k.Close()
+		if err := k.Delete(id); err != nil && !errors.Is(err, errKeyringNotFound) {
+			return fmt.Errorf("секрет %q: %w", ref, err)
+		}
 	}
 
 	data, err := s.read()
@@ -158,14 +272,18 @@ func (s *store) Delete(ref string) error {
 	return s.write(data)
 }
 
-// splitSecretRef разбирает ссылку и убеждается, что она из здешнего хранилища.
+// splitRef разбирает ссылку и убеждается, что она из здешнего хранилища:
+// файла или, где она есть, связки ключей.
 //
 // Чужая схема — не мусор, а секрет с другой платформы: DPAPI-шифртекст на unix
 // всё равно не прочитать, и честнее сказать об этом, чем молча отдать пустоту.
-func splitSecretRef(ref string) (scheme, id string, err error) {
+func (s *store) splitRef(ref string) (scheme, id string, err error) {
 	scheme, id, ok := strings.Cut(strings.TrimSpace(ref), ":")
 	if !ok || scheme == "" || id == "" {
 		return "", "", fmt.Errorf("ссылка на секрет %q: ожидается вид <хранилище>:<идентификатор>", ref)
+	}
+	if scheme == keyringScheme && s.keyring != nil {
+		return scheme, id, nil
 	}
 	if scheme != secretScheme {
 		return "", "", fmt.Errorf(

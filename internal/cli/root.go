@@ -129,6 +129,12 @@ func lookup(name string) *command {
 
 // Main — точка входа CLI. Возвращает код возврата; os.Exit зовёт cmd/qwdtt-cli.
 func Main(args []string, build Build) int {
+	// Служебный запуск самого qwdtt-cli от имени вызвавшего sudo — не команда
+	// человека: ни меню, ни паузы перед выходом (secrethelper_linux.go).
+	if code, ok := runSecretHelper(args); ok {
+		return code
+	}
+
 	e := &env{
 		stdout:  os.Stdout,
 		stderr:  os.Stderr,

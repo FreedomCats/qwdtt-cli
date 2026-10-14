@@ -419,7 +419,13 @@ func storeProfile(e *env, path string, file *config.File, p *config.Profile, exi
 	}
 	fmt.Fprintf(e.stdout, "Профиль %q %s: %s\n", p.Name, verb, path)
 	if secrets.password != "" || secrets.hashes != "" {
-		fmt.Fprintf(e.stdout, "Секреты записаны в хранилище рядом с ним (%s)\n", config.SecretsFileName)
+		// Оба секрета одного вызова лежат в одном месте: связка ключей или есть
+		// на обе записи, или её нет.
+		written := p.PasswordRef
+		if secrets.password == "" {
+			written = p.VkHashesRef
+		}
+		fmt.Fprintf(e.stdout, "Секреты записаны: %s\n", config.SecretRefKind(written))
 	}
 	if file.DefaultProfile == p.Name {
 		fmt.Fprintf(e.stdout, "Профиль по умолчанию: %s\n", p.Name)

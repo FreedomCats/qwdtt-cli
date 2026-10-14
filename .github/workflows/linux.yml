@@ -40,8 +40,15 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # Тесты связки ключей поднимают свой dbus-daemon; без него они бы
+      # пропустились, а QWDTT_TEST_DBUS делает пропуск провалом.
+      - name: dbus-daemon
+        run: command -v dbus-daemon || { sudo apt-get update && sudo apt-get install -y dbus-daemon; }
+
       # -race нужен cgo, поэтому CGO_ENABLED здесь не выключен.
       - name: go test -race
+        env:
+          QWDTT_TEST_DBUS: '1'
         run: go test -race -count=1 ./...
 
   # Новый интерфейс, маршрут по умолчанию, nftables, TUN — в своём сетевом
