@@ -326,7 +326,7 @@ func TestWizardCancelled(t *testing.T) {
 // подключается снова уже с ними.
 func TestMenuConnectAsksNewHashesWhenExhausted(t *testing.T) {
 	p := newMenuEnv(t)
-	p.setHome()
+	p.setHome("-datapath", "socks")
 	var runs [][]string
 	p.connectRun = func(_ context.Context, plan *connectPlan) error {
 		runs = append(runs, plan.cfg.Hashes)
@@ -353,7 +353,7 @@ func TestMenuConnectAsksNewHashesWhenExhausted(t *testing.T) {
 // Отказ вводить новые ссылки — снова меню, профиль не тронут.
 func TestMenuConnectExhaustedDeclined(t *testing.T) {
 	p := newMenuEnv(t)
-	p.setHome()
+	p.setHome("-datapath", "socks")
 	runs := 0
 	p.connectRun = func(context.Context, *connectPlan) error {
 		runs++

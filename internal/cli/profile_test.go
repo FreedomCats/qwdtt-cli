@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,6 +93,13 @@ func (p *profileEnv) run(args ...string) (code int, stdout, stderr string) {
 	}
 	e.hashCheck = p.hashCheck
 	e.elevate = p.elevate
+	if e.elevate == nil {
+		// Настоящий перезапуск запустил бы тестовый бинарь через sudo или UAC.
+		e.elevate = func(args []string) (bool, error) {
+			p.t.Errorf("неожиданный перезапуск с правами: %q", args)
+			return false, errors.New("перезапуск с правами в тесте")
+		}
+	}
 	e.connectRun = p.connectRun
 
 	args = append(args, "-config", p.configPath())
