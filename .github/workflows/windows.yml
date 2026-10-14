@@ -14,8 +14,11 @@ on:
 permissions:
   contents: read
 
+# github.workflow в вызове из release.yml — имя вызывающего («release»):
+# без своего имени в группе windows.yml и linux.yml попали бы в одну группу,
+# и второй отменил бы первый.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-windows-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
