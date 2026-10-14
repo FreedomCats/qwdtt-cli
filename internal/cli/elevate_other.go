@@ -29,6 +29,10 @@ func relaunchElevated(e *env, args []string) (detached bool, err error) {
 
 	var exitErr *exec.ExitError
 	switch err := cmd.Run(); {
+	case errors.As(err, &exitErr) && exitErr.ExitCode() == exitInterrupted:
+		// Ctrl+C на вопросе запущенного меню (menu -connect) закрыл его —
+		// человек возвращается сюда, это не сбой.
+		return false, nil
 	case errors.As(err, &exitErr):
 		// Что не так, запущенный qwdtt-cli (или sudo) уже напечатал сам.
 		return false, fmt.Errorf("подключение с правами root завершилось с кодом %d", exitErr.ExitCode())

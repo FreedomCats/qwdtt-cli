@@ -350,6 +350,60 @@ func TestMenuConnectAsksNewHashesWhenExhausted(t *testing.T) {
 	}
 }
 
+// menu -connect — так меню перезапускает себя с правами: подключение без
+// меню, и вопрос о новых ссылках задаёт уже этот процесс.
+func TestMenuConnectOnlyAsksNewHashes(t *testing.T) {
+	p := newMenuEnv(t)
+	p.setHome("-datapath", "socks")
+	var runs [][]string
+	p.connectRun = func(_ context.Context, plan *connectPlan) error {
+		runs = append(runs, plan.cfg.Hashes)
+		if len(runs) == 1 {
+			return fmt.Errorf("%w: звонок закрыт", supervisor.ErrHashesExhausted)
+		}
+		return nil
+	}
+	p.answer("https://vk.com/call/join/dddddddddddddddd")
+	p.input("да\n")
+
+	code, stdout, stderr := p.run("menu", "-connect", "home")
+	if code != exitOK {
+		t.Fatalf("код возврата %d, stderr:\n%s", code, stderr)
+	}
+	if len(runs) != 2 || strings.Join(runs[1], " ") != "dddddddddddddddd" {
+		t.Errorf("подключения: %q", runs)
+	}
+	if strings.Contains(stdout, "1. Подключиться") {
+		t.Errorf("показано меню:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "снова откроется меню") {
+		t.Errorf("обещано меню, которого не будет:\n%s", stdout)
+	}
+}
+
+// menu -connect с отказом от новых ссылок — выход, без меню.
+func TestMenuConnectOnlyExhaustedDeclined(t *testing.T) {
+	p := newMenuEnv(t)
+	p.setHome("-datapath", "socks")
+	runs := 0
+	p.connectRun = func(context.Context, *connectPlan) error {
+		runs++
+		return supervisor.ErrHashesExhausted
+	}
+	p.input("\n")
+
+	code, stdout, stderr := p.run("menu", "-connect", "home")
+	if code != exitOK {
+		t.Fatalf("код возврата %d, stderr:\n%s", code, stderr)
+	}
+	if runs != 1 {
+		t.Errorf("подключений %d, ожидалось 1", runs)
+	}
+	if strings.Contains(stdout, "1. Подключиться") {
+		t.Errorf("показано меню:\n%s", stdout)
+	}
+}
+
 // Отказ вводить новые ссылки — снова меню, профиль не тронут.
 func TestMenuConnectExhaustedDeclined(t *testing.T) {
 	p := newMenuEnv(t)

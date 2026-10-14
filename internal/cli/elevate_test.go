@@ -10,7 +10,7 @@ import (
 )
 
 func TestRelaunchArgs(t *testing.T) {
-	if got, want := relaunchArgs("home", ""), []string{"connect", "home"}; !reflect.DeepEqual(got, want) {
+	if got, want := relaunchArgs("home", ""), []string{"menu", "-connect", "home"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("без -config: %q, ожидалось %q", got, want)
 	}
 
@@ -19,7 +19,7 @@ func TestRelaunchArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := relaunchArgs("home", "profiles.toml")
-	if want := []string{"connect", "-config", abs, "home"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"menu", "-config", abs, "-connect", "home"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("с -config: %q, ожидалось %q", got, want)
 	}
 }
@@ -50,7 +50,7 @@ func TestMenuConnectRelaunchesElevated(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("код возврата %d, stderr:\n%s", code, stderr)
 	}
-	if want := []string{"connect", "-config", p.configPath(), "home"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"menu", "-config", p.configPath(), "-connect", "home"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("перезапуск с %q, ожидалось %q", got, want)
 	}
 	if n := strings.Count(stdout, "1. Подключиться"); n != 2 {

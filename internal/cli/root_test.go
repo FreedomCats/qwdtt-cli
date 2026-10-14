@@ -48,6 +48,7 @@ func TestHelpFlagPrintsFlags(t *testing.T) {
 		"connect": {"-peer", "-workers", "-datapath", "-config", "-v"},
 		"ping":    {"-peer", "-dns", "-config"},
 		"hashes":  {"-dns", "-config"},
+		"menu":    {"-config", "-connect"},
 	}
 
 	for _, cmd := range commands() {

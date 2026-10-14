@@ -35,7 +35,11 @@ func menuCommand() *command {
 аргументов печатает список команд: ярлык, чужая оболочка.
 
 Ctrl+C во время подключения останавливает туннель и возвращает в меню,
-в самом меню — закрывает его.`,
+в самом меню — закрывает его.
+
+С -connect меню не показывается: сразу подключение к профилю, а если ссылки
+на звонки перестали работать — вопрос о новых. После остановки — выход. Так
+меню перезапускает себя с правами администратора.`,
 		run: runMenu,
 	}
 }
@@ -65,6 +69,7 @@ func runMenu(ctx context.Context, e *env, args []string) error {
 	cmd := menuCommand()
 	fs := newFlagSet(cmd)
 	configPath := addConfigFlag(fs)
+	connectTo := fs.String("connect", "", "сразу подключиться к профилю, без меню; после остановки — выход")
 	rest, err := parseWithArgs(e, fs, args)
 	if err != nil {
 		return err
@@ -76,10 +81,13 @@ func runMenu(ctx context.Context, e *env, args []string) error {
 		return errors.New("меню работает только в терминале; без него — команды, список: qwdtt-cli help")
 	}
 
-	m := &menu{e: e, config: *configPath}
+	m := &menu{e: e, config: *configPath, once: *connectTo != ""}
 	if e.signals {
 		stop := m.catchSignals()
 		defer stop()
+	}
+	if m.once {
+		return m.connectOnly(ctx, *connectTo)
 	}
 	return m.loop(ctx)
 }
@@ -92,6 +100,9 @@ type menu struct {
 	// current — профиль, выбранный пунктом «Выбрать другой профиль». Только
 	// на этот сеанс: default_profile не меняется. Пусто — профиль по умолчанию.
 	current string
+
+	// once — меню без меню (-connect): одно подключение и выход.
+	once bool
 
 	// signals — куда отдать Ctrl+C; nil — сигналы не перехвачены (тесты).
 	signals *menuSignals
@@ -142,6 +153,19 @@ func (m *menu) loop(ctx context.Context) error {
 			fmt.Fprintf(e.stderr, "Не получилось: %v\n", err)
 		}
 	}
+}
+
+// connectOnly — menu -connect: подключение с вопросами меню, но без него
+// самого. Так работает перезапуск с правами (relaunchArgs): вопрос о новых
+// ссылках задаёт процесс с правами. На Windows спросить больше некому — старое
+// окно меню к этому времени закрыто.
+func (m *menu) connectOnly(ctx context.Context, name string) error {
+	err := m.connect(ctx, name)
+	if errors.Is(err, errMenuExit) {
+		m.e.noPause = true
+		return nil
+	}
+	return err
 }
 
 // load читает файл настроек. Файла нет — меню начинается с пустого списка:
@@ -330,7 +354,11 @@ func (m *menu) connectOnce(ctx context.Context, plan *connectPlan) error {
 	ctx, done := m.connecting(ctx)
 	defer done()
 
-	fmt.Fprintln(m.e.stdout, "Подключение. Остановить — Ctrl+C, после этого снова откроется меню.")
+	if m.once {
+		fmt.Fprintln(m.e.stdout, "Подключение. Остановить — Ctrl+C.")
+	} else {
+		fmt.Fprintln(m.e.stdout, "Подключение. Остановить — Ctrl+C, после этого снова откроется меню.")
+	}
 	if m.e.connectRun != nil {
 		return m.e.connectRun(ctx, plan)
 	}

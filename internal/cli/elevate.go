@@ -3,8 +3,9 @@
 // Режиму «весь трафик» (tun) нужны права администратора, а человек,
 // запустивший qwdtt-cli двойным щелчком, их не давал. Меню не отправляет его
 // перечитывать инструкцию, а запрашивает права само: на Windows — окном UAC,
-// на Linux — через sudo в том же терминале. Перезапускается не меню, а одна
-// команда — qwdtt-cli connect <профиль>.
+// на Linux — через sudo в том же терминале. Перезапускается не всё меню, а одно
+// подключение — qwdtt-cli menu -connect <профиль>: оно, как и меню, спросит
+// новые ссылки, когда звонки закроются.
 package cli
 
 import (
@@ -22,14 +23,14 @@ var errNoAdminAccount = errors.New("у этой учётной записи не
 // настроек. Путь делается абсолютным: у повышенного процесса другой текущий
 // каталог (на Windows — System32).
 func relaunchArgs(name, configPath string) []string {
-	args := []string{"connect"}
+	args := []string{"menu"}
 	if configPath = strings.TrimSpace(configPath); configPath != "" {
 		if abs, err := filepath.Abs(configPath); err == nil {
 			configPath = abs
 		}
 		args = append(args, "-config", configPath)
 	}
-	return append(args, name)
+	return append(args, "-connect", name)
 }
 
 // relaunch — перезапуск с правами: подмена из env или настоящий.
