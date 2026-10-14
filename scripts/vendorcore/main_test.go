@@ -136,3 +136,53 @@ func TestRunMissingRuleFile(t *testing.T) {
 		t.Errorf("internal/core создан: %v", err)
 	}
 }
+
+// Конфиг WireGuard просит каждый воркер, пока он не получен, а группа без
+// кредов передаёт эстафету следующей. Фрагмент — как в апстримном group.go.
+func TestConvertGroupConfig(t *testing.T) {
+	in := "package main\n\nfunc g() {\n" +
+		"\t\tlog.Printf(\"[ГРУППА #%d] Ошибка кредов: %v\", groupID, err)\n\t\treturn\n" +
+		"\tvar configRequestInFlight int32\n" +
+		"\t\t\t\tgetConf := false\n" +
+		"\t\t\t\tif shouldGetConfig && atomic.LoadInt32(&configSent) == 0 {\n" +
+		"\t\t\t\t\tgetConf = atomic.CompareAndSwapInt32(&configRequestInFlight, 0, 1)\n" +
+		"\t\t\t\t}\n" +
+		"\t\t\t\tif getConf {\n" +
+		"\t\t\t\t\tif configDelivered {\n" +
+		"\t\t\t\t\t\tatomic.StoreInt32(&configSent, 1)\n" +
+		"\t\t\t\t\t} else {\n" +
+		"\t\t\t\t\t\tatomic.StoreInt32(&configRequestInFlight, 0)\n" +
+		"\t\t\t\t\t}\n" +
+		"\t\t\t\t}\n}\n"
+
+	// Остальные правила group.go в этот фрагмент не попадают, а каждое
+	// обязано совпасть: оставляем только проверяемые.
+	saved := replacements
+	t.Cleanup(func() { replacements = saved })
+	replacements = nil
+	for _, r := range saved {
+		if r.File == "group.go" && (strings.Contains(r.Pattern, "Ошибка кредов") || strings.Contains(r.Pattern, "configRequestInFlight") ||
+			strings.Contains(r.Pattern, "configDelivered")) {
+			replacements = append(replacements, r)
+		}
+	}
+	if len(replacements) != 4 {
+		t.Fatalf("правил конфига и эстафеты %d, ожидалось 4", len(replacements))
+	}
+
+	got, err := convertFile("group.go", in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "package core\n\nfunc g() {\n" +
+		"\t\tlogf(\"[ГРУППА #%d] Ошибка кредов: %v\", groupID, err)\n" +
+		"\t\temitHashFailed(hash, groupID, err)\n" +
+		"\t\tif signalReady != nil {\n\t\t\tclose(signalReady)\n\t\t}\n\t\treturn\n" +
+		"\t\t\t\tgetConf := shouldGetConfig && atomic.LoadInt32(&configSent) == 0\n" +
+		"\t\t\t\tif getConf && configDelivered {\n" +
+		"\t\t\t\t\tatomic.StoreInt32(&configSent, 1)\n" +
+		"\t\t\t\t}\n}\n"
+	if got != want {
+		t.Errorf("получилось:\n%s\nожидалось:\n%s", got, want)
+	}
+}

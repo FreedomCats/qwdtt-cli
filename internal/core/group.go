@@ -71,13 +71,15 @@ func WorkerGroup(
 	} else {
 		logf("[ГРУППА #%d] Ошибка кредов: %v", groupID, err)
 		emitHashFailed(hash, groupID, err)
+		if signalReady != nil {
+			close(signalReady)
+		}
 		return
 	}
 
 	logf("[ГРУППА #%d] Креды OK, TURN: %v, %d воркеров", groupID, creds.TurnURLs, len(workerIDs))
 	emitStage(StageVK, StageOK, 0, "")
 
-	var configRequestInFlight int32
 	var wg sync.WaitGroup
 	var credsMu sync.RWMutex
 	var refreshMu sync.Mutex
@@ -157,10 +159,7 @@ func WorkerGroup(
 					return
 				}
 
-				getConf := false
-				if shouldGetConfig && atomic.LoadInt32(&configSent) == 0 {
-					getConf = atomic.CompareAndSwapInt32(&configRequestInFlight, 0, 1)
-				}
+				getConf := shouldGetConfig && atomic.LoadInt32(&configSent) == 0
 				var cc chan<- string
 				if getConf {
 					cc = configCh
@@ -176,12 +175,8 @@ func WorkerGroup(
 
 				quotaRetry := false
 				fastRetry := false
-				if getConf {
-					if configDelivered {
-						atomic.StoreInt32(&configSent, 1)
-					} else {
-						atomic.StoreInt32(&configRequestInFlight, 0)
-					}
+				if getConf && configDelivered {
+					atomic.StoreInt32(&configSent, 1)
 				}
 
 				if sessErr != nil {

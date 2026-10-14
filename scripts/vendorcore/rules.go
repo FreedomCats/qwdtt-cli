@@ -292,11 +292,19 @@ var replacements = []rule{
 	// супервизору нужно знать, какой хеш исключить из следующей попытки и когда
 	// годных не осталось вовсе (задача F2). Разбирать лог, как это делал
 	// Android, мы не хотим: ради этого и заводились события.
+	//
+	// Вместе с отказом группа передаёт эстафету следующей. В апстриме
+	// signalReady закрывался только после удачных кредов, и при мёртвом хеше
+	// первой группы следующие ждали её сигнала вечно: туннель не поднимался
+	// и не падал, хотя второй хеш был годен.
 	{
-		File:        "group.go",
-		Count:       1,
-		Pattern:     `(?m)^(\t+)log\.Printf\("\[ГРУППА #%d\] Ошибка кредов: %v", groupID, err\)$`,
-		InsertAfter: `emitHashFailed(hash, groupID, err)`,
+		File:    "group.go",
+		Count:   1,
+		Pattern: `(?m)^(\t+)log\.Printf\("\[ГРУППА #%d\] Ошибка кредов: %v", groupID, err\)$`,
+		InsertAfter: "emitHashFailed(hash, groupID, err)\n" +
+			"${1}if signalReady != nil {\n" +
+			"${1}\tclose(signalReady)\n" +
+			"${1}}",
 	},
 	// Закрытый звонок VK отвечает «Invalid join link (error_code=954)»; ядро
 	// верно делает из этого CallUnavailableError (fatalCallError), но
@@ -321,6 +329,37 @@ var replacements = []rule{
 		Count:       1,
 		Pattern:     `(?m)^(\t+)log\.Printf\("\[СТАТИСТИКА\] Активных: %d \| Трафик: %\.2f МБ \| ↓%\.2f МБ / ↑%\.2f МБ", active, totalMB, downMB, upMB\)$`,
 		InsertAfter: `emit(EventStats{ActiveWorkers: active, BytesUp: up, BytesDown: down, DroppedUp: s.DroppedUp.Load(), DroppedDown: s.DroppedDown.Load()})`,
+	},
+
+	// --- конфиг WireGuard при исчерпанной квоте TURN ---
+	// Конфиг просил один воркер группы: флаг configRequestInFlight брался до
+	// входа в RunSession. Воркер, упёршийся в квоту VK (486), держал флаг,
+	// пока остальные стартовали — и они, получив relay и DTLS, конфиг уже не
+	// просили: решение принимается в начале сеанса, а сеанс живёт долго. Сам
+	// он ждал 30–60 с между попытками, туннель без конфига не поднимался
+	// минутами, хотя рабочие сеансы были.
+	//
+	// Теперь конфиг просит каждый воркер, входящий в сеанс, пока он не
+	// получен. Сервер на повторный GETCONF отвечает тем же конфигом (ключи
+	// устройства заводятся один раз, server/connections.go), лишний доставленный
+	// конфиг RunSession сбрасывает сам («уже был доставлен другим воркером»).
+	{
+		File:    "group.go",
+		Count:   1,
+		Pattern: `(?m)^\tvar configRequestInFlight int32\n`,
+		Replace: to(""),
+	},
+	{
+		File:    "group.go",
+		Count:   1,
+		Pattern: `(?m)^(\t+)getConf := false\n\t+if shouldGetConfig && atomic\.LoadInt32\(&configSent\) == 0 \{\n\t+getConf = atomic\.CompareAndSwapInt32\(&configRequestInFlight, 0, 1\)\n\t+\}$`,
+		Replace: to(`${1}getConf := shouldGetConfig && atomic.LoadInt32(&configSent) == 0`),
+	},
+	{
+		File:    "group.go",
+		Count:   1,
+		Pattern: `(?m)^(\t+)if getConf \{\n\t+if configDelivered \{\n\t+atomic\.StoreInt32\(&configSent, 1\)\n\t+\} else \{\n\t+atomic\.StoreInt32\(&configRequestInFlight, 0\)\n\t+\}\n\t+\}$`,
+		Replace: to("${1}if getConf && configDelivered {\n${1}\tatomic.StoreInt32(&configSent, 1)\n${1}}"),
 	},
 
 	// --- сброшенные пакеты ---

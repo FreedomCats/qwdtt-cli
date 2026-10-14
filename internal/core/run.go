@@ -253,8 +253,13 @@ func turnParams(cfg *Config) (*TurnParams, error) {
 //
 // Группа — workersPerGroup воркеров на одних кредах; хеш звонка у группы свой,
 // по её номеру. Каскад нужен, чтобы сотня воркеров не ломилась к VK разом:
-// каждая группа ждёт сигнала от предыдущей. Конфиг WireGuard приходит только от
-// первой группы — остальным канал не передаётся вовсе.
+// каждая группа ждёт сигнала от предыдущей.
+//
+// Конфиг WireGuard просит любая группа, а не только первая, как в апстриме.
+// Иначе конфиг держался на одном хеше: закрыт звонок первой группы или
+// исчерпана квота TURN её кредов — туннель не поднимается, хотя остальные
+// группы на линии. Повторный GETCONF сервер отдаёт тем же конфигом, лишний
+// RunSession сбрасывает, а serveConfig берёт первый.
 func startWorkers(
 	ctx context.Context,
 	wg *sync.WaitGroup,
@@ -285,8 +290,6 @@ func startWorkers(
 			workerID++
 		}
 
-		isFirst := g == 0
-
 		waitReady := prevReady
 		var signalReady chan<- struct{}
 		if g < numGroups-1 {
@@ -295,16 +298,11 @@ func startWorkers(
 			prevReady = ready
 		}
 
-		var groupConfigCh chan<- string
-		if isFirst {
-			groupConfigCh = configCh
-		}
-
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			WorkerGroup(ctx, g+1, g, tp, peer, disp, localPort,
-				isFirst, groupConfigCh, ids, pauseFlag, cfg.DeviceID, cfg.Password, stats,
+				true, configCh, ids, pauseFlag, cfg.DeviceID, cfg.Password, stats,
 				waitReady, signalReady)
 		}()
 	}
