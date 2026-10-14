@@ -1,4 +1,4 @@
-# Релиз: тесты на Windows, сборка scripts/build-release.ps1 и черновик
+# Релиз: тесты на Windows и Linux, сборка scripts/build-release.ps1 и черновик
 # GitHub Release с архивами и SHA256SUMS.txt.
 #
 # Тег v* — сборка и черновик релиза с этим тегом; опубликовать черновик —
@@ -21,8 +21,11 @@ jobs:
   test:
     uses: ./.github/workflows/windows.yml
 
+  test-linux:
+    uses: ./.github/workflows/linux.yml
+
   build:
-    needs: test
+    needs: [test, test-linux]
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
