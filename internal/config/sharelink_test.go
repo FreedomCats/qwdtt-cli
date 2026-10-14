@@ -118,3 +118,77 @@ func TestProfileName(t *testing.T) {
 		}
 	}
 }
+
+// Ссылка wdtt:// в том виде, в каком её выдаёт бот сервера: адрес, порты
+// DTLS, WG и локальный, пароль, хеш. Порт сервера — порт DTLS.
+func TestParseWDTTLinkBot(t *testing.T) {
+	link, err := ParseShareLink("wdtt://203.0.113.10:56000:56001:9000:p@ss:aaaaaaaaaaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ShareLink{Peer: "203.0.113.10:56000", Password: "p@ss", Hashes: "aaaaaaaaaaaaaaaa"}
+	if *link != want {
+		t.Errorf("разобрано %+v, ожидалось %+v", *link, want)
+	}
+}
+
+func TestParseWDTTLinkForms(t *testing.T) {
+	for text, want := range map[string]ShareLink{
+		// Без хешей — их спросят, как у qwdtt://config.
+		"wdtt://203.0.113.10:443:56001:9000:secret": {Peer: "203.0.113.10:443", Password: "secret"},
+		// Имя после «#» (PWDTT), в том числе закодированное.
+		"wdtt://203.0.113.10:443:1:2:secret:aaaaaaaaaaaaaaaa,bbbbbbbbbbbbbbbb#Дом 2": {
+			Name: "Дом 2", Peer: "203.0.113.10:443", Password: "secret", Hashes: "aaaaaaaaaaaaaaaa,bbbbbbbbbbbbbbbb"},
+		"wdtt://203.0.113.10:443:1:2:secret#%D0%94%D0%BE%D0%BC": {
+			Name: "Дом", Peer: "203.0.113.10:443", Password: "secret"},
+		// Хеш — ссылка на звонок с двоеточием в «https:», как у Android.
+		"wdtt://203.0.113.10:443:1:2:secret:https://vk.com/call/join/aaaaaaaaaaaaaaaa": {
+			Peer: "203.0.113.10:443", Password: "secret", Hashes: "https://vk.com/call/join/aaaaaaaaaaaaaaaa"},
+		// Схема без «//», регистр, IPv6 в скобках, имя узла.
+		"WDTT:example.org:56000:56001:9000:secret":     {Peer: "example.org:56000", Password: "secret"},
+		"wdtt://[2001:db8::1]:56000:56001:9000:secret": {Peer: "[2001:db8::1]:56000", Password: "secret"},
+		// В base64, как qwdtt://config.
+		base64.StdEncoding.EncodeToString([]byte("wdtt://203.0.113.10:443:1:2:secret")): {
+			Peer: "203.0.113.10:443", Password: "secret"},
+	} {
+		link, err := ParseShareLink(text)
+		if err != nil {
+			t.Errorf("%q: %v", text, err)
+			continue
+		}
+		if *link != want {
+			t.Errorf("%q: разобрано %+v, ожидалось %+v", text, *link, want)
+		}
+	}
+
+	link, err := ParseShareLink("wdtt://203.0.113.10:443:1:2:secret:https://vk.com/call/join/aaaaaaaaaaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := link.HashCount(); n != 1 {
+		t.Errorf("хешей %d, ожидался 1", n)
+	}
+}
+
+func TestParseWDTTLinkErrors(t *testing.T) {
+	for text, want := range map[string]string{
+		"wdtt://203.0.113.10:443:secret1":      "неполная",
+		"wdtt://:443:1:2:secret1":              "нет адреса",
+		"wdtt://203.0.113.10:0:1:2:secret1":    "неверный адрес",
+		"wdtt://203.0.113.10:порт:1:2:secret1": "неверный адрес",
+		"wdtt://[2001:db8::1:443:1:2:secret1":  "закрывающей",
+		"wdtt-but-not://203.0.113.10:1:2:3:x":  "не ссылка",
+	} {
+		_, err := ParseShareLink(text)
+		if err == nil {
+			t.Errorf("%q принята", text)
+			continue
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: ошибка %q, ожидалось %q", text, err, want)
+		}
+		if strings.Contains(err.Error(), "secret1") {
+			t.Errorf("%q: в ошибке пароль: %v", text, err)
+		}
+	}
+}

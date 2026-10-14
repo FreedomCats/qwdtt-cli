@@ -27,7 +27,7 @@ func profileCommand() *command {
   list          перечислить профили из profiles.toml
   show <имя>    показать настройки профиля; секреты — замаскированными
   set <имя>     создать или изменить профиль; пароль и хеши читаются скрытым вводом
-  import [имя]  профиль из ссылки qwdtt://config; ссылка читается скрытым вводом
+  import [имя]  профиль из ссылки qwdtt://config или wdtt://; ссылка читается скрытым вводом
   rm <имя>      удалить профиль вместе с его секретами
 
 Флаги у каждой подкоманды свои: qwdtt-cli profile set -h.
@@ -439,9 +439,11 @@ func profileImportCommand() *command {
 	return &command{
 		name:    "profile import",
 		args:    "[имя] [флаги]",
-		summary: "профиль из ссылки qwdtt://config",
+		summary: "профиль из ссылки qwdtt://config или wdtt://",
 		description: `Ссылку qwdtt://config?… (и QR-код с ней) выдают Android-приложение qWDTT
-и бот сервера: в ней адрес сервера, пароль и хеши звонков. Ссылка читается
+и бот сервера: в ней адрес сервера, пароль и хеши звонков. Понимается и ссылка
+wdtt://<адрес>:<порт>:<порт WG>:<локальный порт>:<пароль>[:<хеши>][#имя] — её бот
+выдаёт рядом («Быстрая ссылка»), порт сервера в ней первый. Ссылка читается
 скрытым вводом или из stdin (qwdtt-cli profile import < файл): в ней пароль, и
 аргументом командной строки её передавать нельзя.
 
@@ -469,7 +471,7 @@ func runProfileImport(_ context.Context, e *env, args []string) error {
 	}
 	named := setFlags(fs)
 
-	text, err := e.askSecret("Ссылка qwdtt://config (при вводе не отображается): ")
+	text, err := e.askSecret("Ссылка qwdtt://config или wdtt:// (при вводе не отображается): ")
 	if errors.Is(err, errNoInput) {
 		return errors.New("ссылка не введена")
 	}

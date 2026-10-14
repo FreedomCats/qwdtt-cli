@@ -1,6 +1,7 @@
-// sharelink.go — профиль из ссылки qwdtt://config?… (plan-e5.md, I8).
+// sharelink.go — профиль из ссылки qwdtt://config?… (plan-e5.md, I8) или
+// wdtt://….
 //
-// Такую ссылку (и QR-код с ней) выдают Android-клиент qWDTT («Экспорт
+// Ссылку qwdtt://config (и QR-код с ней) выдают Android-клиент qWDTT («Экспорт
 // профиля») и бот сервера. В ней всё, что нужно для подключения:
 //
 //	qwdtt://config?name=<имя>&peer=<host:port>&hashes=<хеши>&workers=<N>&port=<порт>&pass=<пароль>
@@ -10,6 +11,16 @@
 // ссылка в base64, порт сервера по умолчанию дописывается, неизвестные
 // параметры пропускаются.
 //
+// Ссылку wdtt:// — формат исходного WDTT — бот сервера выдаёт рядом
+// с qwdtt://config («Быстрая ссылка»), её же понимают Android-клиент и PWDTT:
+//
+//	wdtt://<адрес>:<порт DTLS>:<порт WG>:<локальный порт>:<пароль>[:<хеши>][#имя]
+//
+// Порты WG и локальный нам не нужны: WireGuard у нас в процессе, а порт
+// сервера — порт DTLS. Разбор — как у Android (ProfilesTab.kt, parseQrConfig):
+// пароль — пятое поле, всё после него — хеши, в том числе ссылка на звонок
+// с «https:». Хешей может не быть, и имя после «#» — как у PWDTT.
+//
 // В ссылке пароль и хеши — она сама секрет. Принимать её аргументом командной
 // строки нельзя по той же причине, что и пароль (см. internal/cli/profile.go).
 package config
@@ -18,6 +29,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -56,12 +68,16 @@ func ParseShareLink(text string) (*ShareLink, error) {
 	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
 		return nil, errors.New("это адрес в интернете, а не ссылка qwdtt://config; подписки не поддерживаются")
 	}
-	if !strings.HasPrefix(lower, "qwdtt:") {
+	if !strings.HasPrefix(lower, "qwdtt:") && !strings.HasPrefix(lower, "wdtt:") {
 		decoded, ok := decodeBase64(text)
-		if !ok || !strings.HasPrefix(strings.ToLower(decoded), "qwdtt:") {
-			return nil, errors.New("это не ссылка qwdtt://config: она начинается с qwdtt://")
+		lowerDecoded := strings.ToLower(decoded)
+		if !ok || !strings.HasPrefix(lowerDecoded, "qwdtt:") && !strings.HasPrefix(lowerDecoded, "wdtt:") {
+			return nil, errors.New("это не ссылка на профиль: она начинается с qwdtt:// или wdtt://")
 		}
 		text = decoded
+	}
+	if strings.HasPrefix(strings.ToLower(text), "wdtt:") {
+		return parseWDTTLink(text)
 	}
 
 	// Схему и «//» снимаем руками: url.Parse поняла бы qwdtt:config?… как
@@ -104,6 +120,57 @@ func ParseShareLink(text string) (*ShareLink, error) {
 	}
 
 	return link, nil
+}
+
+// parseWDTTLink разбирает ссылку wdtt://. Схема уже проверена.
+func parseWDTTLink(text string) (*ShareLink, error) {
+	rest := strings.TrimPrefix(text[len("wdtt:"):], "//")
+
+	link := &ShareLink{}
+	if body, name, ok := cutLast(rest, "#"); ok {
+		rest = body
+		if unescaped, err := url.PathUnescape(name); err == nil {
+			name = unescaped
+		}
+		link.Name = strings.TrimSpace(name)
+	}
+
+	// Адрес IPv6 — в квадратных скобках: двоеточия в нём не разделители.
+	host := ""
+	if strings.HasPrefix(rest, "[") {
+		end := strings.Index(rest, "]")
+		if end < 0 {
+			return nil, errors.New("в ссылке wdtt:// повреждён адрес сервера: нет закрывающей «]»")
+		}
+		host, rest = rest[1:end], strings.TrimPrefix(rest[end+1:], ":")
+	} else {
+		host, rest, _ = strings.Cut(rest, ":")
+	}
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return nil, errors.New("в ссылке wdtt:// нет адреса сервера")
+	}
+
+	// Порт DTLS, порт WG, локальный порт, пароль и, если есть, хеши.
+	fields := strings.Split(rest, ":")
+	if len(fields) < 4 {
+		return nil, errors.New("ссылка wdtt:// неполная: нужны адрес, три порта и пароль; скопируйте её целиком ещё раз")
+	}
+	link.Peer = net.JoinHostPort(host, strings.TrimSpace(fields[0]))
+	if err := CheckPeer(link.Peer); err != nil {
+		return nil, fmt.Errorf("в ссылке неверный адрес сервера: %w", err)
+	}
+	link.Password = fields[3]
+	link.Hashes = strings.TrimSpace(strings.Join(fields[4:], ":"))
+	return link, nil
+}
+
+// cutLast — strings.Cut по последнему вхождению sep.
+func cutLast(s, sep string) (before, after string, found bool) {
+	if i := strings.LastIndex(s, sep); i >= 0 {
+		return s[:i], s[i+len(sep):], true
+	}
+	return s, "", false
 }
 
 // HashCount — сколько хешей разобрано из ссылки.

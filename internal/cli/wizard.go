@@ -108,10 +108,10 @@ func (m *menu) wizard(path string, file *config.File) error {
 	return nil
 }
 
-// askShareLink — первый вопрос мастера: ссылка qwdtt://config или Enter для
+// askShareLink — первый вопрос мастера: ссылка qwdtt://config или wdtt:// или Enter для
 // ввода вручную (nil). Скрыто: в ссылке пароль.
 func (m *menu) askShareLink() (*config.ShareLink, error) {
-	fmt.Fprintln(m.e.stdout, "Если у вас есть ссылка qwdtt://config?… (из приложения qWDTT или от бота сервера),")
+	fmt.Fprintln(m.e.stdout, "Если у вас есть ссылка qwdtt://config?… или wdtt://… (из приложения qWDTT или от бота сервера),")
 	fmt.Fprintln(m.e.stdout, "вставьте её — остальное qwdtt-cli возьмёт из неё. Нет ссылки — нажмите Enter.")
 	for {
 		text, err := m.wizardSecret("Ссылка (при вводе не отображается) [ввести вручную]: ")

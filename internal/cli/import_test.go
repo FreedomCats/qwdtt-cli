@@ -69,6 +69,32 @@ func TestProfileImportFromStdin(t *testing.T) {
 	}
 }
 
+// Ссылка wdtt:// от бота сервера: порт сервера — первый из трёх, имя — после «#».
+func TestProfileImportWDTT(t *testing.T) {
+	p := newProfileEnv(t)
+	p.pipe = true
+	p.input("wdtt://203.0.113.10:56000:56001:9000:" + testPassword + ":" + testHashes + "#Дом 2\n")
+
+	code, stdout, stderr := p.run("profile", "import")
+	if code != exitOK {
+		t.Fatalf("код возврата %d, stderr:\n%s", code, stderr)
+	}
+	assertNoSecrets(t, "stdout", stdout)
+	assertNoSecrets(t, "stderr", stderr)
+
+	h := loadTestFile(t, p).Profiles["dom-2"]
+	if h == nil || h.Peer != "203.0.113.10:56000" || h.Workers != 0 {
+		t.Fatalf("профиль записан неверно: %+v", h)
+	}
+	store := config.NewSecretStoreFor(p.configPath())
+	if got, _ := store.Get(h.PasswordRef); got != testPassword {
+		t.Errorf("пароль записан неверно: %q", got)
+	}
+	if got, _ := store.Get(h.VkHashesRef); got != testHashes {
+		t.Errorf("хеши записаны неверно: %q", got)
+	}
+}
+
 // Занятое имя — отказ; -replace заменяет адрес и секреты и оставляет прочие
 // настройки профиля.
 func TestProfileImportReplace(t *testing.T) {
