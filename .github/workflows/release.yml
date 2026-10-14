@@ -63,14 +63,24 @@ jobs:
           }
 
           Add-Type -AssemblyName System.IO.Compression.FileSystem
+          # Внутри zip, как и в tar.gz, — каталог с именем архива. Разделитель —
+          # только «/»: с «\» архив на Linux и macOS распакуется в файлы с
+          # обратными слэшами в именах.
           foreach ($zip in Get-ChildItem dist -Filter *.zip) {
               $z = [System.IO.Compression.ZipFile]::OpenRead($zip.FullName)
-              try { $names = @($z.Entries.FullName) } finally { $z.Dispose() }
+              try { $entries = @($z.Entries.FullName) } finally { $z.Dispose() }
+              $prefix = "$($zip.BaseName)/"
+              $outside = $entries | Where-Object { -not $_.StartsWith($prefix) }
+              if ($outside) {
+                  Write-Host "::error::$($zip.Name) — вне каталога $prefix`: $($outside -join ', ')"
+                  $failed = $true
+              }
+              $names = @($entries | ForEach-Object { $_.Substring([Math]::Min($prefix.Length, $_.Length)) } | Where-Object { $_ })
               Test-Files $zip.Name $names (@('tt.exe', 'wintun.dll', 'wintun-LICENSE.txt') + $docs)
 
               $unpacked = Join-Path $env:RUNNER_TEMP $zip.BaseName
               Expand-Archive -Force $zip.FullName $unpacked
-              & (Join-Path $unpacked 'tt.exe') version
+              & (Join-Path $unpacked $zip.BaseName 'tt.exe') version
               if ($LASTEXITCODE -ne 0) {
                   Write-Host "::error::$($zip.Name) — tt.exe version завершился с кодом $LASTEXITCODE"
                   $failed = $true

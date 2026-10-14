@@ -18,7 +18,8 @@
         dist/tt_<версия>_windows_amd64/tt.exe
         dist/tt_<версия>_linux_amd64/tt
         dist/tt_<версия>_darwin_arm64/tt
-        dist/tt_<версия>_windows_amd64.zip   — tt.exe, wintun.dll, wintun-LICENSE.txt,
+        dist/tt_<версия>_windows_amd64.zip   — каталог tt_<версия>_windows_amd64/
+                                               с tt.exe, wintun.dll, wintun-LICENSE.txt,
                                                THIRD_PARTY_NOTICES.txt,
                                                tt.example.toml, LICENSE, README.md
         dist/tt_<версия>_linux_amd64.tar.gz  — каталог tt_<версия>_linux_amd64/ с tt,
@@ -31,8 +32,8 @@
     всего, что слинковано в tt.exe, — собирает `go run ./scripts/notices`
     на каждую сборку.
 
-    Внутри zip файлы лежат без каталога (распаковал и запустил), внутри tar.gz —
-    в каталоге с именем архива, как принято для tar. В tar.gz у tt стоит право
+    Внутри и zip, и tar.gz файлы лежат в каталоге с именем архива: распакованное
+    не смешается с соседними файлами. В tar.gz у tt стоит право
     на исполнение (0755), у остальных файлов — 0644, на какой бы системе ни шла
     сборка: архив пишется средствами .NET (System.Formats.Tar), а не tar
     системы, — tar на Windows права на исполнение не ставит. Нужен pwsh 7.3
@@ -163,8 +164,9 @@ if (-not $NoZip) {
         if ($LASTEXITCODE -ne 0) { throw "уведомления для $($b.Platform) не собраны" }
         $archive = Join-Path $Out "$($b.Name).zip"
         if (Test-Path $archive) { Remove-Item -Force $archive }
-        # Внутри архива — файлы без каталога: распаковал и запустил.
-        Compress-Archive -Path (Join-Path $b.Dir '*') -DestinationPath $archive -CompressionLevel Optimal
+        # Внутри архива — каталог с именем архива, как в tar.gz: «Извлечь всё»
+        # не рассыплет файлы по Загрузкам, а tt.exe не потеряет wintun.dll.
+        Compress-Archive -Path $b.Dir -DestinationPath $archive -CompressionLevel Optimal
         $archives += $archive
         Write-Host "Архив: $archive"
     }
