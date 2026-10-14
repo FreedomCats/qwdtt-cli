@@ -69,6 +69,9 @@ func classifyHashCheckError(err error) (string, string) {
 	if err == nil {
 		return "ok", ""
 	}
+	if callErr, ok := asCallUnavailableError(err); ok {
+		return "dead", fmt.Sprintf("Звонок не найден или закрыт (error_code=%d)", callErr.Code)
+	}
 	text := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(text, "captcha_required") || strings.Contains(text, "captcha_wait_required"):

@@ -15,6 +15,7 @@ import (
 	"github.com/FreedomCats/qwdtt-cli/internal/config"
 	"github.com/FreedomCats/qwdtt-cli/internal/core"
 	"github.com/FreedomCats/qwdtt-cli/internal/datapath"
+	"github.com/FreedomCats/qwdtt-cli/internal/supervisor"
 )
 
 // Живого сервера в тестах нет, поэтому проверяется сборка плана: профиль,
@@ -387,6 +388,27 @@ func TestSecretErrorLockedKeyring(t *testing.T) {
 	}
 	if strings.Contains(msg, "profile set") {
 		t.Errorf("подсказка перезаписать цельный секрет: %s", msg)
+	}
+}
+
+// Звонки закрылись — connect останавливается и говорит, где взять новые ссылки.
+// Прочие ошибки подсказку не получают.
+func TestExhaustedHint(t *testing.T) {
+	exhausted := fmt.Errorf("%w: %w", supervisor.ErrHashesExhausted, errors.New("звонок закрыт"))
+	err := exhaustedHint(exhausted, "home")
+	if !errors.Is(err, supervisor.ErrHashesExhausted) {
+		t.Errorf("ошибка потеряла ErrHashesExhausted: %v", err)
+	}
+	if !strings.Contains(err.Error(), "qwdtt-cli profile set home -hashes") {
+		t.Errorf("нет подсказки: %v", err)
+	}
+
+	other := errors.New("сеть недоступна")
+	if got := exhaustedHint(other, "home"); got != other {
+		t.Errorf("прочая ошибка изменилась: %v", got)
+	}
+	if exhaustedHint(nil, "home") != nil {
+		t.Error("nil превратился в ошибку")
 	}
 }
 

@@ -15,7 +15,8 @@ func TestConvertMarkers(t *testing.T) {
 		"func check(hashes []string) {\n\tfor i, hash := range hashes {\n" +
 		"\t\tfmt.Printf(\"HASH_CHECK_START|%d|%s\\n\", i+1, hash)\n" +
 		"\t\tfmt.Printf(\"HASH_CHECK|%d|%s|%s|%s\\n\", i+1, hash, status, sanitizeHashCheckMessage(message))\n" +
-		"\t\tlog.Printf(\"x\")\n\t}\n}\n\nfunc main() {\n\tos.Exit(1)\n}\n"
+		"\t\tlog.Printf(\"x\")\n\t}\n}\n\n" +
+		"func classify(err error) {\n\ttext := strings.ToLower(err.Error())\n}\n\nfunc main() {\n\tos.Exit(1)\n}\n"
 	got, err := convertFile("main.go", in)
 	if err != nil {
 		t.Fatal(err)
@@ -24,7 +25,10 @@ func TestConvertMarkers(t *testing.T) {
 		"func check(hashes []string) {\n\tfor i, hash := range hashes {\n" +
 		"\t\temitHashCheck(i+1, len(hashes), hash, HashCheckRunning, \"\")\n" +
 		"\t\temitHashCheck(i+1, len(hashes), hash, HashCheckStatus(status), sanitizeHashCheckMessage(message))\n" +
-		"\t\tlogf(\"x\")\n\t}\n}\n"
+		"\t\tlogf(\"x\")\n\t}\n}\n\n" +
+		"func classify(err error) {\n\tif callErr, ok := asCallUnavailableError(err); ok {\n" +
+		"\t\treturn \"dead\", fmt.Sprintf(\"Звонок не найден или закрыт (error_code=%d)\", callErr.Code)\n" +
+		"\t}\n\ttext := strings.ToLower(err.Error())\n}\n"
 	if got != want {
 		t.Errorf("получилось:\n%s\nожидалось:\n%s", got, want)
 	}

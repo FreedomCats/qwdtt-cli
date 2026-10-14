@@ -298,6 +298,22 @@ var replacements = []rule{
 		Pattern:     `(?m)^(\t+)log\.Printf\("\[ГРУППА #%d\] Ошибка кредов: %v", groupID, err\)$`,
 		InsertAfter: `emitHashFailed(hash, groupID, err)`,
 	},
+	// Закрытый звонок VK отвечает «Invalid join link (error_code=954)»; ядро
+	// верно делает из этого CallUnavailableError (fatalCallError), но
+	// классификатор смотрит только в текст и ищет «call not found», «9000»,
+	// «callunavailable» — ни одной из этих строк там нет. Статус выходил
+	// error вместо dead, HashPool хеш не исключал, и клиент с одним закрытым
+	// звонком переподключался бесконечно. Тип ошибки надёжнее текста:
+	// проверяем его первым, текстовые проверки остаются для прочих путей.
+	{
+		File:    "main.go",
+		Count:   1,
+		Pattern: `(?m)^(\t+)text := strings\.ToLower\(err\.Error\(\)\)$`,
+		Replace: to("${1}if callErr, ok := asCallUnavailableError(err); ok {\n" +
+			"${1}\treturn \"dead\", fmt.Sprintf(\"Звонок не найден или закрыт (error_code=%d)\", callErr.Code)\n" +
+			"${1}}\n" +
+			"${0}"),
+	},
 
 	// --- счётчики трафика ---
 	{

@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -253,5 +254,35 @@ func TestEmitHashFailed(t *testing.T) {
 	network, _ := events[1].(EventHashFailed)
 	if network.Status != HashCheckNetwork {
 		t.Errorf("статус %q, ожидался %q", network.Status, HashCheckNetwork)
+	}
+}
+
+// Закрытый звонок: VK отвечает «Invalid join link (error_code=954)», и в тексте
+// нет ни одной строки, по которой классификатор узнавал мёртвый хеш. Узнаёт
+// он его по типу — в том числе завёрнутому путём vkcalls, — иначе HashPool
+// хеш не исключит и клиент будет переподключаться бесконечно.
+func TestClassifyCallUnavailable(t *testing.T) {
+	closed := &CallUnavailableError{Code: 954, Message: "Invalid join link"}
+	cases := map[string]error{
+		"как есть":      closed,
+		"путь vkcalls":  newVKCallsFailure("step2 calls.getCallPreview", vkCallsFailureCall, closed),
+		"обёрнута в %w": fmt.Errorf("креды: %w", closed),
+		"ошибка 951":    &CallUnavailableError{Code: 951, Message: "Call not found"},
+	}
+	for name, err := range cases {
+		status, msg := classifyHashCheckError(err)
+		if HashCheckStatus(status) != HashCheckDead {
+			t.Errorf("%s: статус %q, ожидался %q", name, status, HashCheckDead)
+		}
+		if msg == "" {
+			t.Errorf("%s: пояснение пустое", name)
+		}
+	}
+
+	rec := install(t)
+	emitHashFailed("a1b2c3d4e5f6", 1, closed)
+	failed, ok := rec.all()[0].(EventHashFailed)
+	if !ok || failed.Status != HashCheckDead {
+		t.Errorf("событие отказа: %+v", rec.all()[0])
 	}
 }

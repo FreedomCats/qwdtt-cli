@@ -131,7 +131,17 @@ func runConnect(ctx context.Context, e *env, args []string) error {
 	if err != nil {
 		return err
 	}
-	return plan.run(ctx, e, opts.common.verbose)
+	return exhaustedHint(plan.run(ctx, e, opts.common.verbose), plan.profile.Name)
+}
+
+// exhaustedHint дописывает к ошибке «годных хешей не осталось», что делать
+// дальше. Звонки закрылись — сеанс так обычно и кончается, и выход один: новые
+// ссылки. Меню спрашивает их само (menu.connect), здесь только подсказка.
+func exhaustedHint(err error, profile string) error {
+	if !errors.Is(err, supervisor.ErrHashesExhausted) {
+		return err
+	}
+	return fmt.Errorf("%w; заведите новые ссылки: qwdtt-cli profile set %s -hashes", err, profile)
 }
 
 // ──────────────────────────── сборка ────────────────────────────
