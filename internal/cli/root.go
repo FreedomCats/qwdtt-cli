@@ -80,6 +80,9 @@ type env struct {
 	// noPause — пауза перед закрытием окна не нужна: человек сам ушёл из меню
 	// (pause.go).
 	noPause bool
+	// ownsConsole подменяет проверку «tt один в своей консоли, и её видит
+	// человек» (pause.go). Пусто — настоящая проверка.
+	ownsConsole func() bool
 }
 
 // command — одна команда tt.
