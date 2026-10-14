@@ -1,12 +1,12 @@
-# Релиз: тесты на Windows и Linux, сборка scripts/build-release.ps1 и черновик
+# Релиз: тесты на Windows и Linux, сборка scripts/release и черновик
 # GitHub Release с архивами и SHA256SUMS.txt.
 #
 # Тег v* — сборка и черновик релиза с этим тегом; опубликовать черновик —
 # вручную, на странице Releases. Ручной запуск (workflow_dispatch) только
 # собирает: архивы остаются артефактом прогона, релиз не создаётся.
 #
-# Сборка идёт на Windows: там fetch-wintun.ps1 проверяет и хеш архива Wintun,
-# и подпись wintun.dll (Get-AuthenticodeSignature есть только на Windows).
+# Сборка идёт на Windows: там scripts/release проверяет и хеш архива Wintun,
+# и подпись wintun.dll (WinVerifyTrust есть только на Windows).
 name: release
 
 on:
@@ -29,7 +29,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      # Вся история с тегами: без неё git describe в build-release.ps1
+      # Вся история с тегами: без неё git describe в scripts/release
       # не найдёт тег при ручном запуске.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -40,81 +40,29 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: build-release.ps1
-        shell: pwsh
+      # Шаги — команды Go из scripts/, оболочка — bash: кода на PowerShell
+      # в проекте нет.
+      - name: Сборка
+        shell: bash
         run: |
-          $params = @{}
-          if ($env:GITHUB_REF_TYPE -eq 'tag') { $params.Version = $env:GITHUB_REF_NAME }
-          ./scripts/build-release.ps1 @params
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            go run ./scripts/release -version "$GITHUB_REF_NAME"
+          else
+            go run ./scripts/release
+          fi
 
       # В архиве — всё, что нужно для запуска у пользователя: без wintun.dll
-      # не работает режим tun, без README не понять, с чего начать. Список
-      # тот же, что в build-release.ps1; выпал файл — релиза нет. qwdtt-cli.exe из
-      # распакованного zip запускается, у qwdtt-cli в tar.gz — право на исполнение.
+      # не работает режим tun, без README не понять, с чего начать. Выпал
+      # файл — релиза нет. qwdtt-cli.exe из распакованного zip запускается,
+      # у qwdtt-cli в tar.gz — право на исполнение.
       - name: Состав архивов
-        shell: pwsh
-        run: |
-          $docs = 'THIRD_PARTY_NOTICES.txt', 'qwdtt-cli.example.toml', 'LICENSE', 'README.md'
-          $failed = $false
-          function Test-Files([string] $Archive, [string[]] $Got, [string[]] $Want) {
-              $missing = $Want | Where-Object { $Got -notcontains $_ }
-              if ($missing) {
-                  Write-Host "::error::$Archive — нет файлов: $($missing -join ', ')"
-                  $script:failed = $true
-              }
-              else { Write-Host "$Archive — $($Got -join ', ')" }
-          }
-
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          # Внутри zip, как и в tar.gz, — каталог с именем архива. Разделитель —
-          # только «/»: с «\» архив на Linux и macOS распакуется в файлы с
-          # обратными слэшами в именах.
-          foreach ($zip in Get-ChildItem dist -Filter *.zip) {
-              $z = [System.IO.Compression.ZipFile]::OpenRead($zip.FullName)
-              try { $entries = @($z.Entries.FullName) } finally { $z.Dispose() }
-              $prefix = "$($zip.BaseName)/"
-              $outside = $entries | Where-Object { -not $_.StartsWith($prefix) }
-              if ($outside) {
-                  Write-Host "::error::$($zip.Name) — вне каталога $prefix`: $($outside -join ', ')"
-                  $failed = $true
-              }
-              $names = @($entries | ForEach-Object { $_.Substring([Math]::Min($prefix.Length, $_.Length)) } | Where-Object { $_ })
-              Test-Files $zip.Name $names (@('qwdtt-cli.exe', 'wintun.dll', 'wintun-LICENSE.txt') + $docs)
-
-              $unpacked = Join-Path $env:RUNNER_TEMP $zip.BaseName
-              Expand-Archive -Force $zip.FullName $unpacked
-              & (Join-Path $unpacked $zip.BaseName 'qwdtt-cli.exe') version
-              if ($LASTEXITCODE -ne 0) {
-                  Write-Host "::error::$($zip.Name) — qwdtt-cli.exe version завершился с кодом $LASTEXITCODE"
-                  $failed = $true
-              }
-          }
-
-          # Путь к архиву — относительный: GNU tar прочёл бы «C:\…» как хост:файл.
-          Set-Location dist
-          foreach ($tgz in Get-ChildItem -Filter *.tar.gz) {
-              $prefix = $tgz.Name -replace '\.tar\.gz$', ''
-              $listing = & tar -tvzf $tgz.Name
-              if ($LASTEXITCODE -ne 0) { throw "tar не прочитал $($tgz.Name)" }
-              $names = @(& tar -tzf $tgz.Name | ForEach-Object { $_ -replace "^$([regex]::Escape($prefix))/", '' } | Where-Object { $_ })
-              Test-Files $tgz.Name $names (@('qwdtt-cli') + $docs)
-              if (-not ($listing | Where-Object { $_ -match '^-rwxr-xr-x' -and $_ -match "/qwdtt-cli$" })) {
-                  Write-Host "::error::$($tgz.Name) — у qwdtt-cli нет права на исполнение"
-                  $failed = $true
-              }
-          }
-
-          if ($failed) { exit 1 }
+        shell: bash
+        run: go run ./scripts/distcheck -dir dist
 
       # Переводы строк — LF: так файл проверяет и `sha256sum -c` на Linux.
       - name: SHA256SUMS.txt
-        shell: pwsh
-        run: |
-          $lines = Get-ChildItem dist -File | Sort-Object Name | ForEach-Object {
-              '{0}  {1}' -f (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant(), $_.Name
-          }
-          [System.IO.File]::WriteAllText((Join-Path $PWD 'dist/SHA256SUMS.txt'), ($lines -join "`n") + "`n")
-          Get-Content dist/SHA256SUMS.txt
+        shell: bash
+        run: go run ./scripts/sha256sums -dir dist
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

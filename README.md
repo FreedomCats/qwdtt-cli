@@ -93,24 +93,24 @@ go build -o build\out\qwdtt-cli.exe ./cmd/qwdtt-cli
 Этого достаточно для режимов `socks` и `external`. Режиму `tun` (свой сетевой
 адаптер, нужны права администратора) нужна ещё `wintun.dll` — библиотека драйвера
 Wintun от авторов WireGuard. В репозитории её нет: это чужой бинарь под своей
-лицензией. Скачать и проверить её можно скриптом, он кладёт DLL в `build\out`
-рядом с `qwdtt-cli.exe`:
+лицензией. Скачать и проверить её можно командой из `scripts/`, она кладёт DLL в
+`build\out` рядом с `qwdtt-cli.exe`:
 
 ```
-pwsh scripts/fetch-wintun.ps1
+go run ./scripts/wintun
 ```
 
-Скрипт берёт фиксированную версию Wintun (сейчас 0.14.1) с wintun.net, сверяет
-SHA256 архива с зашитым в скрипт, проверяет подпись DLL (WireGuard LLC) и копирует
-`wintun.dll` вместе с её лицензией. Хеш не совпал или подпись не та — скрипт
-останавливается и ничего не копирует. Другая архитектура — `-Arch arm64`, другой
-каталог — `-Dest <путь>`, без сети — `-Archive <путь к wintun-0.14.1.zip>`.
+Команда берёт фиксированную версию Wintun (сейчас 0.14.1) с wintun.net, сверяет
+SHA256 архива с зашитым в код, проверяет подпись DLL (WireGuard LLC) и копирует
+`wintun.dll` вместе с её лицензией. Хеш не совпал или подпись не та — команда
+останавливается и ничего не копирует. Другая архитектура — `-arch arm64`, другой
+каталог — `-dest <путь>`, без сети — `-archive <путь к wintun-0.14.1.zip>`.
 
 Можно и вручную: скачайте `wintun-0.14.1.zip` с https://www.wintun.net, сверьте хеш
 
 ```
-(Get-FileHash wintun-0.14.1.zip).Hash
-07C256185D6EE3652E09FA55C0B673E2624B565E02C4B9091C79CA7D2F24EF51
+certutil -hashfile wintun-0.14.1.zip SHA256
+07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
 ```
 
 и положите `wintun\bin\amd64\wintun.dll` рядом с `qwdtt-cli.exe`. DLL ищется только
@@ -154,10 +154,10 @@ sudo apt install wireguard wireguard-tools iproute2 nftables tcpdump resolvconf
 
 ### Релиз
 
-Релиз для трёх платформ собирает `pwsh scripts/build-release.ps1` (из корня
-репозитория, нужен pwsh 7.3 или новее): zip для Windows и tar.gz для Linux и
-macOS. `wintun.dll` в zip для Windows он кладёт тем же `fetch-wintun.ps1` (без
-сети — с `-WintunArchive <путь>`), а `THIRD_PARTY_NOTICES.txt` в каждый архив
+Релиз для трёх платформ собирает `go run ./scripts/release` (из корня
+репозитория; кроме Go, нужен только git): zip для Windows и tar.gz для Linux и
+macOS. `wintun.dll` в zip для Windows он кладёт так же, как `scripts/wintun` (без
+сети — с `-wintun-archive <путь>`), а `THIRD_PARTY_NOTICES.txt` в каждый архив
 собирает `go run ./scripts/notices` — лицензии всех модулей, слинкованных в `qwdtt-cli`,
 и самого Go. Время файлов в tar.gz фиксированное, так что одинаковые файлы дают
 одинаковый архив. Модуль без файла лицензии или с нераспознанной лицензией
@@ -165,7 +165,7 @@ macOS. `wintun.dll` в zip для Windows он кладёт тем же `fetch-w
 и macOS собираются и запускаются. На Linux вживую проверены режимы `socks` и `tun`;
 на macOS работает только `socks`, и вживую он там ещё не проверялся.
 
-Тот же скрипт запускает GitHub Actions (`.github/workflows/release.yml`) на
+Ту же команду запускает GitHub Actions (`.github/workflows/release.yml`) на
 Windows: на тег `v*` после тестов собирается релиз, проверяется, что в каждом
 архиве есть всё нужное для запуска и что `qwdtt-cli.exe` из zip запускается, и архивы вместе с
 `SHA256SUMS.txt` выкладываются черновиком в Releases — опубликовать его надо

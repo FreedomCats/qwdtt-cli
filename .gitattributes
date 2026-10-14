@@ -9,7 +9,7 @@
 *.sum      text eol=lf
 .gitignore text eol=lf
 
-# PowerShell-скрипты запускаются на Windows.
-*.ps1 text eol=crlf
+# Эталон tar для теста scripts/release — сравнивается побайтово.
+*.tar      binary
 
 LICENSE text eol=lf

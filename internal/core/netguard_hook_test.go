@@ -42,7 +42,7 @@ type knownSocket struct {
 const guardWindow = 6
 
 // knownSockets — все места в internal/core, где появляются сокеты. Меняется
-// вместе с правилами netguard в scripts/vendor-core.ps1.
+// вместе с правилами netguard в scripts/vendorcore/rules.go.
 var knownSockets = []knownSocket{
 	{"session.go", "d := net.Dialer{Timeout: 10 * time.Second", true, "точка 2, TURN по TCP"},
 	{"creds.go", "dialer := &net.Dialer{", true, "точка 3, резолвер VK"},
@@ -83,7 +83,7 @@ func TestNetguardCoverage(t *testing.T) {
 			}
 			if k < 0 {
 				t.Errorf("%s:%d: новое место с сокетом, хук netguard не проверен: %s\n"+
-					"закройте его правилом в scripts/vendor-core.ps1 и внесите в knownSockets",
+					"закройте его правилом в scripts/vendorcore/rules.go и внесите в knownSockets",
 					path, i+1, strings.TrimSpace(line))
 				continue
 			}
