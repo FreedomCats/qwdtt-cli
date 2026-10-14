@@ -19,10 +19,10 @@ import (
 // и завершается кодом из ttFakeExit.
 
 const (
-	ttFakeWireGuard = "TT_FAKE_WIREGUARD" // журнал вызовов; непусто — работать подставным wireguard.exe
-	ttFakeExit      = "TT_FAKE_EXIT"      // код возврата подставной программы
-	ttFakeHang      = "TT_FAKE_HANG"      // непусто — зависнуть, чтобы проверить срок ожидания
-	ttFakeSlowStop  = "TT_FAKE_SLOW_STOP" // непусто — снимать службу полсекунды, как настоящий
+	ttFakeWireGuard = "QWDTT_FAKE_WIREGUARD" // журнал вызовов; непусто — работать подставным wireguard.exe
+	ttFakeExit      = "QWDTT_FAKE_EXIT"      // код возврата подставной программы
+	ttFakeHang      = "QWDTT_FAKE_HANG"      // непусто — зависнуть, чтобы проверить срок ожидания
+	ttFakeSlowStop  = "QWDTT_FAKE_SLOW_STOP" // непусто — снимать службу полсекунды, как настоящий
 )
 
 // testHelpers — другие роли тестового бинаря, запущенного самим тестом;
@@ -114,7 +114,7 @@ func (x *externalEnv) datapath(opts ExternalOptions) *External {
 }
 
 func (x *externalEnv) confPath() string {
-	return filepath.Join(x.dir, "conf", "tt.conf")
+	return filepath.Join(x.dir, "conf", "qwdtt-cli.conf")
 }
 
 func (x *externalEnv) calls() []string {
@@ -177,7 +177,7 @@ func TestExternalInstallsAndUninstalls(t *testing.T) {
 	if want := "/installtunnelservice " + abs + " | файл: [Interface]"; calls[0] != want {
 		t.Errorf("установка:\n%q\nожидалось\n%q", calls[0], want)
 	}
-	if want := "/uninstalltunnelservice tt"; calls[1] != want {
+	if want := "/uninstalltunnelservice qwdtt-cli"; calls[1] != want {
 		t.Errorf("снятие: %q, ожидалось %q", calls[1], want)
 	}
 
@@ -243,8 +243,8 @@ func TestExternalInstallFailure(t *testing.T) {
 func TestExternalServiceDidNotStart(t *testing.T) {
 	x := newExternalEnv(t)
 	x.service = func(_ context.Context, name string) error {
-		if name != "tt" {
-			t.Errorf("проверялась служба %q, ожидалась tt", name)
+		if name != "qwdtt-cli" {
+			t.Errorf("проверялась служба %q, ожидалась qwdtt-cli", name)
 		}
 		return errors.New("служба остановилась: Не удается найти указанный файл.")
 	}
@@ -265,7 +265,7 @@ func TestExternalServiceDidNotStart(t *testing.T) {
 
 	calls := x.calls()
 	if len(calls) != 2 || !strings.HasPrefix(calls[0], "/installtunnelservice ") ||
-		calls[1] != "/uninstalltunnelservice tt" {
+		calls[1] != "/uninstalltunnelservice qwdtt-cli" {
 		t.Errorf("ожидались установка и снятие, а было:\n%s", strings.Join(calls, "\n"))
 	}
 
@@ -357,7 +357,7 @@ func TestExternalRequires(t *testing.T) {
 	}
 
 	// Без программы Requires называет голое имя, а Start отказывает.
-	missing := &External{opts: ExternalOptions{Name: "tt", Timeout: time.Second}, programErr: errors.New("нет"), done: make(chan struct{})}
+	missing := &External{opts: ExternalOptions{Name: "qwdtt-cli", Timeout: time.Second}, programErr: errors.New("нет"), done: make(chan struct{})}
 	if got := missing.Requires().Programs; len(got) != 1 || got[0] != "wireguard.exe" {
 		t.Errorf("Programs без программы = %v", got)
 	}
@@ -390,13 +390,13 @@ func TestExternalConcurrentCloseWaits(t *testing.T) {
 		t.Errorf("Close вернулся до конца уборки — файл конфига на месте: %v", err)
 	}
 	calls := x.calls()
-	if len(calls) != 2 || calls[1] != "/uninstalltunnelservice tt" {
+	if len(calls) != 2 || calls[1] != "/uninstalltunnelservice qwdtt-cli" {
 		t.Errorf("Close вернулся до снятия службы или снял её дважды:\n%s", strings.Join(calls, "\n"))
 	}
 }
 
 // Маршрут по умолчанию в AllowedIPs становится парой половин /1: с /0
-// WireGuard для Windows включает kill-switch и режет сокеты tt мимо туннеля
+// WireGuard для Windows включает kill-switch и режет сокеты qwdtt-cli мимо туннеля
 // (решение 5 Э2). Правится только значение AllowedIPs в [Peer], остальной
 // текст — байт в байт.
 func TestSplitDefaultRoutes(t *testing.T) {

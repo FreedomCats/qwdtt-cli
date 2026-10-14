@@ -125,7 +125,7 @@ func TestSaveOmitsEmptyFields(t *testing.T) {
 	}
 }
 
-// Запись повторяема: тот же файл даёт те же байты. Иначе `tt profile set`
+// Запись повторяема: тот же файл даёт те же байты. Иначе `qwdtt-cli profile set`
 // перетасовывал бы профили при каждом запуске.
 func TestSaveIsStable(t *testing.T) {
 	dir := t.TempDir()

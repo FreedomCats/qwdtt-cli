@@ -20,7 +20,7 @@ func newMenuEnv(t *testing.T) *profileEnv {
 	return p
 }
 
-// В терминале tt без аргументов открывает меню, а не список команд.
+// В терминале qwdtt-cli без аргументов открывает меню, а не список команд.
 func TestNoArgsOpensMenuInTerminal(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
@@ -98,7 +98,7 @@ func TestMenuRepeatsQuestionOnBadChoice(t *testing.T) {
 }
 
 // Подключение, которое не удалось, возвращает в меню: человек видит ошибку
-// и может исправить профиль, не перезапуская tt.
+// и может исправить профиль, не перезапуская qwdtt-cli.
 func TestMenuConnectErrorReturnsToMenu(t *testing.T) {
 	p := newMenuEnv(t)
 	p.setHome()

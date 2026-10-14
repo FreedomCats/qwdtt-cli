@@ -152,7 +152,7 @@ func TestTunStartClose(t *testing.T) {
 		t.Errorf("повторный Close: err=%v, release %d раз", err, f.released.Load())
 	}
 	log := rec.dump()
-	for _, want := range []string{`[TUN] адаптер "tt" поднят`, `[TUN] адаптер "tt" снят`} {
+	for _, want := range []string{`[TUN] адаптер "qwdtt-cli" поднят`, `[TUN] адаптер "qwdtt-cli" снят`} {
 		if !strings.Contains(log, want) {
 			t.Errorf("в логе нет %q:\n%s", want, log)
 		}
@@ -208,7 +208,7 @@ func TestTunSuspendAndRestart(t *testing.T) {
 	if got := w.Endpoint().String(); got != "127.0.0.1:10" {
 		t.Errorf("Endpoint после перенастройки = %s", got)
 	}
-	if log := rec.dump(); !strings.Contains(log, `[TUN] адаптер "tt" перенастроен (endpoint=127.0.0.1:10)`) {
+	if log := rec.dump(); !strings.Contains(log, `[TUN] адаптер "qwdtt-cli" перенастроен (endpoint=127.0.0.1:10)`) {
 		t.Errorf("в логе нет строки о перенастройке:\n%s", log)
 	}
 

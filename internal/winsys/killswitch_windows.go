@@ -15,9 +15,9 @@ const (
 )
 
 // Lockdown ставит набор «закрыто» — kill-switch (plan-e3.md, W1), пока
-// туннель не поднят: системе разрешены только процесс tt, loopback,
+// туннель не поднят: системе разрешены только процесс qwdtt-cli, loopback,
 // служебные протоколы (DHCP, ICMPv6 ND и RA) и локальная сеть, а DNS —
-// никуда, кроме tt и loopback, даже к локальной сети: резолвер роутера
+// никуда, кроме qwdtt-cli и loopback, даже к локальной сети: резолвер роутера
 // отдал бы запросы провайдеру. Прочее запрещено, как в K2 на Linux.
 //
 // Правила заменяются, как в Enable (replaceLocked): мига без правил на
@@ -66,15 +66,15 @@ func lockdownRules(appID string) ([]*wf.Rule, error) {
 			return nil
 		}
 
-		if err := add("tt: kill-switch, сам tt", dnsGuardPermitWeight, wf.ActionPermit,
+		if err := add("qwdtt-cli: kill-switch, сам qwdtt-cli", dnsGuardPermitWeight, wf.ActionPermit,
 			&wf.Match{Field: wf.FieldALEAppID, Op: wf.MatchTypeEqual, Value: appID}); err != nil {
 			return nil, err
 		}
-		if err := add("tt: kill-switch, loopback", dnsGuardPermitWeight, wf.ActionPermit,
+		if err := add("qwdtt-cli: kill-switch, loopback", dnsGuardPermitWeight, wf.ActionPermit,
 			&wf.Match{Field: wf.FieldFlags, Op: wf.MatchTypeFlagsAllSet, Value: wf.ConditionFlagIsLoopback}); err != nil {
 			return nil, err
 		}
-		if err := add("tt: kill-switch, запрет DNS", dnsGuardBlockWeight, wf.ActionBlock,
+		if err := add("qwdtt-cli: kill-switch, запрет DNS", dnsGuardBlockWeight, wf.ActionBlock,
 			dnsPortMatches()...); err != nil {
 			return nil, err
 		}
@@ -85,7 +85,7 @@ func lockdownRules(appID string) ([]*wf.Rule, error) {
 		if layer.ipv6 {
 			client, server = 546, 547
 		}
-		if err := add("tt: kill-switch, DHCP", lockdownLocalWeight, wf.ActionPermit,
+		if err := add("qwdtt-cli: kill-switch, DHCP", lockdownLocalWeight, wf.ActionPermit,
 			&wf.Match{Field: wf.FieldIPProtocol, Op: wf.MatchTypeEqual, Value: wf.IPProtoUDP},
 			&wf.Match{Field: wf.FieldIPLocalPort, Op: wf.MatchTypeEqual, Value: client},
 			&wf.Match{Field: wf.FieldIPRemotePort, Op: wf.MatchTypeEqual, Value: server}); err != nil {
@@ -98,7 +98,7 @@ func lockdownRules(appID string) ([]*wf.Rule, error) {
 			for typ := uint16(133); typ <= 137; typ++ {
 				ndp = append(ndp, &wf.Match{Field: wf.FieldIPLocalPort, Op: wf.MatchTypeEqual, Value: typ})
 			}
-			if err := add("tt: kill-switch, ICMPv6 ND и RA", lockdownLocalWeight, wf.ActionPermit, ndp...); err != nil {
+			if err := add("qwdtt-cli: kill-switch, ICMPv6 ND и RA", lockdownLocalWeight, wf.ActionPermit, ndp...); err != nil {
 				return nil, err
 			}
 		}
@@ -109,10 +109,10 @@ func lockdownRules(appID string) ([]*wf.Rule, error) {
 				local = append(local, &wf.Match{Field: wf.FieldIPRemoteAddress, Op: wf.MatchTypeEqual, Value: p})
 			}
 		}
-		if err := add("tt: kill-switch, локальная сеть", lockdownLocalWeight, wf.ActionPermit, local...); err != nil {
+		if err := add("qwdtt-cli: kill-switch, локальная сеть", lockdownLocalWeight, wf.ActionPermit, local...); err != nil {
 			return nil, err
 		}
-		if err := add("tt: kill-switch, запрет всего", lockdownBlockWeight, wf.ActionBlock); err != nil {
+		if err := add("qwdtt-cli: kill-switch, запрет всего", lockdownBlockWeight, wf.ActionBlock); err != nil {
 			return nil, err
 		}
 	}

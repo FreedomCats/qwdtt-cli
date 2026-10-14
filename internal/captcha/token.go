@@ -126,12 +126,12 @@ func oneLine(js string) string {
 }
 
 // consoleSnippet — перехватчик для консоли браузера: сам заводит приёмник,
-// который печатает найденное строкой вида «tt-captcha token <токен>».
+// который печатает найденное строкой вида «qwdtt-cli-captcha token <токен>».
 //
 // Пробелов внутри строковых литералов здесь нет ни одного, и это не
 // придирчивость: их бы схлопнул oneLine.
 func consoleSnippet() string {
 	const sink = `window.__ttCaptchaSink`
-	prologue := sink + `=function(k,v){console.log('tt-captcha',k,v)};`
+	prologue := sink + `=function(k,v){console.log('qwdtt-cli-captcha',k,v)};`
 	return oneLine(prologue + fmt.Sprintf(interceptorJS, sink))
 }

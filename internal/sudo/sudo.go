@@ -1,6 +1,6 @@
-// Package sudo узнаёт, от чьего имени tt запущен через sudo.
+// Package sudo узнаёт, от чьего имени qwdtt-cli запущен через sudo.
 //
-// На Linux режиму tun нужны права root, и tt запускают через sudo. Но настройки
+// На Linux режиму tun нужны права root, и qwdtt-cli запускают через sudo. Но настройки
 // и секреты лежат у того, кто его вызвал, а не у root, и браузер для капчи тоже
 // должен открыться у него. Пакет отвечает на один вопрос — кто этот человек —
 // и нужен config (каталог настроек, владелец записанных файлов) и captcha
@@ -26,7 +26,7 @@ type User struct {
 	HomeDir string
 }
 
-// Invoker возвращает пользователя, вызвавшего sudo, или nil, если tt запущен
+// Invoker возвращает пользователя, вызвавшего sudo, или nil, если qwdtt-cli запущен
 // не через sudo: без прав root, root'ом напрямую или на Windows, где sudo нет и
 // Geteuid возвращает -1. Ошибка — sudo есть, но пользователя найти не удалось;
 // молча подставлять вместо него root нельзя: настройки окажутся не те, а
@@ -54,7 +54,7 @@ func invoker(euid int, env func(string) string, lookup func(string) (*user.User,
 
 	u, err := lookup(name)
 	if err != nil {
-		return nil, fmt.Errorf("tt запущен через sudo пользователем %s, но найти его не удалось: %w; "+
+		return nil, fmt.Errorf("qwdtt-cli запущен через sudo пользователем %s, но найти его не удалось: %w; "+
 			"%s", name, err, hint)
 	}
 	if strings.TrimSpace(u.HomeDir) == "" {

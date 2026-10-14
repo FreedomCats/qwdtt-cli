@@ -1,20 +1,20 @@
 //go:build windows
 
 // Команда outage устраивает обрыв связи с заданными адресами на время — для
-// живых проверок переподключения tt (plan-e2.md, S1 и R2, сценарий 4).
+// живых проверок переподключения qwdtt-cli (plan-e2.md, S1 и R2, сценарий 4).
 //
 //	go run ./scripts/outage -addr 198.51.100.20,198.51.100.21 [-for 60s]
 //
-// Адреса — серверы TURN из лога tt (строка «Креды OK, TURN: […]»). Пакеты
+// Адреса — серверы TURN из лога qwdtt-cli (строка «Креды OK, TURN: […]»). Пакеты
 // к ним и от них отбрасываются фильтрами WFP на слоях IP-пакетов
 // (INBOUND/OUTBOUND_IPPACKET). Способ выяснен в S1: правило брандмауэра на
-// tt.exe не годится (слои ALE не трогают уже открытые потоки UDP), маршруты
+// qwdtt-cli.exe не годится (слои ALE не трогают уже открытые потоки UDP), маршруты
 // /32 режут только исходящие — входящие keepalive сервера держат туннель
 // «живым».
 //
 // Сессия WFP динамическая: фильтры снимает система, когда команда
 // завершается — по истечении -for, по Ctrl+C или если процесс убит.
-// Обрыв ограничен по времени нарочно: пока туннель мёртв, а маршруты /1 tt
+// Обрыв ограничен по времени нарочно: пока туннель мёртв, а маршруты /1 qwdtt-cli
 // стоят, весь трафик машины идёт в никуда — и сеть того, кто запустил
 // проверку, тоже; снять обрыв руками в этот момент может быть нечем.
 //
@@ -68,12 +68,12 @@ func layersFor(a netip.Addr) []wf.LayerID {
 }
 
 func run(addrs []netip.Addr, dur time.Duration) error {
-	s, err := wf.New(&wf.Options{Name: "tt outage", Description: "tt: обрыв для проверки", Dynamic: true})
+	s, err := wf.New(&wf.Options{Name: "qwdtt-cli outage", Description: "qwdtt-cli: обрыв для проверки", Dynamic: true})
 	if err != nil {
 		return fmt.Errorf("сессия WFP (нужны права администратора): %w", err)
 	}
 	defer s.Close()
-	if err := s.AddSublayer(&wf.Sublayer{ID: outageSublayer, Name: "tt outage", Weight: ^uint16(0)}); err != nil {
+	if err := s.AddSublayer(&wf.Sublayer{ID: outageSublayer, Name: "qwdtt-cli outage", Weight: ^uint16(0)}); err != nil {
 		return fmt.Errorf("подслой: %w", err)
 	}
 	n := 0
@@ -85,7 +85,7 @@ func run(addrs []netip.Addr, dur time.Duration) error {
 			}
 			if err := s.AddRule(&wf.Rule{
 				ID:       wf.RuleID(guid),
-				Name:     "tt outage " + a.String(),
+				Name:     "qwdtt-cli outage " + a.String(),
 				Layer:    layer,
 				Sublayer: outageSublayer,
 				Weight:   15,

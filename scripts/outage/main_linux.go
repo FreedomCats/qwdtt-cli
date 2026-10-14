@@ -1,19 +1,19 @@
 //go:build linux
 
 // Команда outage устраивает обрыв связи на время — для живых проверок
-// переподключения tt (plan-e4.md, R1 и R2; на Windows — plan-e2.md, S1).
+// переподключения qwdtt-cli (plan-e4.md, R1 и R2; на Windows — plan-e2.md, S1).
 //
 //	sudo go run ./scripts/outage -addr 198.51.100.20,198.51.100.21 [-for 60s]
 //	sudo go run ./scripts/outage -link eth0 [-for 15s]
 //
-// -addr — обрыв связи с адресами: серверы TURN из лога tt (строка «Креды
+// -addr — обрыв связи с адресами: серверы TURN из лога qwdtt-cli (строка «Креды
 // OK, TURN: […]»), как на Windows. Пакеты от них отбрасывает таблица
-// nftables inet tt-outage (цепочка input); исходящие уходят, но ответа на
+// nftables inet qwdtt-cli-outage (цепочка input); исходящие уходят, но ответа на
 // них нет — как при настоящем обрыве. Исходящие не трогаются нарочно: drop
 // в цепочке output ядро возвращает отправителю UDP ошибкой EPERM сразу, и
-// tt видел бы ошибку отправки вместо тишины (проверено в R1). Таблица — с
+// qwdtt-cli видел бы ошибку отправки вместо тишины (проверено в R1). Таблица — с
 // флагом owner: ядро удаляет её вместе с процессом — по истечении -for, по
-// Ctrl+C и если процесс убит, как динамическую сессию WFP. Правила tt её
+// Ctrl+C и если процесс убит, как динамическую сессию WFP. Правила qwdtt-cli её
 // не перебивают: accept в одной базовой цепочке не отменяет drop в другой.
 //
 // -link — пропажа физической сети: интерфейс выключается (ip link set
@@ -23,7 +23,7 @@
 // команду убить (kill -9), интерфейс останется выключенным — команда для
 // возврата печатается при запуске.
 //
-// Обрыв ограничен по времени нарочно: пока туннель мёртв, а маршруты /1 tt
+// Обрыв ограничен по времени нарочно: пока туннель мёртв, а маршруты /1 qwdtt-cli
 // стоят, весь трафик машины идёт в никуда — и сеть того, кто запустил
 // проверку, тоже; снять обрыв руками в этот момент может быть нечем.
 //
@@ -46,10 +46,12 @@ import (
 	"github.com/google/nftables/expr"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
+
+	"github.com/FreedomCats/qwdtt-cli/internal/app"
 )
 
-// outageTable — таблица обрыва в nftables (`nft list table inet tt-outage`).
-const outageTable = "tt-outage"
+// outageTable — таблица обрыва в nftables (`nft list table inet qwdtt-cli-outage`).
+const outageTable = app.Name + "-outage"
 
 func main() {
 	addrs := flag.String("addr", "", "адреса через запятую (IPv4 или IPv6): обрыв связи с ними")

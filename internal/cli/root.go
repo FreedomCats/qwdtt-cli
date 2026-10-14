@@ -1,4 +1,4 @@
-// Package cli — разбор командной строки tt и запуск того, что за ней стоит.
+// Package cli — разбор командной строки qwdtt-cli и запуск того, что за ней стоит.
 //
 // Разбор идёт стандартным flag с подкомандами, без внешних библиотек: команд
 // пять, флаги у них простые, а чужая библиотека принесла бы с собой свой
@@ -33,7 +33,7 @@ const (
 	exitUsage = 2 // ошибка в командной строке: нет такой команды, флага, аргумента
 )
 
-// Build — сведения о сборке. Подставляются в cmd/tt через -ldflags (задача H1).
+// Build — сведения о сборке. Подставляются в cmd/qwdtt-cli через -ldflags (задача H1).
 type Build struct {
 	Version string
 	Commit  string
@@ -80,12 +80,12 @@ type env struct {
 	// noPause — пауза перед закрытием окна не нужна: человек сам ушёл из меню
 	// (pause.go).
 	noPause bool
-	// ownsConsole подменяет проверку «tt один в своей консоли, и её видит
+	// ownsConsole подменяет проверку «qwdtt-cli один в своей консоли, и её видит
 	// человек» (pause.go). Пусто — настоящая проверка.
 	ownsConsole func() bool
 }
 
-// command — одна команда tt.
+// command — одна команда qwdtt-cli.
 //
 // Своего набора флагов у команды здесь нет: его заводит сама run, потому что
 // разбор и значения флагов нужны в одном месте. Помощь по команде печатается
@@ -104,7 +104,7 @@ type command struct {
 	run func(ctx context.Context, e *env, args []string) error
 }
 
-// commands — все команды tt в порядке, в котором их показывает помощь:
+// commands — все команды qwdtt-cli в порядке, в котором их показывает помощь:
 // сначала то, ради чего программу запускают, потом обслуживающее.
 func commands() []*command {
 	return []*command{
@@ -127,7 +127,7 @@ func lookup(name string) *command {
 	return nil
 }
 
-// Main — точка входа CLI. Возвращает код возврата; os.Exit зовёт cmd/tt.
+// Main — точка входа CLI. Возвращает код возврата; os.Exit зовёт cmd/qwdtt-cli.
 func Main(args []string, build Build) int {
 	e := &env{
 		stdout:  os.Stdout,
@@ -161,7 +161,7 @@ func Main(args []string, build Build) int {
 func run(ctx context.Context, e *env, args []string) int {
 	if len(args) == 0 {
 		// В терминале запуск без аргументов — это человек, которому нужно
-		// меню: на Windows так выглядит двойной щелчок по tt.exe.
+		// меню: на Windows так выглядит двойной щелчок по qwdtt-cli.exe.
 		if e.console() {
 			return report(e, menuCommand(), runMenu(ctx, e, nil))
 		}
@@ -179,8 +179,8 @@ func run(ctx context.Context, e *env, args []string) int {
 
 	cmd := lookup(name)
 	if cmd == nil {
-		fmt.Fprintf(e.stderr, "tt: неизвестная команда %q\n", name)
-		fmt.Fprintf(e.stderr, "Список команд: tt help\n")
+		fmt.Fprintf(e.stderr, "qwdtt-cli: неизвестная команда %q\n", name)
+		fmt.Fprintf(e.stderr, "Список команд: qwdtt-cli help\n")
 		return exitUsage
 	}
 
@@ -201,7 +201,7 @@ func report(e *env, cmd *command, err error) int {
 		return exitUsage
 	}
 
-	// Подкоманда называет себя сама: ошибку в аргументах `tt profile set`
+	// Подкоманда называет себя сама: ошибку в аргументах `qwdtt-cli profile set`
 	// нельзя подписывать именем `profile` — подсказка отправила бы не туда.
 	name := cmd.name
 	var ue usageError
@@ -210,9 +210,9 @@ func report(e *env, cmd *command, err error) int {
 		name = ue.cmd
 	}
 
-	fmt.Fprintf(e.stderr, "tt %s: %v\n", name, err)
+	fmt.Fprintf(e.stderr, "qwdtt-cli %s: %v\n", name, err)
 	if isUsage {
-		fmt.Fprintf(e.stderr, "Помощь: tt %s -h\n", name)
+		fmt.Fprintf(e.stderr, "Помощь: qwdtt-cli %s -h\n", name)
 		return exitUsage
 	}
 	return exitError
@@ -246,7 +246,7 @@ var errReported = errors.New("ошибка в аргументах команд�
 
 // newFlagSet заводит набор флагов команды с нашей помощью вместо стандартной.
 func newFlagSet(cmd *command) *flag.FlagSet {
-	fs := flag.NewFlagSet("tt "+cmd.name, flag.ContinueOnError)
+	fs := flag.NewFlagSet("qwdtt-cli "+cmd.name, flag.ContinueOnError)
 	fs.Usage = func() { writeUsage(cmd, fs) }
 	return fs
 }
@@ -277,7 +277,7 @@ func parse(e *env, fs *flag.FlagSet, args []string) error {
 // parseWithArgs разбирает флаги команды и возвращает позиционные аргументы.
 //
 // Стандартный flag останавливается на первом же не-флаге, поэтому
-// `tt profile set home -peer …` он разобрал бы как имя профиля и три лишних
+// `qwdtt-cli profile set home -peer …` он разобрал бы как имя профиля и три лишних
 // аргумента. Записывать флаги перед именем — не то, чего ждут от команды,
 // у которой имя главное слово, поэтому разбор продолжается за каждым
 // позиционным аргументом.
@@ -342,16 +342,16 @@ func wantsHelp(args []string) bool {
 
 // printUsage печатает список команд — то, что видно при запуске без аргументов.
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "tt — консольный клиент qWDTT.")
+	fmt.Fprintln(w, "qwdtt-cli — консольный клиент qWDTT.")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Использование: tt <команда> [флаги] [аргументы]")
+	fmt.Fprintln(w, "Использование: qwdtt-cli <команда> [флаги] [аргументы]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Команды:")
 	for _, cmd := range commands() {
 		fmt.Fprintf(w, "  %-9s %s\n", cmd.name, cmd.summary)
 	}
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Помощь по команде: tt help <команда> или tt <команда> -h")
+	fmt.Fprintln(w, "Помощь по команде: qwdtt-cli help <команда> или qwdtt-cli <команда> -h")
 }
 
 // writeUsage печатает помощь по одной команде: строку синтаксиса, описание
@@ -360,7 +360,7 @@ func printUsage(w io.Writer) {
 func writeUsage(cmd *command, fs *flag.FlagSet) {
 	w := fs.Output()
 
-	fmt.Fprintf(w, "Использование: tt %s", cmd.name)
+	fmt.Fprintf(w, "Использование: qwdtt-cli %s", cmd.name)
 	if cmd.args != "" {
 		fmt.Fprintf(w, " %s", cmd.args)
 	}
@@ -397,7 +397,7 @@ func capitalize(s string) string {
 
 // commonOptions — флаги, общие для команд, которые читают профиль.
 //
-// Имени профиля среди них нет: оно позиционный аргумент (`tt connect home`),
+// Имени профиля среди них нет: оно позиционный аргумент (`qwdtt-cli connect home`),
 // потому что это главное слово команды, а не её настройка.
 type commonOptions struct {
 	// config — путь к profiles.toml вместо файла по умолчанию.
@@ -433,7 +433,7 @@ func runVersion(_ context.Context, e *env, args []string) error {
 		return usagef("лишний аргумент %q: команда version аргументов не принимает", fs.Arg(0))
 	}
 
-	fmt.Fprintf(e.stdout, "tt %s\n", e.build.Version)
+	fmt.Fprintf(e.stdout, "qwdtt-cli %s\n", e.build.Version)
 	fmt.Fprintf(e.stdout, "коммит: %s\n", e.build.Commit)
 	fmt.Fprintf(e.stdout, "сборка: %s %s/%s\n", runtime.Version(), runtime.GOOS, runtime.GOARCH)
 	return nil
@@ -452,7 +452,7 @@ func helpCommand() *command {
 
 func runHelp(ctx context.Context, e *env, args []string) error {
 	// Свой набор флагов у help пустой, но заводится он на общих основаниях:
-	// иначе `tt help -h` искал бы команду с именем «-h».
+	// иначе `qwdtt-cli help -h` искал бы команду с именем «-h».
 	fs := newFlagSet(helpCommand())
 	if err := parse(e, fs, args); err != nil {
 		return err
@@ -468,7 +468,7 @@ func runHelp(ctx context.Context, e *env, args []string) error {
 
 	cmd := lookup(fs.Arg(0))
 	if cmd == nil {
-		return usagef("неизвестная команда %q; список команд: tt help", fs.Arg(0))
+		return usagef("неизвестная команда %q; список команд: qwdtt-cli help", fs.Arg(0))
 	}
 
 	// Помощь печатает сама команда: набор флагов заводится в её run, и другого

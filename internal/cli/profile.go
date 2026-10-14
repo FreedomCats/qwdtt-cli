@@ -1,7 +1,7 @@
-// profile.go — команда tt profile: профили подключения и их секреты.
+// profile.go — команда qwdtt-cli profile: профили подключения и их секреты.
 //
 // Четыре подкоманды со своими флагами, поэтому у самой profile флагов нет:
-// они ставятся после подкоманды, как в `tt profile set home -peer …`.
+// они ставятся после подкоманды, как в `qwdtt-cli profile set home -peer …`.
 package cli
 
 import (
@@ -30,7 +30,7 @@ func profileCommand() *command {
   import [имя]  профиль из ссылки qwdtt://config; ссылка читается скрытым вводом
   rm <имя>      удалить профиль вместе с его секретами
 
-Флаги у каждой подкоманды свои: tt profile set -h.
+Флаги у каждой подкоманды свои: qwdtt-cli profile set -h.
 
 Пароль подключения и хеши звонков VK не передаются аргументами намеренно:
 аргумент попал бы в историю оболочки и в список процессов. Спрашиваются они
@@ -74,7 +74,7 @@ func runProfile(ctx context.Context, e *env, args []string) error {
 	if strings.HasPrefix(args[0], "-") {
 		// Своих флагов у profile нет, и «flag provided but not defined»
 		// на месте подкоманды объясняло бы не то, что произошло.
-		return usagef("флаги ставятся после подкоманды: tt profile <подкоманда> [флаги]")
+		return usagef("флаги ставятся после подкоманды: qwdtt-cli profile <подкоманда> [флаги]")
 	}
 
 	for _, sub := range profileSubcommands() {
@@ -115,7 +115,7 @@ func runProfileList(_ context.Context, e *env, args []string) error {
 
 	names := file.Names()
 	if len(names) == 0 {
-		fmt.Fprintf(e.stdout, "В %s нет ни одного профиля. Заведите: tt profile set <имя>\n", path)
+		fmt.Fprintf(e.stdout, "В %s нет ни одного профиля. Заведите: qwdtt-cli profile set <имя>\n", path)
 		return nil
 	}
 
@@ -145,7 +145,7 @@ func runProfileList(_ context.Context, e *env, args []string) error {
 
 // isDefaultProfile повторяет правило File.Profile: сначала default_profile,
 // а если его нет — единственный профиль в файле. Список обязан показывать то,
-// что произойдёт при `tt connect` без имени.
+// что произойдёт при `qwdtt-cli connect` без имени.
 func isDefaultProfile(f *config.File, name string) bool {
 	if def := strings.TrimSpace(f.DefaultProfile); def != "" {
 		return def == name
@@ -380,7 +380,7 @@ type profileSecrets struct {
 }
 
 // storeProfile записывает профиль: секреты — в хранилище, профиль — в файл
-// настроек, и говорит, что сделано. Общая для `tt profile set` и мастера
+// настроек, и говорит, что сделано. Общая для `qwdtt-cli profile set` и мастера
 // профиля в меню (menu.go). default_profile вызывающий выставляет сам.
 func storeProfile(e *env, path string, file *config.File, p *config.Profile, existed bool, secrets profileSecrets) error {
 	store := config.NewSecretStoreFor(path)
@@ -436,7 +436,7 @@ func profileImportCommand() *command {
 		summary: "профиль из ссылки qwdtt://config",
 		description: `Ссылку qwdtt://config?… (и QR-код с ней) выдают Android-приложение qWDTT
 и бот сервера: в ней адрес сервера, пароль и хеши звонков. Ссылка читается
-скрытым вводом или из stdin (tt profile import < файл): в ней пароль, и
+скрытым вводом или из stdin (qwdtt-cli profile import < файл): в ней пароль, и
 аргументом командной строки её передавать нельзя.
 
 Имя профиля — аргументом; без него — имя из ссылки латиницей. Профиль с таким
@@ -492,7 +492,7 @@ func runProfileImport(_ context.Context, e *env, args []string) error {
 
 	p, existed := file.Profiles[name]
 	if existed && !*replace {
-		return fmt.Errorf("профиль %q уже есть: назовите новый иначе (tt profile import <имя>) или замените его (-replace)", name)
+		return fmt.Errorf("профиль %q уже есть: назовите новый иначе (qwdtt-cli profile import <имя>) или замените его (-replace)", name)
 	}
 	if !existed {
 		p = &config.Profile{Name: name}
@@ -659,12 +659,12 @@ func addConfigFlag(fs *flag.FlagSet) *string {
 }
 
 // profileNameArg берёт имя профиля из позиционных аргументов. Оно обязательно
-// у всех подкоманд, кроме list: `tt profile rm` без имени не должен угадывать,
+// у всех подкоманд, кроме list: `qwdtt-cli profile rm` без имени не должен угадывать,
 // что удалять.
 func profileNameArg(cmd *command, positional []string) (string, error) {
 	switch len(positional) {
 	case 0:
-		return "", subUsagef(cmd, "не названо имя профиля: tt %s <имя>", cmd.name)
+		return "", subUsagef(cmd, "не названо имя профиля: qwdtt-cli %s <имя>", cmd.name)
 	case 1:
 		return positional[0], nil
 	default:
@@ -692,7 +692,7 @@ func loadProfiles(flagValue string) (string, *config.File, error) {
 
 	file, err := config.Load(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return "", nil, fmt.Errorf("файла настроек нет: %s; заведите профиль: tt profile set <имя>", path)
+		return "", nil, fmt.Errorf("файла настроек нет: %s; заведите профиль: qwdtt-cli profile set <имя>", path)
 	}
 	if err != nil {
 		return "", nil, err

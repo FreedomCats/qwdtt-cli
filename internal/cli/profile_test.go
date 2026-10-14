@@ -497,12 +497,12 @@ func TestProfileUsageErrors(t *testing.T) {
 		want string
 		cmd  string
 	}{
-		{"rm без имени", []string{"profile", "rm"}, "не названо имя профиля", "tt profile rm -h"},
-		{"show без имени", []string{"profile", "show"}, "не названо имя профиля", "tt profile show -h"},
-		{"два имени", []string{"profile", "show", "home", "work"}, "лишний аргумент", "tt profile show -h"},
-		{"list с именем", []string{"profile", "list", "home"}, "лишний аргумент", "tt profile list -h"},
-		{"флаг вместо подкоманды", []string{"profile", "-config", "x"}, "после подкоманды", "tt profile -h"},
-		{"чужая подкоманда", []string{"profile", "delete", "home"}, "неизвестная подкоманда", "tt profile -h"},
+		{"rm без имени", []string{"profile", "rm"}, "не названо имя профиля", "qwdtt-cli profile rm -h"},
+		{"show без имени", []string{"profile", "show"}, "не названо имя профиля", "qwdtt-cli profile show -h"},
+		{"два имени", []string{"profile", "show", "home", "work"}, "лишний аргумент", "qwdtt-cli profile show -h"},
+		{"list с именем", []string{"profile", "list", "home"}, "лишний аргумент", "qwdtt-cli profile list -h"},
+		{"флаг вместо подкоманды", []string{"profile", "-config", "x"}, "после подкоманды", "qwdtt-cli profile -h"},
+		{"чужая подкоманда", []string{"profile", "delete", "home"}, "неизвестная подкоманда", "qwdtt-cli profile -h"},
 	}
 
 	for _, tc := range cases {
@@ -548,7 +548,7 @@ func TestProfileSubcommandHelp(t *testing.T) {
 			if errOut.Len() != 0 {
 				t.Errorf("помощь ушла в stderr: %q", errOut.String())
 			}
-			if !strings.Contains(out.String(), "Использование: tt profile "+sub) {
+			if !strings.Contains(out.String(), "Использование: qwdtt-cli profile "+sub) {
 				t.Errorf("нет строки синтаксиса:\n%s", out.String())
 			}
 			for _, name := range flags {

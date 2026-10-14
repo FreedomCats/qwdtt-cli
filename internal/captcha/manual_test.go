@@ -51,7 +51,7 @@ func TestManualAcceptsSloppyInput(t *testing.T) {
 	const token = "vk1.a.kTq9wS3nR8bXpL0yZ7hJ4mN2cV6dF1gA"
 
 	cases := map[string]string{
-		"строка из консоли целиком": "tt-captcha token " + token,
+		"строка из консоли целиком": "qwdtt-cli-captcha token " + token,
 		"с лишними пробелами":       "   " + token + "   ",
 		"ответ VK целиком":          `{"response":{"success_token":"` + token + `"}}`,
 		"кусок JSON с полем":        `"success_token":"` + token + `"`,
@@ -141,10 +141,10 @@ func TestManualPromptHasEverythingNeeded(t *testing.T) {
 
 	text := out.String()
 	for _, want := range []string{
-		req.RedirectURI,         // куда идти
-		"captchaNotRobot.check", // из перехватчика: он напечатан целиком
-		"tt-captcha token",      // что искать глазами
-		"F12",                   // чем открыть консоль
+		req.RedirectURI,           // куда идти
+		"captchaNotRobot.check",   // из перехватчика: он напечатан целиком
+		"qwdtt-cli-captcha token", // что искать глазами
+		"F12",                     // чем открыть консоль
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("в инструкции нет %q:\n%s", want, text)
@@ -282,7 +282,7 @@ XMLHttpRequest.prototype.send = function () {
 	}
 
 	got := string(out)
-	if strings.Count(got, "tt-captcha token "+token) != 2 {
+	if strings.Count(got, "qwdtt-cli-captcha token "+token) != 2 {
 		t.Errorf("перехватчик не поймал токен дважды (fetch и XHR):\n%s", got)
 	}
 }

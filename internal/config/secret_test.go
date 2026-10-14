@@ -56,7 +56,7 @@ func TestSecretPersistsAcrossInstances(t *testing.T) {
 }
 
 // Повторный Put с тем же именем перезаписывает значение и возвращает ту же
-// ссылку — иначе `tt profile set` копил бы осиротевшие записи.
+// ссылку — иначе `qwdtt-cli profile set` копил бы осиротевшие записи.
 func TestSecretPutReusesRefByName(t *testing.T) {
 	s := tempStore(t)
 
@@ -225,7 +225,7 @@ func TestSecretDelete(t *testing.T) {
 	}
 }
 
-// Удалять то, чего нет, не ошибка: `tt profile rm` обязан довести удаление
+// Удалять то, чего нет, не ошибка: `qwdtt-cli profile rm` обязан довести удаление
 // профиля до конца, даже если запись пропала раньше.
 func TestSecretDeleteMissing(t *testing.T) {
 	s := tempStore(t)

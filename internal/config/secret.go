@@ -29,13 +29,13 @@ const SecretsFileName = "secrets.json"
 type SecretStore interface {
 	// Put кладёт значение под именем name и возвращает ссылку на него.
 	// Повторный вызов с тем же name перезаписывает прежнее значение и
-	// возвращает ту же ссылку — чтобы `tt profile set` не плодил осиротевшие
+	// возвращает ту же ссылку — чтобы `qwdtt-cli profile set` не плодил осиротевшие
 	// записи при каждом запуске.
 	Put(name, value string) (ref string, err error)
 	// Get разворачивает ссылку обратно в значение.
 	Get(ref string) (value string, err error)
 	// Delete убирает значение из хранилища. Ссылка, которой в хранилище нет,
-	// ошибкой не считается: `tt profile rm` должен доводить удаление до конца,
+	// ошибкой не считается: `qwdtt-cli profile rm` должен доводить удаление до конца,
 	// даже если запись пропала раньше.
 	Delete(ref string) error
 }
@@ -72,7 +72,7 @@ type store struct {
 
 // secretsData — формат файла хранилища. Записи адресуются коротким
 // идентификатором, попадающим в ссылку; name — человекочитаемая метка для
-// `tt profile show` и ключ, по которому Put находит запись для перезаписи.
+// `qwdtt-cli profile show` и ключ, по которому Put находит запись для перезаписи.
 type secretsData struct {
 	Secrets map[string]secretEntry `json:"secrets"`
 }
@@ -125,7 +125,7 @@ func (s *store) Get(ref string) (string, error) {
 	entry, ok := data.Secrets[id]
 	if !ok {
 		return "", fmt.Errorf(
-			"секрет %q не найден в хранилище %s — возможно, профиль заводили не через `tt profile set`", ref, s.path)
+			"секрет %q не найден в хранилище %s — возможно, профиль заводили не через `qwdtt-cli profile set`", ref, s.path)
 	}
 
 	sealed, err := base64.StdEncoding.DecodeString(entry.Data)
@@ -151,7 +151,7 @@ func (s *store) Delete(ref string) error {
 	}
 	if _, ok := data.Secrets[id]; !ok {
 		// Удалять нечего — значит, уже удалено. Ошибка здесь остановила бы
-		// `tt profile rm` на полпути, оставив профиль в файле.
+		// `qwdtt-cli profile rm` на полпути, оставив профиль в файле.
 		return nil
 	}
 	delete(data.Secrets, id)

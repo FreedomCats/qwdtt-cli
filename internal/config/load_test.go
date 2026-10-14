@@ -108,7 +108,7 @@ func TestParseMinimalFile(t *testing.T) {
 // Пример из репозитория попадает в релизный архив, и он же — первое, что
 // увидит пользователь. Он обязан разбираться и проходить проверку.
 func TestExampleFileParses(t *testing.T) {
-	path := filepath.Join("..", "..", "tt.example.toml")
+	path := filepath.Join("..", "..", "qwdtt-cli.example.toml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("не прочитан %s: %v", path, err)
@@ -143,7 +143,7 @@ func TestLoadReadsFile(t *testing.T) {
 }
 
 // «Настроек ещё нет» отличается от «настройки испорчены» через errors.Is,
-// а не разбором текста ошибки: первое — обычное состояние до `tt profile set`.
+// а не разбором текста ошибки: первое — обычное состояние до `qwdtt-cli profile set`.
 func TestLoadMissingFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FileName)
 
@@ -193,7 +193,7 @@ func TestParseSecretInFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("ключ password пропущен")
 	}
-	if !strings.Contains(err.Error(), "tt profile set") {
+	if !strings.Contains(err.Error(), "qwdtt-cli profile set") {
 		t.Errorf("в сообщении нет подсказки про хранилище: %v", err)
 	}
 	if strings.Contains(err.Error(), "хорошийпароль") {

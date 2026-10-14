@@ -41,7 +41,7 @@ type ManualOptions struct {
 	// Out — куда уходят приглашение и инструкция. nil — os.Stderr.
 	//
 	// Именно stderr: stdout у CLI занят тем, что является результатом команды,
-	// и `tt connect > log.txt` не должен прятать вопрос от пользователя.
+	// и `qwdtt-cli connect > log.txt` не должен прятать вопрос от пользователя.
 	Out io.Writer
 
 	// Open — открыть ссылку в браузере. nil означает только напечатать её.
@@ -108,7 +108,7 @@ func (m *Manual) prompt(req Request) {
 	// обманом. Не сказать об этом — значит упереться в неё под таймером.
 	fmt.Fprintln(out, "     Если браузер потребует, наберите в консоли allow pasting и нажмите Enter.")
 	fmt.Fprintln(out, "  3. Решите капчу. В консоли появится строка вида")
-	fmt.Fprintln(out, "     «tt-captcha token <длинная строка>».")
+	fmt.Fprintln(out, "     «qwdtt-cli-captcha token <длинная строка>».")
 	fmt.Fprint(out, "  4. Вставьте эту длинную строку сюда: ")
 }
 
@@ -178,7 +178,7 @@ func parseAnswer(answer string) (string, error) {
 		return "", errors.New("после success_token не видно значения")
 
 	case strings.ContainsAny(answer, " \t"):
-		// Скопировали всю строку из консоли вместе с «tt-captcha token».
+		// Скопировали всю строку из консоли вместе с «qwdtt-cli-captcha token».
 		if fields := strings.Fields(answer); len(fields) > 0 {
 			if last := fields[len(fields)-1]; len(last) >= minTokenLen {
 				return last, nil

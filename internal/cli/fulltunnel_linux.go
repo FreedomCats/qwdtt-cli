@@ -12,7 +12,7 @@ import (
 )
 
 // reversePathProblem — почему ответы на выбранный интерфейс IPv4 отбросит
-// строгий rp_filter; "" — не отбросит. Менять sysctl сам tt не берётся:
+// строгий rp_filter; "" — не отбросит. Менять sysctl сам qwdtt-cli не берётся:
 // изменение пережило бы его падение (решение T3).
 func reversePathProblem(c netguard.Choice) (string, error) {
 	if c.Index4 == 0 {
@@ -27,7 +27,7 @@ func reversePathProblem(c netguard.Choice) (string, error) {
 	}
 	// Ядро берёт большее из all и значения интерфейса, поэтому нестрогий
 	// режим на самом интерфейсе перекрывает строгий all.
-	return fmt.Sprintf("на %[1]s строгий обратный фильтр (rp_filter = 1): ответы VK и TURN сокетам tt "+
+	return fmt.Sprintf("на %[1]s строгий обратный фильтр (rp_filter = 1): ответы VK и TURN сокетам qwdtt-cli "+
 		"будут отбрасываться, и туннель не поднимется; включите нестрогий режим: "+
 		"sudo sysctl -w net.ipv4.conf.%[1]s.rp_filter=2 (насовсем — файлом в /etc/sysctl.d)", c.Alias4), nil
 }
@@ -38,14 +38,14 @@ func ipv6ReplyFilter() (string, error) {
 	if err != nil || !strict {
 		return "", err
 	}
-	return "firewalld строго проверяет обратный путь IPv6 (IPv6_rpfilter) и отбросил бы ответы IPv6 сокетам tt", nil
+	return "firewalld строго проверяет обратный путь IPv6 (IPv6_rpfilter) и отбросил бы ответы IPv6 сокетам qwdtt-cli", nil
 }
 
 // systemDNSReady узнаёт, как datapath tun задаст системе DNS туннеля
 // (plan-e4.md, D2), и печатает способ. Незнакомое устройство resolv.conf —
 // отказ сейчас, а не в каждой попытке после похода в VK. Заодно убирается
 // то, что оставил упавший прошлый запуск: CLI зовёт это после Reserve,
-// когда второго tt с адаптером на машине быть не может.
+// когда второго qwdtt-cli с адаптером на машине быть не может.
 func systemDNSReady(out *printer) error {
 	dns, err := linuxsys.DetectSystemDNS(datapath.DefaultTunnelName)
 	if err != nil {

@@ -16,13 +16,14 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/FreedomCats/qwdtt-cli/internal/app"
 	"github.com/FreedomCats/qwdtt-cli/internal/core"
 )
 
 // Имя каталога и файла настроек. Каталог общий для всей программы: рядом
 // с profiles.toml задача C2 положит хранилище секретов.
 const (
-	AppDir   = "qwdtt-cli"
+	AppDir   = app.Name
 	FileName = "profiles.toml"
 )
 
@@ -35,9 +36,9 @@ const (
 	// DatapathExternal — конфиг отдаётся штатному WireGuard, тот поднимает
 	// туннель сам. Нужны права администратора и установленный WireGuard.
 	DatapathExternal = "external"
-	// DatapathTun — свой адаптер tt, весь трафик системы (Э2). На Windows
+	// DatapathTun — свой адаптер qwdtt-cli, весь трафик системы (Э2). На Windows
 	// адаптер даёт драйвер Wintun: нужны права администратора и wintun.dll
-	// рядом с tt.
+	// рядом с qwdtt-cli.
 	DatapathTun = "tun"
 	// DatapathWintun — прежнее имя tun (до Э4); принимается как синоним,
 	// чтобы старые профили не ломались. См. NormalizeDatapath.

@@ -8,6 +8,7 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/tun"
 
+	"github.com/FreedomCats/qwdtt-cli/internal/app"
 	"github.com/FreedomCats/qwdtt-cli/internal/winsys"
 )
 
@@ -28,15 +29,15 @@ var tunUnsupported error
 var tunFiles = []string{WintunDLL}
 
 // wintunTunnelType — тип адаптера у драйвера, виден в диспетчере устройств
-// («tt Tunnel»). Умолчание wireguard-go — «WireGuard», его легко спутать
+// («qwdtt-cli Tunnel»). Умолчание wireguard-go — «WireGuard», его легко спутать
 // с адаптером штатного клиента.
-const wintunTunnelType = "tt"
+const wintunTunnelType = app.Name
 
-// tunLockName — именованный мьютекс одного адаптера на машину. Два tt
+// tunLockName — именованный мьютекс одного адаптера на машину. Два qwdtt-cli
 // с datapath tun делили бы один GUID, а что драйвер делает со вторым
 // адаптером с тем же GUID, не документировано. Мьютекс умирает вместе с
 // процессом, так что упавший запуск следующему не мешает.
-const tunLockName = `Global\qwdtt-cli-wintun`
+const tunLockName = `Global\` + app.Name + "-wintun"
 
 // openTunAdapter создаёт адаптер и задаёт ему адреса, MTU и DNS из конфига;
 // перенастройку и маршруты делает вызывающий (configure, addRoutes,
@@ -108,9 +109,9 @@ func openTunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (*tu
 
 // acquireTunLock занимает мьютекс одного адаптера на машину и возвращает
 // функцию, которая его отпустит. Занят другим процессом — значит, на машине
-// уже работает tt с datapath tun.
+// уже работает qwdtt-cli с datapath tun.
 //
-// Внутри процесса захваты считаются: CLI держит мьютекс весь tt connect
+// Внутри процесса захваты считаются: CLI держит мьютекс весь qwdtt-cli connect
 // (Tun.Reserve), а первый Start берёт его ещё раз. Повторный
 // CreateMutex с тем же именем вернул бы ERROR_ALREADY_EXISTS и своему же
 // процессу, поэтому дескриптор один и закрывается с последним захватом.

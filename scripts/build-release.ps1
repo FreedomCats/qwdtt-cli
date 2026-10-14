@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Собирает релиз tt: три бинаря, zip для Windows и tar.gz для Linux и macOS.
+    Собирает релиз qwdtt-cli: три бинаря, zip для Windows и tar.gz для Linux и macOS.
 
 .DESCRIPTION
     Сборка воспроизводима из чистого клона: скрипту нужны go, git и доступ
@@ -10,36 +10,37 @@
         go build -trimpath -ldflags "-s -w -X main.version=… -X main.commit=…"
 
     с CGO_ENABLED=0 — cgo в проекте не нужен, а без него кросс-сборка не ищет
-    чужой компилятор. Версия и коммит попадают в `tt version` через переменные
-    cmd/tt/main.go.
+    чужой компилятор. Версия и коммит попадают в `qwdtt-cli version` через переменные
+    cmd/qwdtt-cli/main.go.
 
     Раскладка результата (по умолчанию dist/):
 
-        dist/tt_<версия>_windows_amd64/tt.exe
-        dist/tt_<версия>_linux_amd64/tt
-        dist/tt_<версия>_darwin_arm64/tt
-        dist/tt_<версия>_windows_amd64.zip   — каталог tt_<версия>_windows_amd64/
-                                               с tt.exe, wintun.dll, wintun-LICENSE.txt,
-                                               THIRD_PARTY_NOTICES.txt,
-                                               tt.example.toml, LICENSE, README.md
-        dist/tt_<версия>_linux_amd64.tar.gz  — каталог tt_<версия>_linux_amd64/ с tt,
-        dist/tt_<версия>_darwin_arm64.tar.gz   THIRD_PARTY_NOTICES.txt,
-                                               tt.example.toml, LICENSE, README.md
+        dist/qwdtt-cli_<версия>_windows_amd64/qwdtt-cli.exe
+        dist/qwdtt-cli_<версия>_linux_amd64/qwdtt-cli
+        dist/qwdtt-cli_<версия>_darwin_arm64/qwdtt-cli
+        dist/qwdtt-cli_<версия>_windows_amd64.zip
+            каталог qwdtt-cli_<версия>_windows_amd64/ с qwdtt-cli.exe, wintun.dll,
+            wintun-LICENSE.txt, THIRD_PARTY_NOTICES.txt, qwdtt-cli.example.toml,
+            LICENSE, README.md
+        dist/qwdtt-cli_<версия>_linux_amd64.tar.gz
+        dist/qwdtt-cli_<версия>_darwin_arm64.tar.gz
+            каталог qwdtt-cli_<версия>_<платформа>/ с qwdtt-cli,
+            THIRD_PARTY_NOTICES.txt, qwdtt-cli.example.toml, LICENSE, README.md
 
     wintun.dll (режим -datapath tun) кладётся в zip скриптом
     scripts/fetch-wintun.ps1: фиксированная версия, проверка SHA256 архива и
     подписи DLL. В репозитории её нет. THIRD_PARTY_NOTICES.txt — лицензии
-    всего, что слинковано в tt.exe, — собирает `go run ./scripts/notices`
+    всего, что слинковано в qwdtt-cli.exe, — собирает `go run ./scripts/notices`
     на каждую сборку.
 
     Внутри и zip, и tar.gz файлы лежат в каталоге с именем архива: распакованное
-    не смешается с соседними файлами. В tar.gz у tt стоит право
+    не смешается с соседними файлами. В tar.gz у qwdtt-cli стоит право
     на исполнение (0755), у остальных файлов — 0644, на какой бы системе ни шла
     сборка: архив пишется средствами .NET (System.Formats.Tar), а не tar
     системы, — tar на Windows права на исполнение не ставит. Нужен pwsh 7.3
     или новее.
 
-    В конце скрипт запускает `tt version` у бинаря для своей платформы и
+    В конце скрипт запускает `qwdtt-cli version` у бинаря для своей платформы и
     проверяет, что версия и коммит подставились.
 
 .PARAMETER Version
@@ -64,7 +65,7 @@
 .EXAMPLE
     pwsh scripts/build-release.ps1
     pwsh scripts/build-release.ps1 -Version 0.1.0
-    pwsh scripts/build-release.ps1 -Platforms windows/amd64 -Out C:\tmp\tt
+    pwsh scripts/build-release.ps1 -Platforms windows/amd64 -Out C:\tmp\qwdtt-cli
 #>
 [CmdletBinding()]
 param(
@@ -78,7 +79,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 # Сообщения по-русски: в консоли с кодовой страницей OEM они иначе превращаются
-# в вопросительные знаки. Сам tt пишет UTF-8 всегда.
+# в вопросительные знаки. Сам qwdtt-cli пишет UTF-8 всегда.
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -119,9 +120,9 @@ foreach ($platform in $Platforms) {
     if ($parts.Count -ne 2) { throw "платформа должна быть в виде os/arch: '$platform'" }
     $goos, $goarch = $parts
 
-    $name = "tt_${Version}_${goos}_${goarch}"
+    $name = "qwdtt-cli_${Version}_${goos}_${goarch}"
     $dir = Join-Path $Out $name
-    $exe = if ($goos -eq 'windows') { 'tt.exe' } else { 'tt' }
+    $exe = if ($goos -eq 'windows') { 'qwdtt-cli.exe' } else { 'qwdtt-cli' }
     $target = Join-Path $dir $exe
 
     if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
@@ -132,7 +133,7 @@ foreach ($platform in $Platforms) {
     $env:GOARCH = $goarch
     $env:CGO_ENABLED = '0'
     try {
-        & go build -trimpath -ldflags $ldflags -o $target ./cmd/tt
+        & go build -trimpath -ldflags $ldflags -o $target ./cmd/qwdtt-cli
         if ($LASTEXITCODE -ne 0) { throw "go build для $platform завершился с кодом $LASTEXITCODE" }
     }
     finally {
@@ -154,7 +155,7 @@ foreach ($platform in $Platforms) {
 $archives = @()
 if (-not $NoZip) {
     foreach ($b in $built | Where-Object GOOS -eq 'windows') {
-        foreach ($extra in @('tt.example.toml', 'LICENSE', 'README.md')) {
+        foreach ($extra in @('qwdtt-cli.example.toml', 'LICENSE', 'README.md')) {
             Copy-Item (Join-Path $root $extra) (Join-Path $b.Dir $extra)
         }
         $fetch = @{ Arch = $b.GOARCH; Dest = $b.Dir }
@@ -165,7 +166,7 @@ if (-not $NoZip) {
         $archive = Join-Path $Out "$($b.Name).zip"
         if (Test-Path $archive) { Remove-Item -Force $archive }
         # Внутри архива — каталог с именем архива, как в tar.gz: «Извлечь всё»
-        # не рассыплет файлы по Загрузкам, а tt.exe не потеряет wintun.dll.
+        # не рассыплет файлы по Загрузкам, а qwdtt-cli.exe не потеряет wintun.dll.
         Compress-Archive -Path $b.Dir -DestinationPath $archive -CompressionLevel Optimal
         $archives += $archive
         Write-Host "Архив: $archive"
@@ -220,14 +221,14 @@ function New-TarGz {
 
 if (-not $NoZip) {
     foreach ($b in $built | Where-Object GOOS -ne 'windows') {
-        foreach ($extra in @('tt.example.toml', 'LICENSE', 'README.md')) {
+        foreach ($extra in @('qwdtt-cli.example.toml', 'LICENSE', 'README.md')) {
             Copy-Item (Join-Path $root $extra) (Join-Path $b.Dir $extra)
         }
         & go -C $root run ./scripts/notices -dest $b.Dir -goos $b.GOOS -goarch $b.GOARCH
         if ($LASTEXITCODE -ne 0) { throw "уведомления для $($b.Platform) не собраны" }
         $tgz = Join-Path $Out "$($b.Name).tar.gz"
         if (Test-Path $tgz) { Remove-Item -Force $tgz }
-        New-TarGz -Dir $b.Dir -Path $tgz -Prefix $b.Name -Executables @('tt')
+        New-TarGz -Dir $b.Dir -Path $tgz -Prefix $b.Name -Executables @('qwdtt-cli')
         $archives += $tgz
         Write-Host "Архив: $tgz"
     }
@@ -244,14 +245,14 @@ $hostArch = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchi
 $native = $built | Where-Object Platform -eq "$hostOS/$hostArch" | Select-Object -First 1
 if ($native) {
     $versionOut = (& $native.Exe version | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0) { throw "tt version завершился с кодом $LASTEXITCODE" }
+    if ($LASTEXITCODE -ne 0) { throw "qwdtt-cli version завершился с кодом $LASTEXITCODE" }
     if ($versionOut -notmatch [regex]::Escape($Version) -or $versionOut -notmatch [regex]::Escape($commit)) {
-        throw "tt version не показывает версию и коммит: '$versionOut'"
+        throw "qwdtt-cli version не показывает версию и коммит: '$versionOut'"
     }
     Write-Host "Проверка: $versionOut"
 }
 else {
-    Write-Host "Проверка tt version пропущена: бинаря для $hostOS/$hostArch среди собранных нет"
+    Write-Host "Проверка qwdtt-cli version пропущена: бинаря для $hostOS/$hostArch среди собранных нет"
 }
 
 # --- итог ------------------------------------------------------------------

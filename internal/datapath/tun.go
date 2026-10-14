@@ -16,7 +16,7 @@ import (
 
 // WintunDLL — библиотека драйвера Wintun. Ищется только рядом с бинарём
 // и в System32 (LoadLibraryEx в golang.zx2c4.com/wintun), поэтому в
-// Requires она стоит как файл рядом с tt, а не как программа из PATH.
+// Requires она стоит как файл рядом с qwdtt-cli, а не как программа из PATH.
 const WintunDLL = "wintun.dll"
 
 // TunOptions — настройки datapath tun.
@@ -38,7 +38,7 @@ type TunOptions struct {
 // TUN системы (на Windows — от драйвера Wintun). От socks отличается только TUN (architecture.md
 // §04), общая часть — startDevice.
 //
-// Tun — Persistent: адаптер живёт весь tt connect. Первый Start создаёт
+// Tun — Persistent: адаптер живёт весь qwdtt-cli connect. Первый Start создаёт
 // его, следующие перенастраивают устройство конфигом новой попытки, Suspend
 // между попытками снимает маршруты и запрет утечки DNS (plan-e2.md, решение 3).
 //
@@ -110,8 +110,8 @@ func NewTun(opts TunOptions) *Tun {
 // CoreConn — Piped: сторона ядра канала в памяти на эту попытку.
 func (w *Tun) CoreConn() net.PacketConn { return w.pipe.CoreConn() }
 
-// errTunBusy — отказ второму tt с datapath tun на той же машине.
-var errTunBusy = errors.New("адаптер уже занят: на этой машине работает другой tt с datapath tun; " +
+// errTunBusy — отказ второму qwdtt-cli с datapath tun на той же машине.
+var errTunBusy = errors.New("адаптер уже занят: на этой машине работает другой qwdtt-cli с datapath tun; " +
 	"остановите его или подключитесь с -datapath socks")
 
 // Requires: права администратора (root на Linux), файлы платформы (на
@@ -127,7 +127,7 @@ func (w *Tun) Requires() Requirements {
 	}
 }
 
-// Reserve занимает адаптер на машине до подключения (Reserver): второй tt
+// Reserve занимает адаптер на машине до подключения (Reserver): второй qwdtt-cli
 // с datapath tun узнаёт о первом сразу, а не после похода в VK за кредами,
 // и не уходит в переподключения (найдено живым прогоном W2). Держать
 // резерв — весь сеанс; первый Start берёт ту же блокировку ещё раз, внутри
@@ -397,7 +397,7 @@ func (w *Tun) blockIPv6(block bool) {
 	switch {
 	case !block:
 	case ok:
-		w.logf("[TUN] IPv6 системы, кроме loopback и сокетов tt, закрыт защитой DNS: туннель его не везёт")
+		w.logf("[TUN] IPv6 системы, кроме loopback и сокетов qwdtt-cli, закрыт защитой DNS: туннель его не везёт")
 	default:
 		w.logf("[TUN] Внимание: туннель не везёт IPv6, а закрыть его без защиты DNS нечем — " +
 			"IPv6 системы идёт мимо туннеля")
@@ -405,7 +405,7 @@ func (w *Tun) blockIPv6(block bool) {
 }
 
 // disableDNSGuard снимает защиту DNS. Отказ только пишется: адаптер всё
-// равно снимается, а правила уйдут вместе с сессией, когда tt выйдет.
+// равно снимается, а правила уйдут вместе с сессией, когда qwdtt-cli выйдет.
 func (w *Tun) disableDNSGuard() {
 	if w.opts.DNSGuard == nil {
 		return

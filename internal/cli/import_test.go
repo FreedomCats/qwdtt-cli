@@ -54,7 +54,7 @@ func TestProfileImport(t *testing.T) {
 	}
 }
 
-// Из конвейера: tt profile import home < файл.
+// Из конвейера: qwdtt-cli profile import home < файл.
 func TestProfileImportFromStdin(t *testing.T) {
 	p := newProfileEnv(t)
 	p.pipe = true

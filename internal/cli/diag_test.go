@@ -100,7 +100,7 @@ func TestPlanPingNeedsPassword(t *testing.T) {
 	if err == nil {
 		t.Fatal("план ping собрался без пароля")
 	}
-	if !strings.Contains(err.Error(), "tt profile set home -password") {
+	if !strings.Contains(err.Error(), "qwdtt-cli profile set home -password") {
 		t.Errorf("в ошибке нет подсказки: %v", err)
 	}
 }
@@ -138,7 +138,7 @@ func TestPlanHashesMissingHashes(t *testing.T) {
 	if err == nil {
 		t.Fatal("план hashes собрался без хешей")
 	}
-	if !strings.Contains(err.Error(), "tt profile set home -hashes") {
+	if !strings.Contains(err.Error(), "qwdtt-cli profile set home -hashes") {
 		t.Errorf("в ошибке нет подсказки: %v", err)
 	}
 }
@@ -156,7 +156,7 @@ func TestDiagWithoutProfilesFile(t *testing.T) {
 			if stdout != "" {
 				t.Errorf("ошибка ушла в stdout: %q", stdout)
 			}
-			if !strings.Contains(stderr, "tt profile set") {
+			if !strings.Contains(stderr, "qwdtt-cli profile set") {
 				t.Errorf("в ошибке нет подсказки завести профиль:\n%s", stderr)
 			}
 		})

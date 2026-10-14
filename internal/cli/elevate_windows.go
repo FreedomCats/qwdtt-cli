@@ -15,11 +15,11 @@ import (
 // и окно UAC поднимет того же пользователя.
 const tokenElevationTypeLimited = 3
 
-// relaunchElevated запускает tt с правами администратора в новом окне: окно
+// relaunchElevated запускает qwdtt-cli с правами администратора в новом окне: окно
 // UAC, затем отдельная консоль — повышенный процесс к чужой консоли не
 // присоединится. Меню в старом окне после этого закрывается (detached).
 func relaunchElevated(e *env, args []string) (detached bool, err error) {
-	// Обычная учётная запись: UAC спросил бы пароль администратора, и tt
+	// Обычная учётная запись: UAC спросил бы пароль администратора, и qwdtt-cli
 	// работал бы от его имени — другой %APPDATA%, а секреты DPAPI другой
 	// пользователь не расшифрует.
 	if elevationType() != tokenElevationTypeLimited {
@@ -28,7 +28,7 @@ func relaunchElevated(e *env, args []string) (detached bool, err error) {
 
 	exe, err := os.Executable()
 	if err != nil {
-		return false, fmt.Errorf("не найти исполняемый файл tt: %w", err)
+		return false, fmt.Errorf("не найти исполняемый файл qwdtt-cli: %w", err)
 	}
 	quoted := make([]string, len(args))
 	for i, arg := range args {

@@ -1,4 +1,4 @@
-// connect.go — команда tt connect.
+// connect.go — команда qwdtt-cli connect.
 //
 // Флаги и разбор аргументов — задача G1. Здесь (задача G2) всё сделанное
 // раньше собирается в одну команду: профиль и флаги → core.Config, секреты
@@ -45,7 +45,7 @@ func connectCommand() *command {
 
 Пароль подключения и хеши звонков VK в командную строку не передаются: они
 лежат в хранилище секретов, а профиль держит только ссылки на них. Записывает
-их tt profile set.
+их qwdtt-cli profile set.
 
 Ход подключения печатается строками в stdout; вопросы к пользователю — капча,
 которую ядро не осилило само, — уходят в stderr. Первый Ctrl+C останавливает
@@ -263,7 +263,7 @@ func overrideProfile(base *config.Profile, opts *connectOptions) *config.Profile
 // секреты. Profile.Core оставляет пароль и хеши пустыми намеренно (C1):
 // хранилище открывает тот, кто знает, где лежит файл настроек.
 //
-// Секреты разворачиваются по отдельности: `tt hashes` (G3) обходится одними
+// Секреты разворачиваются по отдельности: `qwdtt-cli hashes` (G3) обходится одними
 // хешами, и отсутствие пароля ему не помеха.
 func coreConfig(p *config.Profile, store config.SecretStore) (core.Config, error) {
 	cfg := p.Core()
@@ -304,7 +304,7 @@ func secretHashes(p *config.Profile, store config.SecretStore) ([]string, error)
 	hashes := core.ParseHashes(raw)
 	if len(hashes) == 0 {
 		return nil, fmt.Errorf("в хранилище нет ни одного хеша звонка для профиля %q; "+
-			"запишите их заново: tt profile set %s -hashes", p.Name, p.Name)
+			"запишите их заново: qwdtt-cli profile set %s -hashes", p.Name, p.Name)
 	}
 	return hashes, nil
 }
@@ -312,7 +312,7 @@ func secretHashes(p *config.Profile, store config.SecretStore) ([]string, error)
 // secretError объясняет, что секрет не развернулся и как это починить. Само
 // значение здесь не появляется ни при каком исходе.
 func secretError(what, profile, flag string, err error) error {
-	return fmt.Errorf("%s профиля %q не прочитан: %w; запишите его заново: tt profile set %s %s",
+	return fmt.Errorf("%s профиля %q не прочитан: %w; запишите его заново: qwdtt-cli profile set %s %s",
 		what, profile, err, profile, flag)
 }
 
@@ -393,7 +393,7 @@ func requirementProblems(req datapath.Requirements) []string {
 		}
 		for _, file := range req.Files {
 			if _, err := os.Stat(filepath.Join(dir, file)); err != nil {
-				problems = append(problems, fmt.Sprintf("рядом с tt нет файла %s", file))
+				problems = append(problems, fmt.Sprintf("рядом с qwdtt-cli нет файла %s", file))
 			}
 		}
 	}
@@ -407,8 +407,8 @@ func requirementProblems(req datapath.Requirements) []string {
 // не встала посреди приглашения; консольный читает ответ со stdin команды.
 //
 // При kill-switch (ks не nil) консольный снимает его на время капчи: страницу
-// открывает браузер пользователя, а не tt (plan-e3.md, K4). Окно WebView2
-// ходит через прокси tt, соединяясь dial (сокетами tt мимо туннеля, W2), и
+// открывает браузер пользователя, а не qwdtt-cli (plan-e3.md, K4). Окно WebView2
+// ходит через прокси qwdtt-cli, соединяясь dial (сокетами qwdtt-cli мимо туннеля, W2), и
 // kill-switch не трогает; не поднялся прокси — окно без него, тоже со снятием.
 func captchaSolver(e *env, out *printer, ks *killSwitchGuard, dial captcha.DialFunc) captcha.Solver {
 	wrap := func(s captcha.Solver) captcha.Solver {
@@ -468,7 +468,7 @@ func newCaptchaWindow(opts captcha.WebView2Options) (captcha.Solver, error) {
 func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	out := newPrinter(e.stdout, verbose)
 	// Статусная строка — только на терминале. В перенаправленном выводе
-	// остаются строки: `tt connect > log.txt` даёт файл без перерисовки.
+	// остаются строки: `qwdtt-cli connect > log.txt` даёт файл без перерисовки.
 	if width, ok := e.stdoutTerminal(); ok {
 		out.enableStatus(width)
 	}
@@ -519,7 +519,7 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	var guard *netguard.Guard
 	if req.Netguard || netguardForced() {
 		// Метка сокетов ядра — только при включённой защите DNS: по ней
-		// nftables пропускает tt к DNS VK, а при kill-switch — и вообще
+		// nftables пропускает qwdtt-cli к DNS VK, а при kill-switch — и вообще
 		// (он живёт в той же таблице, без защиты DNS его не бывает).
 		var mark uint32
 		if plan.dnsGuard != nil {
@@ -536,7 +536,7 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	// циклу подключения и диспетчеру капчи, который отвечает через неё.
 	ctrl := core.NewControl()
 
-	// Окно капчи при kill-switch ходит сокетами tt: тем же хуком netguard,
+	// Окно капчи при kill-switch ходит сокетами qwdtt-cli: тем же хуком netguard,
 	// что и ядро, и его же резолвером (net.DefaultResolver ядро подменяет
 	// при запуске, а Dialer без Resolver берёт его в момент соединения).
 	var captchaDial captcha.DialFunc

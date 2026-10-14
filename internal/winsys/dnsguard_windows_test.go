@@ -129,7 +129,7 @@ func TestDNSGuardSession(t *testing.T) {
 // recover её не ловит (найдено живым прогоном S1, на первом же Enable).
 //
 // Выровнено ли — решает длина идентификатора приложения в правиле «свой
-// процесс», то есть длина пути к exe. У tt.exe путь постоянный, а у
+// процесс», то есть длина пути к exe. У qwdtt-cli.exe путь постоянный, а у
 // тестового бинаря каталог go-build каждый раз свой, поэтому длины
 // перебираются: дополнение в 0–7 байт даёт и невыровненный случай.
 // Без исправления в форке тест падает за доли секунды.
@@ -333,7 +333,7 @@ func TestDNSGuardReplaceRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bad, err := newGuardRule(wf.LayerALEAuthConnectV4, "tt: тест отказа", 1, wf.ActionBlock,
+	bad, err := newGuardRule(wf.LayerALEAuthConnectV4, "qwdtt-cli: тест отказа", 1, wf.ActionBlock,
 		[]*wf.Match{{Field: wf.FieldIPRemotePort, Op: wf.MatchTypeEqual, Value: "не порт"}})
 	if err != nil {
 		t.Fatal(err)

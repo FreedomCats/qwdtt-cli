@@ -20,7 +20,7 @@ func prefix(t *testing.T, s string) *net.IPNet {
 // fakeLinks — состояние интерфейсов поддельной таблицы: индекс → имя;
 // в down — опущенные.
 func fakeLinks(down ...int) func(int) (string, bool) {
-	names := map[int]string{1: "lo", 2: "enp7s0", 3: "wlan0", 4: "vpn0", 7: "tt"}
+	names := map[int]string{1: "lo", 2: "enp7s0", 3: "wlan0", 4: "vpn0", 7: "qwdtt-cli"}
 	return func(index int) (string, bool) {
 		name, ok := names[index]
 		if !ok {

@@ -60,7 +60,7 @@ func TestHelpFlagPrintsFlags(t *testing.T) {
 			if stderr != "" {
 				t.Errorf("помощь ушла в stderr: %q", stderr)
 			}
-			if !strings.Contains(stdout, "Использование: tt "+cmd.name) {
+			if !strings.Contains(stdout, "Использование: qwdtt-cli "+cmd.name) {
 				t.Errorf("нет строки синтаксиса:\n%s", stdout)
 			}
 			if cmd.name == "profile" && !strings.Contains(stdout, "Подкоманды:") {
@@ -75,7 +75,7 @@ func TestHelpFlagPrintsFlags(t *testing.T) {
 	}
 }
 
-// tt help <команда> печатает то же, что и tt <команда> -h.
+// qwdtt-cli help <команда> печатает то же, что и qwdtt-cli <команда> -h.
 func TestHelpCommandMatchesHelpFlag(t *testing.T) {
 	for _, cmd := range commands() {
 		if cmd.name == "help" {
@@ -88,7 +88,7 @@ func TestHelpCommandMatchesHelpFlag(t *testing.T) {
 			t.Errorf("%s: коды возврата %d и %d, ожидался %d", cmd.name, codeA, codeB, exitOK)
 		}
 		if viaHelp != viaFlag {
-			t.Errorf("%s: tt help и -h печатают разное:\n--- help ---\n%s\n--- -h ---\n%s",
+			t.Errorf("%s: qwdtt-cli help и -h печатают разное:\n--- help ---\n%s\n--- -h ---\n%s",
 				cmd.name, viaHelp, viaFlag)
 		}
 	}
@@ -119,7 +119,7 @@ func TestUnknownFlag(t *testing.T) {
 	if stdout != "" {
 		t.Errorf("ошибка ушла в stdout: %q", stdout)
 	}
-	if n := strings.Count(stderr, "Использование: tt connect"); n != 1 {
+	if n := strings.Count(stderr, "Использование: qwdtt-cli connect"); n != 1 {
 		t.Errorf("помощь напечатана %d раз(а), ожидался один:\n%s", n, stderr)
 	}
 }
@@ -153,7 +153,7 @@ func TestUsageErrors(t *testing.T) {
 			if !strings.Contains(stderr, tc.want) {
 				t.Errorf("в сообщении нет %q:\n%s", tc.want, stderr)
 			}
-			if !strings.Contains(stderr, "Помощь: tt ") {
+			if !strings.Contains(stderr, "Помощь: qwdtt-cli ") {
 				t.Errorf("нет подсказки, где смотреть помощь:\n%s", stderr)
 			}
 		})

@@ -36,12 +36,12 @@ func TestValidateProfileProblems(t *testing.T) {
 		{
 			name:  "нет ссылки на пароль",
 			patch: func(p *Profile) { p.PasswordRef = "" },
-			want:  []string{"password_ref", "tt profile set"},
+			want:  []string{"password_ref", "qwdtt-cli profile set"},
 		},
 		{
 			name:  "нет ссылки на хеши",
 			patch: func(p *Profile) { p.VkHashesRef = "" },
-			want:  []string{"vk_hashes_ref", "tt profile set"},
+			want:  []string{"vk_hashes_ref", "qwdtt-cli profile set"},
 		},
 		{
 			// Пароль, написанный прямо в поле ссылки, на ссылку не похож —

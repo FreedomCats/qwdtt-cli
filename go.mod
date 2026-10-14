@@ -28,7 +28,7 @@ require (
 // Наши зависимости — те, которых у ядра не было.
 //
 // BurntSushi/toml (MIT) — разбор profiles.toml, задача C1.
-// golang.org/x/term (BSD-3) — скрытый ввод пароля и хешей в `tt profile set`,
+// golang.org/x/term (BSD-3) — скрытый ввод пароля и хешей в `qwdtt-cli profile set`,
 // задача C3.
 // jchv/go-webview2 (MIT) — окно капчи на Windows, задача E3. Без cgo,
 // WebView2Loader.dll встроен; тянет за собой jchv/go-winloader (MIT).
@@ -108,8 +108,8 @@ replace github.com/tailscale/wf => github.com/FreedomCats/tailscale-wf v0.0.0-20
 
 // jchv/go-webview2 — из своего форка: библиотека не передаёт опций окружения
 // WebView2, а переменную WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS рантайм с её
-// встроенным загрузчиком не применяет — окно капчи шло мимо прокси tt
+// встроенным загрузчиком не применяет — окно капчи шло мимо прокси qwdtt-cli
 // (найдено приёмкой R2 Э3). В форке одна правка: опция
 // AdditionalBrowserArguments через ICoreWebView2EnvironmentOptions, с тестом.
-// Регрессия у нас — TestWebView2Proxy в internal/captcha (TT_WEBVIEW2=1).
+// Регрессия у нас — TestWebView2Proxy в internal/captcha (QWDTT_WEBVIEW2=1).
 replace github.com/jchv/go-webview2 => github.com/FreedomCats/go-webview2 v0.0.0-20261014000000-08b745a2490c

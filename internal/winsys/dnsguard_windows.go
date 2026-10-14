@@ -11,6 +11,8 @@ import (
 
 	"github.com/tailscale/wf"
 	"golang.org/x/sys/windows"
+
+	"github.com/FreedomCats/qwdtt-cli/internal/app"
 )
 
 // Постоянные GUID провайдера и подслоя WFP: по ним наши фильтры узнаются
@@ -35,10 +37,10 @@ const (
 
 // DNSGuard — защита от утечки DNS (plan-e2.md, решение 4): фильтры WFP
 // запрещают обращения на порт 53, UDP и TCP, ко всем адресам, кроме
-// резолверов туннеля, loopback и запросов самого tt.
+// резолверов туннеля, loopback и запросов самого qwdtt-cli.
 //
 // Сессия WFP динамическая: всё, что в ней создано, система снимает при её
-// закрытии или со смертью процесса, поэтому упавший tt фильтров не оставляет
+// закрытии или со смертью процесса, поэтому упавший qwdtt-cli фильтров не оставляет
 // и уборка при запуске не нужна.
 //
 // Своему процессу разрешено всё: ядро ходит к DNS VK (резолвер из профиля)
@@ -46,7 +48,7 @@ const (
 // Системные запросы идут от службы DNS-клиента, а не от программ, — их
 // пропускает правило по адресу резолвера туннеля.
 //
-// Сессия открывается один раз на tt connect (OpenDNSGuard), а правила
+// Сессия открывается один раз на qwdtt-cli connect (OpenDNSGuard), а правила
 // ставятся и снимаются по ходу (Enable, Lockdown, Disable): отказ WFP так
 // узнаётся до подключения, а не посреди него. В той же сессии живёт и
 // kill-switch (plan-e3.md, W1) — набор «закрыто», см. Lockdown.
@@ -73,7 +75,7 @@ const (
 func OpenDNSGuard() (*DNSGuard, error) {
 	exe, err := os.Executable()
 	if err != nil {
-		return nil, fmt.Errorf("путь к tt.exe: %w", err)
+		return nil, fmt.Errorf("путь к qwdtt-cli.exe: %w", err)
 	}
 	appID, err := wf.AppID(exe)
 	if err != nil {
@@ -81,8 +83,8 @@ func OpenDNSGuard() (*DNSGuard, error) {
 	}
 
 	session, err := wf.New(&wf.Options{
-		Name:        "tt",
-		Description: "tt: защита от утечки DNS",
+		Name:        app.Name,
+		Description: "qwdtt-cli: защита от утечки DNS",
 		Dynamic:     true,
 	})
 	if err != nil {
@@ -90,16 +92,16 @@ func OpenDNSGuard() (*DNSGuard, error) {
 	}
 	if err := session.AddProvider(&wf.Provider{
 		ID:          dnsGuardProvider,
-		Name:        "tt",
-		Description: "tt: защита от утечки DNS",
+		Name:        app.Name,
+		Description: "qwdtt-cli: защита от утечки DNS",
 	}); err != nil {
 		session.Close()
 		return nil, fmt.Errorf("провайдер WFP: %w", err)
 	}
 	if err := session.AddSublayer(&wf.Sublayer{
 		ID:          dnsGuardSublayer,
-		Name:        "tt DNS",
-		Description: "tt: DNS только через туннель",
+		Name:        app.Name + " DNS",
+		Description: "qwdtt-cli: DNS только через туннель",
 		Provider:    dnsGuardProvider,
 		Weight:      ^uint16(0),
 	}); err != nil {
@@ -132,7 +134,7 @@ func (g *DNSGuard) Enable(dns []netip.Addr) error {
 // Транзакций WFP у tailscale/wf нет, поэтому сначала ставятся новые
 // правила, потом снимаются старые: мига без правил на переходе нет. Новые
 // ставятся от тяжёлых к лёгким, старые снимаются от лёгких к тяжёлым, так
-// что разрешение самому tt стоит всё время, а запреты появляются после
+// что разрешение самому qwdtt-cli стоит всё время, а запреты появляются после
 // своих разрешений. Пока стоят оба набора «закрыто» и защиты DNS, действует
 // «закрыто», к которому добавлены резолверы туннеля.
 //
@@ -178,7 +180,7 @@ func (g *DNSGuard) disableLocked() error {
 }
 
 // deleteLocked снимает rules от лёгких к тяжёлым: запрет всего уходит
-// первым, разрешение самому tt — последним. Возвращает правила, которые
+// первым, разрешение самому qwdtt-cli — последним. Возвращает правила, которые
 // снять не удалось.
 func (g *DNSGuard) deleteLocked(rules []*wf.Rule) ([]*wf.Rule, error) {
 	rules = slices.Clone(rules)
@@ -243,13 +245,13 @@ func dnsGuardRules(dns []netip.Addr, appID string) ([]*wf.Rule, error) {
 	}
 
 	for _, layer := range dnsGuardLayers {
-		if err := add(layer.id, "tt: запрет DNS мимо туннеля, "+layer.name,
+		if err := add(layer.id, "qwdtt-cli: запрет DNS мимо туннеля, "+layer.name,
 			dnsGuardBlockWeight, wf.ActionBlock, dnsPortMatches()); err != nil {
 			return nil, err
 		}
 
 		self := []*wf.Match{{Field: wf.FieldALEAppID, Op: wf.MatchTypeEqual, Value: appID}}
-		if err := add(layer.id, "tt: DNS самого tt, "+layer.name,
+		if err := add(layer.id, "qwdtt-cli: DNS самого qwdtt-cli, "+layer.name,
 			dnsGuardPermitWeight, wf.ActionPermit, self); err != nil {
 			return nil, err
 		}
@@ -266,7 +268,7 @@ func dnsGuardRules(dns []netip.Addr, appID string) ([]*wf.Rule, error) {
 				allowed = append(allowed, &wf.Match{Field: wf.FieldIPRemoteAddress, Op: wf.MatchTypeEqual, Value: a})
 			}
 		}
-		if err := add(layer.id, "tt: DNS туннеля и loopback, "+layer.name,
+		if err := add(layer.id, "qwdtt-cli: DNS туннеля и loopback, "+layer.name,
 			dnsGuardPermitWeight, wf.ActionPermit, allowed); err != nil {
 			return nil, err
 		}

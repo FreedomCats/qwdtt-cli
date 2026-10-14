@@ -17,9 +17,9 @@ import (
 // прогоны»), не на машине разработчика:
 //
 //	CGO_ENABLED=0 go test -c -o build/out/datapath.test ./internal/datapath
-//	docker run --rm --cap-add NET_ADMIN --device /dev/net/tun -e TT_TEST_NETNS=1 \
-//	  -v "$PWD/build/out":/tt:ro ubuntu:latest /tt/datapath.test -test.v -test.run Netns
-const netnsEnv = "TT_TEST_NETNS"
+//	docker run --rm --cap-add NET_ADMIN --device /dev/net/tun -e QWDTT_TEST_NETNS=1 \
+//	  -v "$PWD/build/out":/qwdtt-cli:ro ubuntu:latest /qwdtt-cli/datapath.test -test.v -test.run Netns
+const netnsEnv = "QWDTT_TEST_NETNS"
 
 func skipOutsideNetns(t *testing.T) {
 	t.Helper()
@@ -160,7 +160,7 @@ func TestTunAdapterNetns(t *testing.T) {
 	if resolv, _ := os.ReadFile("/etc/resolv.conf"); string(resolv) != string(origResolv) {
 		t.Errorf("resolv.conf после Close:\n%s\nждали прежний:\n%s", resolv, origResolv)
 	}
-	if _, err := os.Stat("/etc/resolv.conf.tt-backup"); err == nil {
+	if _, err := os.Stat("/etc/resolv.conf.qwdtt-cli-backup"); err == nil {
 		t.Error("копия resolv.conf осталась после Close")
 	}
 	t.Logf("лог:\n%s", rec.dump())

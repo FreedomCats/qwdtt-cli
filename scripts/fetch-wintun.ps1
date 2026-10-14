@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Скачивает wintun.dll фиксированной версии, проверяет её и кладёт рядом с tt.exe.
+    Скачивает wintun.dll фиксированной версии, проверяет её и кладёт рядом с qwdtt-cli.exe.
 
 .DESCRIPTION
     wintun.dll нужна только режиму -datapath wintun (свой адаптер). В репозитории
@@ -30,7 +30,7 @@
 
 .PARAMETER Dest
     Куда положить wintun.dll. По умолчанию build/out в корне репозитория —
-    туда же README предлагает собирать tt.exe.
+    туда же README предлагает собирать qwdtt-cli.exe.
 
 .PARAMETER Archive
     Уже скачанный wintun-<версия>.zip: тогда в сеть скрипт не ходит. Хеш
@@ -38,7 +38,7 @@
 
 .EXAMPLE
     pwsh scripts/fetch-wintun.ps1
-    pwsh scripts/fetch-wintun.ps1 -Arch arm64 -Dest C:\tools\tt
+    pwsh scripts/fetch-wintun.ps1 -Arch arm64 -Dest C:\tools\qwdtt-cli
     pwsh scripts/fetch-wintun.ps1 -Archive $HOME\Downloads\wintun-0.14.1.zip
 #>
 [CmdletBinding()]
@@ -71,7 +71,7 @@ $archDir = @{ amd64 = 'amd64'; arm64 = 'arm64'; '386' = 'x86'; arm = 'arm' }[$Ar
 
 # Всё скачанное и распакованное живёт в своём пустом временном каталоге и
 # удаляется в конце, что бы ни случилось.
-$work = Join-Path ([System.IO.Path]::GetTempPath()) ("tt-wintun-" + [guid]::NewGuid().ToString('N'))
+$work = Join-Path ([System.IO.Path]::GetTempPath()) ("qwdtt-cli-wintun-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work | Out-Null
 try {
     if ($Archive) {

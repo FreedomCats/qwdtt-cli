@@ -173,7 +173,7 @@ func (g *killSwitchGuard) BlockIPv6(block bool) {
 
 // killSwitchCaptcha — решатель капчи при kill-switch: на время Solve
 // правила сняты (plan-e3.md, решение 1). Решатель о сети не знает, поэтому
-// обёртка — здесь. Окно WebView2 так оборачивается, только если прокси tt
+// обёртка — здесь. Окно WebView2 так оборачивается, только если прокси qwdtt-cli
 // для него не поднялся (proxiedCaptcha).
 type killSwitchCaptcha struct {
 	captcha.Solver
@@ -186,7 +186,7 @@ func (s killSwitchCaptcha) Solve(ctx context.Context, req captcha.Request) (stri
 	return s.Solver.Solve(ctx, req)
 }
 
-// proxiedCaptcha — окно WebView2 через прокси tt (plan-e3.md, W2): kill-switch
+// proxiedCaptcha — окно WebView2 через прокси qwdtt-cli (plan-e3.md, W2): kill-switch
 // не снимается. Прокси не поднялся (captcha.ErrProxy, окно не открывалось) —
 // та же капча решается в direct: окне без прокси, со снятым kill-switch.
 type proxiedCaptcha struct {

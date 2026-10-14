@@ -112,7 +112,7 @@ func (m *menu) wizard(path string, file *config.File) error {
 // ввода вручную (nil). Скрыто: в ссылке пароль.
 func (m *menu) askShareLink() (*config.ShareLink, error) {
 	fmt.Fprintln(m.e.stdout, "Если у вас есть ссылка qwdtt://config?… (из приложения qWDTT или от бота сервера),")
-	fmt.Fprintln(m.e.stdout, "вставьте её — остальное tt возьмёт из неё. Нет ссылки — нажмите Enter.")
+	fmt.Fprintln(m.e.stdout, "вставьте её — остальное qwdtt-cli возьмёт из неё. Нет ссылки — нажмите Enter.")
 	for {
 		text, err := m.wizardSecret("Ссылка (при вводе не отображается) [ввести вручную]: ")
 		if err != nil {
@@ -282,7 +282,7 @@ func (m *menu) askCallLinks(optional bool) (string, error) {
 func (m *menu) askMode() (string, error) {
 	w := m.e.stdout
 	fmt.Fprintln(w, "Что пускать через туннель?")
-	fmt.Fprintln(w, "  1. Весь трафик компьютера. Нужны права администратора — tt попросит их сам.")
+	fmt.Fprintln(w, "  1. Весь трафик компьютера. Нужны права администратора — qwdtt-cli попросит их сам.")
 	fmt.Fprintf(w, "  2. Только программы, в которых указан прокси SOCKS5 %s.\n", datapath.DefaultSocksListen)
 	for {
 		line, err := m.wizardAsk("Выберите [1]: ")

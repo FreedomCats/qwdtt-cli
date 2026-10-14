@@ -1,12 +1,12 @@
 // Команда notices собирает THIRD_PARTY_NOTICES.txt — лицензии всего, что
-// слинковано в tt.
+// слинковано в qwdtt-cli.
 //
 //	go run ./scripts/notices -dest build/out [-goos windows] [-goarch amd64]
 //
 // Список берётся из того, что реально попадает в бинарь для заданной
 // платформы, с учётом replace в go.mod:
 //
-//	go list -deps -json ./cmd/tt   (GOOS, GOARCH, CGO_ENABLED=0)
+//	go list -deps -json ./cmd/qwdtt-cli   (GOOS, GOARCH, CGO_ENABLED=0)
 //
 // `go list -m all` для этого не годится: в нём и тестовые зависимости, и
 // модули, из которых в бинарь ничего не попало. Сам Go (рантайм и стандартная
@@ -57,7 +57,7 @@ var noLicenseFile = map[string]string{
 // notes — пояснения к отдельным модулям.
 var notes = map[string]string{
 	"github.com/bogdanfinn/tls-client": "Лицензия BSD-4-Clause. Пункт 3 касается рекламных материалов;\n" +
-		"у tt их нет.",
+		"у qwdtt-cli их нет.",
 }
 
 func main() {
@@ -138,10 +138,10 @@ func goEnv() (goroot, goversion string, err error) {
 	return lines[0], lines[1], nil
 }
 
-// listModules — модули, из которых в ./cmd/tt для goos/goarch попал хоть
+// listModules — модули, из которых в ./cmd/qwdtt-cli для goos/goarch попал хоть
 // один пакет; replace уже применён, сам проект исключён.
 func listModules(root, goos, goarch string) ([]module, error) {
-	cmd := exec.Command("go", "list", "-deps", "-json=Standard,Module", "./cmd/tt")
+	cmd := exec.Command("go", "list", "-deps", "-json=Standard,Module", "./cmd/qwdtt-cli")
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0")
 	cmd.Stderr = os.Stderr
@@ -324,12 +324,12 @@ func render(sections []section, goos, goarch string) string {
 	line := func(s string) { b.WriteString(s + "\n") }
 	rule := strings.Repeat("=", 79)
 
-	line("Сторонние компоненты tt")
+	line("Сторонние компоненты qwdtt-cli")
 	line("=======================")
 	line("")
-	line(fmt.Sprintf("Сборка %s/%s. В tt входит код компонентов ниже; у каждого —", goos, goarch))
+	line(fmt.Sprintf("Сборка %s/%s. В qwdtt-cli входит код компонентов ниже; у каждого —", goos, goarch))
 	line("вид лицензии и полный текст её файлов из исходников компонента.")
-	line("Сам tt распространяется под GNU GPL v3.0 (файл LICENSE).")
+	line("Сам qwdtt-cli распространяется под GNU GPL v3.0 (файл LICENSE).")
 	if goos == "windows" {
 		line("")
 		line("wintun.dll — отдельный бинарь от WireGuard LLC, распространяется")

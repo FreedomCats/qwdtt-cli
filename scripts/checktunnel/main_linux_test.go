@@ -23,7 +23,7 @@ func TestStatusUID(t *testing.T) {
 }
 
 func TestCmdlineString(t *testing.T) {
-	if got := cmdlineString([]byte("tt\x00connect\x00-v\x00home\x00")); got != "tt connect -v home" {
+	if got := cmdlineString([]byte("qwdtt-cli\x00connect\x00-v\x00home\x00")); got != "qwdtt-cli connect -v home" {
 		t.Errorf("%q", got)
 	}
 }
@@ -117,16 +117,16 @@ func TestPrintDNS(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(filepath.Join(etcRoot, "resolv.conf"), fileMarker+"; прежний файл — resolv.conf.tt-backup\nnameserver 192.0.2.53\n")
-	write(filepath.Join(etcRoot, "resolv.conf.tt-backup"), "nameserver 192.0.2.1\n")
+	write(filepath.Join(etcRoot, "resolv.conf"), fileMarker+"; прежний файл — resolv.conf.qwdtt-cli-backup\nnameserver 192.0.2.53\n")
+	write(filepath.Join(etcRoot, "resolv.conf.qwdtt-cli-backup"), "nameserver 192.0.2.1\n")
 	write(filepath.Join(runRoot, "resolvconf/interface/NetworkManager"), "nameserver 192.0.2.1\n")
-	write(filepath.Join(runRoot, "resolvconf/interface/tun.tt"), "nameserver 192.0.2.53\n")
+	write(filepath.Join(runRoot, "resolvconf/interface/tun.qwdtt-cli"), "nameserver 192.0.2.53\n")
 
 	var b bytes.Buffer
-	printDNS(&b, "tt")
+	printDNS(&b, "qwdtt-cli")
 	out := b.String()
-	for _, s := range []string{"обычный файл", "nameserver: 192.0.2.53", "файл написал tt",
-		"tt-backup: есть", "NetworkManager, tun.tt", "tun.tt: nameserver 192.0.2.53"} {
+	for _, s := range []string{"обычный файл", "nameserver: 192.0.2.53", "файл написал qwdtt-cli",
+		"qwdtt-cli-backup: есть", "NetworkManager, tun.qwdtt-cli", "tun.qwdtt-cli: nameserver 192.0.2.53"} {
 		if !strings.Contains(out, s) {
 			t.Errorf("в выводе нет %q:\n%s", s, out)
 		}
@@ -138,11 +138,11 @@ func TestPrintDNS(t *testing.T) {
 // ошибкой, это нормально.
 func TestRunOffline(t *testing.T) {
 	var b bytes.Buffer
-	run(&b, options{label: "тест", name: "tt-test-absent", offline: true})
+	run(&b, options{label: "тест", name: "qwdtt-cli-test-absent", offline: true})
 	out := b.String()
-	for _, s := range []string{"— тест ===", "-- Процессы tt", "блокировка @qwdtt-cli-tun", "-- Интерфейсы",
-		`адаптера туннеля "tt-test-absent" нет`, "-- Маршруты /0 и /1", "-- Правила маршрутизации",
-		"-- Интерфейс для сокетов ядра", "-- nftables", "-- DNS системы", "способ tt", "-- Обратный фильтр"} {
+	for _, s := range []string{"— тест ===", "-- Процессы qwdtt-cli", "блокировка @qwdtt-cli-tun", "-- Интерфейсы",
+		`адаптера туннеля "qwdtt-cli-test-absent" нет`, "-- Маршруты /0 и /1", "-- Правила маршрутизации",
+		"-- Интерфейс для сокетов ядра", "-- nftables", "-- DNS системы", "способ qwdtt-cli", "-- Обратный фильтр"} {
 		if !strings.Contains(out, s) {
 			t.Errorf("в выводе нет %q:\n%s", s, out)
 		}

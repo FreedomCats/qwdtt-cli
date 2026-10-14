@@ -10,25 +10,26 @@ import (
 
 	"golang.zx2c4.com/wireguard/tun"
 
+	"github.com/FreedomCats/qwdtt-cli/internal/app"
 	"github.com/FreedomCats/qwdtt-cli/internal/linuxsys"
 )
 
 // tunUnsupported — на Linux tun работает (см. tun_other.go).
 var tunUnsupported error
 
-// tunFiles — на Linux рядом с tt ничего не нужно: TUN даёт ядро
+// tunFiles — на Linux рядом с qwdtt-cli ничего не нужно: TUN даёт ядро
 // (/dev/net/tun).
 var tunFiles []string
 
 // minMTU6 — наименьший MTU, при котором ядро держит IPv6 на интерфейсе
-// (RFC 8200); с меньшим маршрут через tt для IPv6 не поставить.
+// (RFC 8200); с меньшим маршрут через qwdtt-cli для IPv6 не поставить.
 const minMTU6 = 1280
 
 // tunLockName — абстрактный unix-сокет одного адаптера на машину: файла не
 // оставляет и умирает вместе с процессом, так что упавший запуск следующему
 // не мешает. Абстрактные имена у каждого сетевого пространства свои, как и
-// имена интерфейсов: tt в контейнере с хостовым не конфликтует.
-const tunLockName = "@qwdtt-cli-tun"
+// имена интерфейсов: qwdtt-cli в контейнере с хостовым не конфликтует.
+const tunLockName = "@" + app.Name + "-tun"
 
 // openTunAdapter создаёт адаптер и задаёт ему адреса, MTU и DNS из конфига;
 // перенастройку и маршруты делает вызывающий (configure, addRoutes,
@@ -41,7 +42,7 @@ const tunLockName = "@qwdtt-cli-tun"
 // TUN не постоянный: интерфейс живёт, пока открыт его дескриптор, и после
 // падения процесса исчезает вместе с адресами и маршрутами (plan-e4.md,
 // врезка N1, п. 7). Поэтому чужой интерфейс с тем же именем — не остаток
-// прошлого tt, а чей-то ещё (например, wg-quick up tt), и он не удаляется,
+// прошлого qwdtt-cli, а чей-то ещё (например, wg-quick up qwdtt-cli), и он не удаляется,
 // а называется в ошибке.
 func openTunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (*tunAdapter, error) {
 	unlock, err := acquireTunLock()
@@ -72,7 +73,7 @@ func openTunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (*tu
 	}
 	if exists {
 		release()
-		return nil, fmt.Errorf("адаптер %q: в системе уже есть интерфейс с этим именем (тип %s), и создал его не tt; "+
+		return nil, fmt.Errorf("адаптер %q: в системе уже есть интерфейс с этим именем (тип %s), и создал его не qwdtt-cli; "+
 			"если он не нужен, удалите его: sudo ip link del %s", name, kind, name)
 	}
 
@@ -109,7 +110,7 @@ func openTunAdapter(name string, conf *WGConfig, logf func(string, ...any)) (*tu
 			return fmt.Errorf("адаптер %q: %w", name, err)
 		}
 		if len(servers) == 0 {
-			logf("[TUN] сервер не выдал DNS — DNS системы tt не трогает")
+			logf("[TUN] сервер не выдал DNS — DNS системы qwdtt-cli не трогает")
 		} else {
 			logf("[TUN] DNS системы (%s): %v", dns.Method(), servers)
 		}
@@ -170,10 +171,10 @@ func ipv4Only(routes []netip.Prefix) []netip.Prefix {
 
 // acquireTunLock занимает абстрактный сокет одного адаптера на машину
 // и возвращает функцию, которая его отпустит. Занят другим процессом —
-// значит, на машине уже работает tt с datapath tun.
+// значит, на машине уже работает qwdtt-cli с datapath tun.
 //
 // Внутри процесса захваты считаются, как на Windows: CLI держит сокет весь
-// tt connect (Tun.Reserve), а первый Start берёт его ещё раз.
+// qwdtt-cli connect (Tun.Reserve), а первый Start берёт его ещё раз.
 func acquireTunLock() (release func(), err error) {
 	tunLock.mu.Lock()
 	defer tunLock.mu.Unlock()

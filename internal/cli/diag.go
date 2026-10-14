@@ -1,4 +1,4 @@
-// diag.go — команды tt ping и tt hashes: две проверки, которые делаются
+// diag.go — команды qwdtt-cli ping и qwdtt-cli hashes: две проверки, которые делаются
 // до того, как поднимать туннель.
 //
 // Флаги и разбор аргументов — задача G1. Здесь (задача G3) команды собраны
@@ -245,7 +245,7 @@ func (plan *diagPlan) hashes(ctx context.Context, e *env, verbose bool) error {
 	n := int(good.Load())
 	out.line("годных хешей %d из %d", n, len(cfg.Hashes))
 	if n == 0 {
-		return errors.New("ни один хеш звонка не годен; заведите новые: tt profile set " +
+		return errors.New("ни один хеш звонка не годен; заведите новые: qwdtt-cli profile set " +
 			plan.profile.Name + " -hashes")
 	}
 	return nil

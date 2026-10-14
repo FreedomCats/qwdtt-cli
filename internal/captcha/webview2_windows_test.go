@@ -24,7 +24,7 @@ import (
 // Окну нужен рабочий стол, а WebView2 Runtime на машине сборки может и не
 // стоять, поэтому стенд включается руками:
 //
-//	TT_WEBVIEW2=1 go test ./internal/captcha -run WebView2 -v
+//	QWDTT_WEBVIEW2=1 go test ./internal/captcha -run WebView2 -v
 //
 // Он проверяет всё, кроме самой VK: окно, Bind и перехватчик на настоящем
 // движке, оба пути страницы (fetch и XMLHttpRequest), слайдер, отказ VK,
@@ -43,7 +43,7 @@ func stand(t *testing.T) *httptest.Server {
 func standHandler() http.Handler {
 	page := func(script string) string {
 		return `<!doctype html><meta charset="utf-8"><title>стенд</title>` +
-			`<p>Стенд капчи tt</p><script>` + script + `</script>`
+			`<p>Стенд капчи qwdtt-cli</p><script>` + script + `</script>`
 	}
 	check := `/method/captchaNotRobot.check`
 
@@ -82,8 +82,8 @@ func standHandler() http.Handler {
 
 func newStandSolver(t *testing.T) *WebView2 {
 	t.Helper()
-	if os.Getenv("TT_WEBVIEW2") == "" {
-		t.Skip("стенд окна капчи включается переменной TT_WEBVIEW2=1")
+	if os.Getenv("QWDTT_WEBVIEW2") == "" {
+		t.Skip("стенд окна капчи включается переменной QWDTT_WEBVIEW2=1")
 	}
 	s, err := NewWebView2(WebView2Options{Out: io.Discard})
 	if err != nil {
@@ -210,12 +210,12 @@ func TestWindowTitle(t *testing.T) {
 	if got := windowTitle(Request{Deadline: deadline}); got != "Капча VK — ответить до 14:05:09" {
 		t.Errorf("заголовок %q", got)
 	}
-	if got := windowTitle(Request{}); got != "Капча VK — tt" {
+	if got := windowTitle(Request{}); got != "Капча VK — qwdtt-cli" {
 		t.Errorf("заголовок без срока %q", got)
 	}
 }
 
-// Сквозной путь целиком, как в tt connect: событие ядра → диспетчер → окно →
+// Сквозной путь целиком, как в qwdtt-cli connect: событие ядра → диспетчер → окно →
 // токен в канале ядра. Консоль не участвует.
 func TestWebView2ThroughDispatcher(t *testing.T) {
 	s := newStandSolver(t)
@@ -231,7 +231,7 @@ func TestWebView2ThroughDispatcher(t *testing.T) {
 	}
 }
 
-// Окно через прокси tt (plan-e3.md, W2): страница грузится только через
+// Окно через прокси qwdtt-cli (plan-e3.md, W2): страница грузится только через
 // него. Диалер уводит id.vk.com:443 на стенд с TLS — токен со стенда
 // значит, что окно ходило через прокси, а не к настоящей VK. Сертификат
 // стенда браузеру разрешается своим аргументом в той же переменной, что и

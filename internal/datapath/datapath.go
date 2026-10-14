@@ -99,11 +99,11 @@ type Requirements struct {
 	Warning string
 }
 
-// DNSGuard — защита от утечки DNS, общая на весь tt connect (на Windows —
+// DNSGuard — защита от утечки DNS, общая на весь qwdtt-cli connect (на Windows —
 // winsys.DNSGuard, на Linux — linuxsys.DNSGuard). Datapath включает её,
 // когда туннель поднят, и выключает в Close; оба вызова безвредны повторно.
 type DNSGuard interface {
-	// Enable пускает DNS только к резолверам dns (и запросы самого tt).
+	// Enable пускает DNS только к резолверам dns (и запросы самого qwdtt-cli).
 	Enable(dns []netip.Addr) error
 	// Disable снимает запрет.
 	Disable() error
@@ -138,7 +138,7 @@ type Piped interface {
 }
 
 // Persistent — необязательная часть Datapath: реализация, которая живёт весь
-// tt connect, а не одну попытку (plan-e2.md, решение 3). У tun это
+// qwdtt-cli connect, а не одну попытку (plan-e2.md, решение 3). У tun это
 // адаптер: пересоздавать его на каждое переподключение значило бы, что он
 // исчезает и появляется заново, а Windows заводит «Сеть 2», «Сеть 3».
 //

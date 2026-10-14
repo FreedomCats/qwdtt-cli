@@ -146,7 +146,7 @@ func (e *env) terminalFD() (int, bool) {
 // stdoutTerminal говорит, терминал ли stdout, и отдаёт функцию, которая
 // возвращает его ширину в знаках (ноль — узнать не удалось). Спрашивать
 // ширину каждый раз, а не один, нужно потому, что окно растягивают по ходу
-// работы. Для статусной строки `tt connect` (output.go).
+// работы. Для статусной строки `qwdtt-cli connect` (output.go).
 func (e *env) stdoutTerminal() (width func() int, ok bool) {
 	fd, ok := fileTerminal(e.stdout)
 	if !ok {

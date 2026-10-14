@@ -10,4 +10,4 @@ func isElevated() bool {
 }
 
 // elevationHint — что сказать, когда прав не хватает.
-const elevationHint = "нужны права root: запустите tt через sudo"
+const elevationHint = "нужны права root: запустите qwdtt-cli через sudo"

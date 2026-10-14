@@ -233,7 +233,7 @@ const (
 	HashCheckError   HashCheckStatus = "error"
 )
 
-// EventHashCheck — шаг команды `tt hashes`. Заменяет пару маркеров
+// EventHashCheck — шаг команды `qwdtt-cli hashes`. Заменяет пару маркеров
 // HASH_CHECK_START и HASH_CHECK: началу проверки соответствует HashCheckRunning.
 type EventHashCheck struct {
 	// Index — номер хеша, начиная с единицы; Total — сколько их всего.
@@ -282,7 +282,7 @@ func (EventHashFailed) isCoreEvent() {}
 
 // emitHashFailed классифицирует ошибку и отправляет событие.
 //
-// Классификация — та же classifyHashCheckError, которой пользуется `tt hashes`:
+// Классификация — та же classifyHashCheckError, которой пользуется `qwdtt-cli hashes`:
 // отличать «звонок закрыт» от «сеть отвалилась» нужно одинаково в обоих местах,
 // иначе одна и та же ошибка значила бы в команде одно, а в туннеле другое.
 func emitHashFailed(hash string, group int, err error) {
@@ -297,7 +297,7 @@ func emitHashFailed(hash string, group int, err error) {
 
 // ───────────────────────────── ping ─────────────────────────────
 
-// EventPing — итог команды `tt ping`. Заменяет маркеры PING_RESULT и PING_ERROR.
+// EventPing — итог команды `qwdtt-cli ping`. Заменяет маркеры PING_RESULT и PING_ERROR.
 // При Err != nil значение RTT не определено.
 type EventPing struct {
 	RTT time.Duration

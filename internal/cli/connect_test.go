@@ -258,7 +258,7 @@ func TestPlanConnectTun(t *testing.T) {
 	if plan.stage != core.StageVPN {
 		t.Errorf("шаг datapath = %q, ожидался vpn", plan.stage)
 	}
-	if !strings.Contains(plan.describe, "адаптер tt") || !strings.Contains(plan.describe, "весь трафик") {
+	if !strings.Contains(plan.describe, "адаптер qwdtt-cli") || !strings.Contains(plan.describe, "весь трафик") {
 		t.Errorf("описание datapath не про свой адаптер: %q", plan.describe)
 	}
 	if _, ok := plan.datapath(nil).(*datapath.Tun); !ok {
@@ -309,7 +309,7 @@ func TestRequirementsErrorUnsupported(t *testing.T) {
 	why := errors.New("datapath tun поддерживается только на Windows")
 	req := datapath.Requirements{Unsupported: why, Admin: true, Files: []string{"wintun.dll"}}
 
-	err := requirementsError("адаптер tt", req)
+	err := requirementsError("адаптер qwdtt-cli", req)
 	if !errors.Is(err, why) {
 		t.Fatalf("ошибка %v, ждали обёрнутую причину", err)
 	}
@@ -367,7 +367,7 @@ func TestPlanConnectMissingSecret(t *testing.T) {
 		t.Fatal("план собрался без пароля")
 	}
 	msg := err.Error()
-	for _, want := range []string{"пароль", "tt profile set home -password"} {
+	for _, want := range []string{"пароль", "qwdtt-cli profile set home -password"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("в ошибке нет %q: %v", want, err)
 		}
@@ -388,7 +388,7 @@ func TestConnectWithoutProfilesFile(t *testing.T) {
 	if stdout != "" {
 		t.Errorf("ошибка ушла в stdout: %q", stdout)
 	}
-	if !strings.Contains(stderr, "tt profile set") {
+	if !strings.Contains(stderr, "qwdtt-cli profile set") {
 		t.Errorf("в ошибке нет подсказки завести профиль:\n%s", stderr)
 	}
 }

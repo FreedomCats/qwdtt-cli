@@ -74,7 +74,7 @@ var lineRank = map[State]int{
 // регрессий съедал бы «креды получены» как шаг назад.
 
 // stateLabels — названия состояний для вывода. Состояние видно только в выводе
-// самого tt connect, отдельного канала для опроса извне нет (§07).
+// самого qwdtt-cli connect, отдельного канала для опроса извне нет (§07).
 var stateLabels = map[State]string{
 	StateIdle:         "не подключено",
 	StateResolving:    "проверка DNS",

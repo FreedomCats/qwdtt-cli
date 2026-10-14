@@ -19,7 +19,7 @@ func TestInvokerEnv(t *testing.T) {
 	environ := []string{
 		"HOME=/root", "USER=root", "LOGNAME=root",
 		"DISPLAY=:0", "XAUTHORITY=/home/user/.Xauthority", "PATH=/usr/bin",
-		"SUDO_USER=user", "SUDO_UID=4242", "SUDO_GID=4343", "SUDO_COMMAND=/usr/bin/tt",
+		"SUDO_USER=user", "SUDO_UID=4242", "SUDO_GID=4343", "SUDO_COMMAND=/usr/bin/qwdtt-cli",
 	}
 	present := map[string]bool{"/run/user/4242": true, "/run/user/4242/bus": true}
 
@@ -47,7 +47,7 @@ func TestInvokerEnvWithoutSession(t *testing.T) {
 }
 
 // Программа, открывающая ссылку, — в своей группе процессов: Ctrl+C в
-// терминале tt до неё не доходит.
+// терминале qwdtt-cli до неё не доходит.
 func TestPrepareCommandOwnProcessGroup(t *testing.T) {
 	cmd := exec.Command("sleep", "5")
 	if err := prepareCommand(cmd); err != nil {

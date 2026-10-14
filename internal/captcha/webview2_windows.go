@@ -37,6 +37,8 @@ import (
 	webview2 "github.com/jchv/go-webview2"
 	"github.com/jchv/go-webview2/webviewloader"
 	"golang.org/x/sys/windows"
+
+	"github.com/FreedomCats/qwdtt-cli/internal/app"
 )
 
 // bindingName — глобальная функция, через которую перехватчик отдаёт
@@ -44,7 +46,7 @@ import (
 const bindingName = "__ttCaptchaResult"
 
 // profilePrefix — начало имени временного каталога профиля WebView2 в %TEMP%.
-const profilePrefix = "tt-captcha-"
+const profilePrefix = app.Name + "-captcha-"
 
 // staleProfileAge — каталог профиля старше этого считается брошенным и
 // убирается при следующем запуске. Окно капчи живёт не дольше двух минут,
@@ -58,8 +60,8 @@ type WebView2Options struct {
 	Out io.Writer
 
 	// Dial, если задан, — окно ходит в сеть только через локальный прокси
-	// tt (proxy.go), а он соединяется этой функцией. Так при kill-switch
-	// страница грузится сокетами tt, которые он пропускает (plan-e3.md, W2).
+	// qwdtt-cli (proxy.go), а он соединяется этой функцией. Так при kill-switch
+	// страница грузится сокетами qwdtt-cli, которые он пропускает (plan-e3.md, W2).
 	// Прокси не поднялся — Solve отказывает с ErrProxy, окна не открыв.
 	Dial DialFunc
 
@@ -131,7 +133,7 @@ func (s *WebView2) Solve(ctx context.Context, req Request) (string, error) {
 			return "", err
 		}
 		if s.opts.Logf != nil {
-			s.opts.Logf("[CAPTCHA] окно капчи идёт в сеть через прокси tt %s", proxy.Addr())
+			s.opts.Logf("[CAPTCHA] окно капчи идёт в сеть через прокси qwdtt-cli %s", proxy.Addr())
 		}
 	}
 
@@ -182,7 +184,7 @@ func (s *WebView2) Solve(ctx context.Context, req Request) (string, error) {
 			},
 		})
 		// Браузер окна к этому моменту запущен со своей строкой: переменная
-		// больше не нужна, и детям tt её видеть незачем.
+		// больше не нужна, и детям qwdtt-cli её видеть незачем.
 		if restoreArgs != nil {
 			restoreArgs()
 		}
@@ -332,7 +334,7 @@ func initCOM() error {
 // отсчёт: так он верен, не перерисовываясь.
 func windowTitle(req Request) string {
 	if req.Deadline.IsZero() {
-		return "Капча VK — tt"
+		return "Капча VK — qwdtt-cli"
 	}
 	return "Капча VK — ответить до " + req.Deadline.Format("15:04:05")
 }

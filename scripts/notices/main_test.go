@@ -131,7 +131,7 @@ func TestRenderLineEndings(t *testing.T) {
 	}
 }
 
-// TestRealModule собирает уведомления по настоящему ./cmd/tt: у каждой
+// TestRealModule собирает уведомления по настоящему ./cmd/qwdtt-cli: у каждой
 // зависимости бинаря должна найтись распознанная лицензия.
 func TestRealModule(t *testing.T) {
 	if testing.Short() {

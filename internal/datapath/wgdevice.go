@@ -9,10 +9,10 @@ import (
 	"golang.zx2c4.com/wireguard/tun"
 )
 
-// wgDebugEnv — переменная окружения: TT_WG_DEBUG=1 пишет в лог подробные
+// wgDebugEnv — переменная окружения: QWDTT_WG_DEBUG=1 пишет в лог подробные
 // строки wireguard-go (рукопожатия, keepalive, ключи сессий). Для разбора
 // живых прогонов; по умолчанию — только ошибки.
-const wgDebugEnv = "TT_WG_DEBUG"
+const wgDebugEnv = "QWDTT_WG_DEBUG"
 
 // startDevice поднимает wireguard-go поверх готового TUN по конфигу сервера.
 //
@@ -29,7 +29,7 @@ const wgDebugEnv = "TT_WG_DEBUG"
 // Перенастройка живого устройства — reconfigureDevice.
 func startDevice(tunDev tun.Device, bind conn.Bind, conf *WGConfig, tag string, logf func(format string, args ...any)) (*device.Device, error) {
 	// Свой Logger вместо device.NewLogger: тот пишет прямо в stdout, а вывод
-	// принадлежит CLI. Verbosef — DiscardLogf (без TT_WG_DEBUG): это тот же
+	// принадлежит CLI. Verbosef — DiscardLogf (без QWDTT_WG_DEBUG): это тот же
 	// уровень, что был в ядре (LogLevelError), и обе функции обязаны быть
 	// непустыми — wireguard-go
 	// зовёт их без проверки на nil, в том числе из defer своих горутин.

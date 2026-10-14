@@ -24,7 +24,7 @@ var dnsPresets = []string{
 }
 
 // Validate проверяет файл целиком. Вызывается при разборе; отдельно нужен тем,
-// кто собрал File в памяти — например, `tt profile set` перед записью.
+// кто собрал File в памяти — например, `qwdtt-cli profile set` перед записью.
 func (f *File) Validate() error {
 	problems := validateFile(f)
 	if len(problems) == 0 {
@@ -34,7 +34,7 @@ func (f *File) Validate() error {
 }
 
 // Validate проверяет один профиль — тот же набор правил, что и у файла.
-// Нужен `tt connect`: флаги командной строки перекрывают поля профиля, и
+// Нужен `qwdtt-cli connect`: флаги командной строки перекрывают поля профиля, и
 // собранное из двух источников значение обязано пройти ту же проверку, что
 // и записанное в файл.
 func (p *Profile) Validate() error {
@@ -116,7 +116,7 @@ func PeerWithPort(peer string) string {
 
 // profileNameProblem бережёт имя профиля от того, что тяжело набрать в командной
 // строке: пробелов, кавычек, кириллицы в неожиданной раскладке. Имя — это
-// аргумент `tt connect <имя>`, а не описание.
+// аргумент `qwdtt-cli connect <имя>`, а не описание.
 func profileNameProblem(name string) string {
 	if name == "" {
 		return "пустое имя профиля: секция называется [profile.<имя>]"
@@ -186,7 +186,7 @@ func secretRefProblems(key, ref, what string) []string {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return []string{fmt.Sprintf(
-			"не задан %s: ссылка на %s; секреты в файле не хранятся, ссылку записывает `tt profile set`", key, what)}
+			"не задан %s: ссылка на %s; секреты в файле не хранятся, ссылку записывает `qwdtt-cli profile set`", key, what)}
 	}
 
 	scheme, id, found := strings.Cut(ref, ":")

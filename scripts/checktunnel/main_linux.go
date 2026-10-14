@@ -1,25 +1,25 @@
 //go:build linux
 
 // Команда checktunnel печатает снимок состояния системы для живой проверки
-// tt (plan-e4.md, R1 и R2): что tt ставит в систему и что должно уйти после
+// qwdtt-cli (plan-e4.md, R1 и R2): что qwdtt-cli ставит в систему и что должно уйти после
 // него.
 //
-//	go run ./scripts/checktunnel [-label "до запуска"] [-name tt] [-timeout 10s] [-offline]
+//	go run ./scripts/checktunnel [-label "до запуска"] [-name qwdtt-cli] [-timeout 10s] [-offline]
 //
-// Вывод до запуска tt, во время и после — это и есть отчёт сценария.
+// Вывод до запуска qwdtt-cli, во время и после — это и есть отчёт сценария.
 // Разделы на Linux:
 //
-//   - процессы tt и блокировка адаптера (абстрактный сокет);
+//   - процессы qwdtt-cli и блокировка адаптера (абстрактный сокет);
 //   - интерфейсы: поднятые с адресами (кроме lo) и адаптер туннеля в любом
 //     состоянии — тип, MTU, адреса;
 //   - маршруты /0 и /1 обоих семейств во всех таблицах, кроме local;
-//   - правила маршрутизации (ip rule): tt своих не ставит, нестандартные —
+//   - правила маршрутизации (ip rule): qwdtt-cli своих не ставит, нестандартные —
 //     чужие;
 //   - интерфейс для сокетов ядра — тот, что выбрал бы netguard;
 //   - внешний адрес и резолвер — как на Windows (common.go);
-//   - nftables: все таблицы, подробно — inet tt (защита DNS) и inet
-//     tt-outage (scripts/outage);
-//   - DNS системы: resolv.conf, способ, которым tt задал бы DNS туннеля,
+//   - nftables: все таблицы, подробно — inet qwdtt-cli (защита DNS) и inet
+//     qwdtt-cli-outage (scripts/outage);
+//   - DNS системы: resolv.conf, способ, которым qwdtt-cli задал бы DNS туннеля,
 //     записи resolvconf, копия перезаписанного файла;
 //   - rp_filter и строгий обратный фильтр IPv6 firewalld.
 //
@@ -48,19 +48,20 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 
+	"github.com/FreedomCats/qwdtt-cli/internal/app"
 	"github.com/FreedomCats/qwdtt-cli/internal/linuxsys"
 )
 
 // tunLock — абстрактный сокет блокировки адаптера
 // (internal/datapath/tun_linux.go, tunLockName).
-const tunLock = "@qwdtt-cli-tun"
+const tunLock = "@" + app.Name + "-tun"
 
-// fileMarker — начало первой строки resolv.conf, написанного tt
+// fileMarker — начало первой строки resolv.conf, написанного qwdtt-cli
 // (internal/linuxsys/dns_linux.go).
-const fileMarker = "# qwdtt-cli: DNS туннеля"
+const fileMarker = "# " + app.Name + ": DNS туннеля"
 
 // outageTable — таблица обрыва scripts/outage.
-const outageTable = "tt-outage"
+const outageTable = app.Name + "-outage"
 
 // Корни /proc, /etc и /run; подменяются в тестах.
 var (
@@ -79,7 +80,7 @@ type options struct {
 func main() {
 	var o options
 	flag.StringVar(&o.label, "label", "", "подпись снимка (например, «до запуска»)")
-	flag.StringVar(&o.name, "name", "tt", "имя адаптера туннеля")
+	flag.StringVar(&o.name, "name", app.Name, "имя адаптера туннеля")
 	flag.DurationVar(&o.timeout, "timeout", 10*time.Second, "таймаут каждого сетевого запроса")
 	flag.BoolVar(&o.offline, "offline", false, "не проверять внешний адрес и резолвер")
 	flag.Parse()
@@ -95,7 +96,7 @@ func main() {
 func run(w io.Writer, o options) {
 	header(w, o.label)
 
-	section(w, "Процессы tt", func(w io.Writer) error { return printProcesses(w) })
+	section(w, "Процессы qwdtt-cli", func(w io.Writer) error { return printProcesses(w) })
 	links, linksErr := netlink.LinkList()
 	section(w, "Интерфейсы", func(w io.Writer) error {
 		if linksErr != nil {
@@ -123,7 +124,7 @@ func run(w io.Writer, o options) {
 	})
 }
 
-// printProcesses — процессы с именем tt (comm) и блокировка адаптера.
+// printProcesses — процессы с именем qwdtt-cli (comm) и блокировка адаптера.
 func printProcesses(w io.Writer) error {
 	entries, err := os.ReadDir(procRoot)
 	if err != nil {
@@ -136,7 +137,7 @@ func printProcesses(w io.Writer) error {
 		}
 		dir := filepath.Join(procRoot, e.Name())
 		comm, err := os.ReadFile(filepath.Join(dir, "comm"))
-		if err != nil || strings.TrimSpace(string(comm)) != "tt" {
+		if err != nil || strings.TrimSpace(string(comm)) != app.Name {
 			continue
 		}
 		n++
@@ -341,7 +342,7 @@ func tableSuffix(table int) string {
 	return fmt.Sprintf(", таблица %d", table)
 }
 
-// printRules — правила маршрутизации обоих семейств. tt своих не ставит
+// printRules — правила маршрутизации обоих семейств. qwdtt-cli своих не ставит
 // (привязка сокетов, а не fwmark: plan-e4.md, решение 1).
 func printRules(w io.Writer) error {
 	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
@@ -474,7 +475,7 @@ func printBypass(w io.Writer, links []netlink.Link, name string) {
 	}
 }
 
-// printNftables — все таблицы nftables; таблицы tt и обрыва — с цепочками
+// printNftables — все таблицы nftables; таблицы qwdtt-cli и обрыва — с цепочками
 // и числом правил.
 func printNftables(w io.Writer) error {
 	conn, err := nftables.New()
@@ -499,13 +500,13 @@ func printNftables(w io.Writer) error {
 	var names []string
 	for _, t := range tables {
 		names = append(names, tableTitle(t))
-		if t.Family == nftables.TableFamilyINet && (t.Name == "tt" || t.Name == outageTable) {
+		if t.Family == nftables.TableFamilyINet && (t.Name == app.Name || t.Name == outageTable) {
 			ours = append(ours, t)
 		}
 	}
 	fmt.Fprintf(w, "   таблицы: %s\n", strings.Join(names, ", "))
 	if len(ours) == 0 {
-		fmt.Fprintln(w, "   таблиц inet tt и inet "+outageTable+" нет")
+		fmt.Fprintln(w, "   таблиц inet qwdtt-cli и inet "+outageTable+" нет")
 		return nil
 	}
 	chains, err := conn.ListChains()
@@ -585,7 +586,7 @@ func chainHook(c *nftables.Chain) string {
 	return s
 }
 
-// printDNS — resolv.conf, способ tt и следы tt: запись resolvconf и копия
+// printDNS — resolv.conf, способ qwdtt-cli и следы qwdtt-cli: запись resolvconf и копия
 // перезаписанного файла.
 func printDNS(w io.Writer, name string) {
 	path := filepath.Join(etcRoot, "resolv.conf")
@@ -608,11 +609,11 @@ func printDNS(w io.Writer, name string) {
 		fmt.Fprintf(w, "      nameserver: %s\n", listOrNone(servers))
 		fmt.Fprintf(w, "      доменов search: %d\n", search)
 		if strings.HasPrefix(first, fileMarker) {
-			fmt.Fprintln(w, "      файл написал tt")
+			fmt.Fprintln(w, "      файл написал qwdtt-cli")
 		}
 	}
 
-	backup := path + ".tt-backup"
+	backup := path + "." + app.Name + "-backup"
 	if _, err := os.Stat(backup); err == nil {
 		fmt.Fprintf(w, "   копия %s: есть\n", backup)
 	} else {
@@ -620,9 +621,9 @@ func printDNS(w io.Writer, name string) {
 	}
 
 	if s, err := linuxsys.DetectSystemDNS(name); err != nil {
-		fmt.Fprintf(w, "   способ tt: ошибка: %v\n", err)
+		fmt.Fprintf(w, "   способ qwdtt-cli: ошибка: %v\n", err)
 	} else {
-		fmt.Fprintf(w, "   способ tt: %s\n", s)
+		fmt.Fprintf(w, "   способ qwdtt-cli: %s\n", s)
 		if s.Warning() != "" {
 			fmt.Fprintf(w, "      внимание: %s\n", s.Warning())
 		}
@@ -655,7 +656,7 @@ func resolvConfSummary(conf []byte) (first string, servers []string, search int)
 }
 
 // printResolvconfRecords — записи resolvconf (Debian держит их в
-// interface, openresolv — в interfaces); у записи tt — её серверы.
+// interface, openresolv — в interfaces); у записи qwdtt-cli — её серверы.
 func printResolvconfRecords(w io.Writer, record string) {
 	for _, dir := range []string{"interface", "interfaces"} {
 		full := filepath.Join(runRoot, "resolvconf", dir)
@@ -717,7 +718,7 @@ func printReversePath(w io.Writer, links []netlink.Link, name string) {
 	case err != nil:
 		fmt.Fprintf(w, "   firewalld: ошибка: %v\n", err)
 	case strict:
-		fmt.Fprintln(w, "   firewalld: строгий обратный фильтр IPv6 — сокеты ядра tt только IPv4")
+		fmt.Fprintln(w, "   firewalld: строгий обратный фильтр IPv6 — сокеты ядра qwdtt-cli только IPv4")
 	default:
 		fmt.Fprintln(w, "   firewalld: строгого обратного фильтра IPv6 нет")
 	}

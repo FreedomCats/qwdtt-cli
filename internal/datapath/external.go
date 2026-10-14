@@ -12,11 +12,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/FreedomCats/qwdtt-cli/internal/app"
 )
 
 // DefaultTunnelName — имя туннеля у штатного WireGuard и файла конфига
-// (tt.conf → служба WireGuardTunnel$tt, адаптер «tt»).
-const DefaultTunnelName = "tt"
+// (qwdtt-cli.conf → служба WireGuardTunnel$qwdtt-cli, адаптер «qwdtt-cli»).
+const DefaultTunnelName = app.Name
 
 // DefaultProgramTimeout — сколько ждать wireguard.exe на установку и снятие
 // службы. Штатно это секунды; дольше значит, что программа встала (например,
@@ -212,7 +214,7 @@ func (e *External) Start(ctx context.Context, conf *WGConfig) error {
 		e.opts.Name, conf.Addresses, conf.Endpoint, strings.Join(allowed, ","))
 	if split {
 		e.logf("[WG-EXT] маршрут по умолчанию в AllowedIPs записан двумя половинами /1: " +
-			"с /0 WireGuard включил бы свой kill-switch и отрезал соединения tt с VK и TURN")
+			"с /0 WireGuard включил бы свой kill-switch и отрезал соединения qwdtt-cli с VK и TURN")
 	}
 	if blocked6 {
 		e.logf("[WG-EXT] сервер не выдал маршрута IPv6: в AllowedIPs дописаны ::/1, 8000::/1 — " +
@@ -235,7 +237,7 @@ func (e *External) Start(ctx context.Context, conf *WGConfig) error {
 // Close снимает службу туннеля и удаляет файл конфига. Безопасен до Start
 // и при повторном вызове: супервизор зовёт его из defer.
 //
-// Служба обязана быть снята, иначе после выхода tt в системе останется
+// Служба обязана быть снята, иначе после выхода qwdtt-cli в системе останется
 // туннель в никуда; поэтому снятие идёт со своим сроком (см. uninstall).
 //
 // Снятие делается один раз, а все вызовы ждут его конца и возвращают его
@@ -314,7 +316,7 @@ func (e *External) dir() string {
 		return e.opts.Dir
 	}
 	if base, err := os.UserConfigDir(); err == nil {
-		return filepath.Join(base, "qwdtt-cli")
+		return filepath.Join(base, app.Name)
 	}
 	return os.TempDir()
 }
@@ -394,7 +396,7 @@ func (e *External) logf(format string, args ...any) {
 // Зачем: WireGuard для Windows при одном пире с префиксом /0 в AllowedIPs
 // включает свой kill-switch (wireguard/windows v1.1.1,
 // tunnel/addressconfig.go:165, enableFirewall) и режет всё мимо туннеля,
-// в том числе сокеты tt, которые netguard отправил через физический
+// в том числе сокеты qwdtt-cli, которые netguard отправил через физический
 // интерфейс. Половины покрывают то же пространство и выигрывают у маршрута
 // по умолчанию длиной префикса, а kill-switch не включают.
 //

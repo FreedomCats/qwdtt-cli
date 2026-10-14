@@ -10,22 +10,24 @@ import (
 	"github.com/google/nftables/binaryutil"
 	"github.com/google/nftables/expr"
 	"golang.org/x/sys/unix"
+
+	"github.com/FreedomCats/qwdtt-cli/internal/app"
 )
 
-// dnsGuardTable — таблица защиты DNS в nftables (`nft list table inet tt`).
-const dnsGuardTable = "tt"
+// dnsGuardTable — таблица защиты DNS в nftables (`nft list table inet qwdtt-cli`).
+const dnsGuardTable = app.Name
 
 // DNSGuard — защита от утечки DNS на Linux (plan-e4.md, D1), аналог
 // winsys.DNSGuard: правила nftables запрещают обращения на порт 53, UDP и
-// TCP, ко всем адресам, кроме резолверов туннеля, loopback и сокетов tt.
+// TCP, ко всем адресам, кроме резолверов туннеля, loopback и сокетов qwdtt-cli.
 //
-// Таблица inet tt создаётся с флагом owner: ядро держит её, пока открыт
+// Таблица inet qwdtt-cli создаётся с флагом owner: ядро держит её, пока открыт
 // netlink-сокет, который её создал, и удаляет вместе с ним — в том числе
-// когда tt падает. Уборка при запуске поэтому не нужна. Менять таблицу с
+// когда qwdtt-cli падает. Уборка при запуске поэтому не нужна. Менять таблицу с
 // owner может только этот сокет, так что всё идёт через одно долгоживущее
 // соединение (nftables.AsLasting).
 //
-// Сокеты ядра tt опознаются по метке SO_MARK (netguard.SocketMark): фильтр
+// Сокеты ядра qwdtt-cli опознаются по метке SO_MARK (netguard.SocketMark): фильтр
 // по uid пропустил бы под sudo все процессы root. Метка только опознаёт —
 // маршрутизации по ней нет.
 //
@@ -56,8 +58,8 @@ const (
 	guardLockdown                   // закрыто: kill-switch (Lockdown)
 )
 
-// OpenDNSGuard создаёт таблицу inet tt с пустыми цепочками; правил ещё
-// нет. mark — метка сокетов tt, им DNS разрешён к любым адресам. Нужны
+// OpenDNSGuard создаёт таблицу inet qwdtt-cli с пустыми цепочками; правил ещё
+// нет. mark — метка сокетов qwdtt-cli, им DNS разрешён к любым адресам. Нужны
 // CAP_NET_ADMIN и ядро 5.12 или новее (флаг owner).
 func OpenDNSGuard(mark uint32) (*DNSGuard, error) {
 	conn, err := nftables.New(nftables.AsLasting())
@@ -100,18 +102,18 @@ func OpenDNSGuard(mark uint32) (*DNSGuard, error) {
 func dnsGuardTableError(err error) error {
 	switch {
 	case errors.Is(err, unix.EEXIST):
-		return fmt.Errorf("nftables: таблица inet %s уже есть, и создал её не tt; "+
+		return fmt.Errorf("nftables: таблица inet %s уже есть, и создал её не qwdtt-cli; "+
 			"если она не нужна, удалите её: sudo nft delete table inet %s", dnsGuardTable, dnsGuardTable)
 	case errors.Is(err, unix.EPERM):
 		if owner, ok := dnsGuardTableOwner(); ok {
 			return fmt.Errorf("nftables: таблицу inet %s держит другой процесс (netlink-порт %d, "+
-				"обычно это его pid) — похоже, уже работает другой tt", dnsGuardTable, owner)
+				"обычно это его pid) — похоже, уже работает другой qwdtt-cli", dnsGuardTable, owner)
 		}
 	}
 	return fmt.Errorf("nftables: таблица inet %s: %w", dnsGuardTable, err)
 }
 
-// dnsGuardTableOwner — владелец существующей таблицы inet tt, если она есть
+// dnsGuardTableOwner — владелец существующей таблицы inet qwdtt-cli, если она есть
 // и у неё есть владелец.
 func dnsGuardTableOwner() (uint32, bool) {
 	conn, err := nftables.New()
@@ -126,7 +128,7 @@ func dnsGuardTableOwner() (uint32, bool) {
 }
 
 // BlockIPv6 задаёт, закрывать ли при следующем Enable весь IPv6 системы,
-// кроме loopback и сокетов tt: туннель его не везёт (MTU < 1280, ядро
+// кроме loopback и сокетов qwdtt-cli: туннель его не везёт (MTU < 1280, ядро
 // снимает IPv6 с адаптера), и без запрета он шёл бы мимо туннеля.
 func (g *DNSGuard) BlockIPv6(block bool) {
 	g.mu.Lock()
@@ -208,7 +210,7 @@ func (g *DNSGuard) Close() error {
 // guardRule — одно правило защиты в виде, удобном для проверки; exprs
 // переводит его в выражения nftables. Условия складываются по «и».
 type guardRule struct {
-	mark     bool         // сокет tt: meta mark == метка
+	mark     bool         // сокет qwdtt-cli: meta mark == метка
 	loopback bool         // oifname "lo"
 	family   byte         // unix.NFPROTO_IPV4 или NFPROTO_IPV6; 0 — любое (при daddr обязательно)
 	daddr    netip.Prefix // адрес или подсеть назначения; пустой — любой
@@ -256,7 +258,7 @@ func dnsGuardRules(dns []netip.Addr, blockIPv6, forward bool) []guardRule {
 	return rules
 }
 
-// exprs — выражения nftables правила r; mark — метка сокетов tt.
+// exprs — выражения nftables правила r; mark — метка сокетов qwdtt-cli.
 func (r guardRule) exprs(mark uint32) []expr.Any {
 	var e []expr.Any
 	match := func(load expr.Any, data []byte) {

@@ -49,12 +49,12 @@ jobs:
 
       # В архиве — всё, что нужно для запуска у пользователя: без wintun.dll
       # не работает режим tun, без README не понять, с чего начать. Список
-      # тот же, что в build-release.ps1; выпал файл — релиза нет. tt.exe из
-      # распакованного zip запускается, у tt в tar.gz — право на исполнение.
+      # тот же, что в build-release.ps1; выпал файл — релиза нет. qwdtt-cli.exe из
+      # распакованного zip запускается, у qwdtt-cli в tar.gz — право на исполнение.
       - name: Состав архивов
         shell: pwsh
         run: |
-          $docs = 'THIRD_PARTY_NOTICES.txt', 'tt.example.toml', 'LICENSE', 'README.md'
+          $docs = 'THIRD_PARTY_NOTICES.txt', 'qwdtt-cli.example.toml', 'LICENSE', 'README.md'
           $failed = $false
           function Test-Files([string] $Archive, [string[]] $Got, [string[]] $Want) {
               $missing = $Want | Where-Object { $Got -notcontains $_ }
@@ -79,13 +79,13 @@ jobs:
                   $failed = $true
               }
               $names = @($entries | ForEach-Object { $_.Substring([Math]::Min($prefix.Length, $_.Length)) } | Where-Object { $_ })
-              Test-Files $zip.Name $names (@('tt.exe', 'wintun.dll', 'wintun-LICENSE.txt') + $docs)
+              Test-Files $zip.Name $names (@('qwdtt-cli.exe', 'wintun.dll', 'wintun-LICENSE.txt') + $docs)
 
               $unpacked = Join-Path $env:RUNNER_TEMP $zip.BaseName
               Expand-Archive -Force $zip.FullName $unpacked
-              & (Join-Path $unpacked $zip.BaseName 'tt.exe') version
+              & (Join-Path $unpacked $zip.BaseName 'qwdtt-cli.exe') version
               if ($LASTEXITCODE -ne 0) {
-                  Write-Host "::error::$($zip.Name) — tt.exe version завершился с кодом $LASTEXITCODE"
+                  Write-Host "::error::$($zip.Name) — qwdtt-cli.exe version завершился с кодом $LASTEXITCODE"
                   $failed = $true
               }
           }
@@ -97,9 +97,9 @@ jobs:
               $listing = & tar -tvzf $tgz.Name
               if ($LASTEXITCODE -ne 0) { throw "tar не прочитал $($tgz.Name)" }
               $names = @(& tar -tzf $tgz.Name | ForEach-Object { $_ -replace "^$([regex]::Escape($prefix))/", '' } | Where-Object { $_ })
-              Test-Files $tgz.Name $names (@('tt') + $docs)
-              if (-not ($listing | Where-Object { $_ -match '^-rwxr-xr-x' -and $_ -match "/tt$" })) {
-                  Write-Host "::error::$($tgz.Name) — у tt нет права на исполнение"
+              Test-Files $tgz.Name $names (@('qwdtt-cli') + $docs)
+              if (-not ($listing | Where-Object { $_ -match '^-rwxr-xr-x' -and $_ -match "/qwdtt-cli$" })) {
+                  Write-Host "::error::$($tgz.Name) — у qwdtt-cli нет права на исполнение"
                   $failed = $true
               }
           }

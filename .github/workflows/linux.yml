@@ -1,7 +1,7 @@
 # Сборка и тесты на Linux. Тесты идут от обычного пользователя: так их
 # запускает разработчик, и тест, который полез бы за правами (sudo), здесь
 # упадёт, а не пройдёт незаметно, как на раннере Windows с правами.
-# Тесты, которые меняют сеть (TT_TEST_NETNS), — отдельным заданием в
+# Тесты, которые меняют сеть (QWDTT_TEST_NETNS), — отдельным заданием в
 # контейнере: на самом раннере они перекладывали бы его маршрут по умолчанию.
 name: linux
 
@@ -74,8 +74,8 @@ jobs:
           set -o pipefail
           for pkg in linuxsys datapath; do
             docker run --rm --cap-add NET_ADMIN --device /dev/net/tun \
-              -e TT_TEST_NETNS=1 -v "$PWD/build/out":/tt:ro "$IMAGE" \
-              "/tt/$pkg.test" -test.count=1 -test.v | tee "build/out/$pkg.log"
+              -e QWDTT_TEST_NETNS=1 -v "$PWD/build/out":/qwdtt-cli:ro "$IMAGE" \
+              "/qwdtt-cli/$pkg.test" -test.count=1 -test.v | tee "build/out/$pkg.log"
             if grep -- '--- SKIP' "build/out/$pkg.log"; then
               echo "::error::$pkg: тесты пропущены"
               exit 1

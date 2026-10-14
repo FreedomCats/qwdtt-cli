@@ -1,6 +1,6 @@
-// menu.go — интерактивный режим: tt без аргументов в терминале (plan-e5.md).
+// menu.go — интерактивный режим: qwdtt-cli без аргументов в терминале (plan-e5.md).
 //
-// Большинству пользователей консольные команды сложны: на Windows tt
+// Большинству пользователей консольные команды сложны: на Windows qwdtt-cli
 // запускают двойным щелчком, и окно консоли — всё, что они видят. Меню ведёт
 // такого человека вопросами и само зовёт те же команды, что набираются руками:
 // подключение — runConnect, удаление — runProfileRm и так далее. Своей логики
@@ -30,8 +30,8 @@ func menuCommand() *command {
 		name:    "menu",
 		args:    "[флаги]",
 		summary: "меню: подключение и профили вопросами, без флагов",
-		description: `То же меню открывается, если запустить tt без аргументов в терминале —
-например, двойным щелчком по tt.exe. Команда нужна там, где запуск без
+		description: `То же меню открывается, если запустить qwdtt-cli без аргументов в терминале —
+например, двойным щелчком по qwdtt-cli.exe. Команда нужна там, где запуск без
 аргументов печатает список команд: ярлык, чужая оболочка.
 
 Ctrl+C во время подключения останавливает туннель и возвращает в меню,
@@ -51,7 +51,7 @@ func wantsMenu(e *env, args []string) bool {
 
 // console — stdin и stdout оба терминал: человек сидит перед окном. Меню
 // в конвейере или из скрипта ждало бы ответов, которых не будет, поэтому
-// без терминала tt без аргументов печатает список команд, как раньше.
+// без терминала qwdtt-cli без аргументов печатает список команд, как раньше.
 func (e *env) console() bool {
 	if e.tty != nil {
 		return e.tty()
@@ -73,7 +73,7 @@ func runMenu(ctx context.Context, e *env, args []string) error {
 		return usagef("лишний аргумент %q: команда menu аргументов не принимает", rest[0])
 	}
 	if !e.console() {
-		return errors.New("меню работает только в терминале; без него — команды, список: tt help")
+		return errors.New("меню работает только в терминале; без него — команды, список: qwdtt-cli help")
 	}
 
 	m := &menu{e: e, config: *configPath}
@@ -108,7 +108,7 @@ type menuItem struct {
 
 func (m *menu) loop(ctx context.Context) error {
 	e := m.e
-	fmt.Fprintf(e.stdout, "tt %s — клиент qWDTT\n", e.build.Version)
+	fmt.Fprintf(e.stdout, "qwdtt-cli %s — клиент qWDTT\n", e.build.Version)
 
 	for {
 		_, file, err := m.load()
@@ -268,7 +268,7 @@ func menuNumber(line string, count, fallback int) (int, bool) {
 }
 
 // ask задаёт вопрос и читает строку ответа. Приглашение — в stderr, как у
-// остальных вопросов tt (prompt.go).
+// остальных вопросов qwdtt-cli (prompt.go).
 func (m *menu) ask(prompt string) (string, error) {
 	fmt.Fprint(m.e.stderr, prompt)
 	line, err := m.e.readLine()
@@ -296,7 +296,7 @@ func (m *menu) connect(ctx context.Context, name string) error {
 		if err != nil {
 			return err
 		}
-		// Прав не хватает — запросить их, а не объяснять, как запустить tt
+		// Прав не хватает — запросить их, а не объяснять, как запустить qwdtt-cli
 		// иначе: человек из меню командной строки не знает.
 		if plan.datapath(nil).Requires().Admin && !isElevated() {
 			return m.connectElevated(name)
@@ -377,7 +377,7 @@ func (m *menu) connectElevated(name string) error {
 func (m *menu) offerSocks(name string) error {
 	w := m.e.stdout
 	fmt.Fprintln(w, "Режиму «весь трафик» нужны права администратора, а у этой учётной записи их нет.")
-	fmt.Fprintln(w, "С паролем другой учётной записи tt запустился бы от её имени и не нашёл бы этот профиль.")
+	fmt.Fprintln(w, "С паролем другой учётной записи qwdtt-cli запустился бы от её имени и не нашёл бы этот профиль.")
 	fmt.Fprintf(w, "Без прав работает режим «только программы с прокси» (SOCKS5 %s).\n", datapath.DefaultSocksListen)
 
 	agreed, err := m.e.confirm(fmt.Sprintf("Переключить профиль %s на этот режим?", name))
@@ -438,7 +438,7 @@ func (m *menu) remove(ctx context.Context, name string) error {
 //
 // Во время подключения сигнал отменяет только его: туннель снимается, и
 // человек возвращается в меню. Вне подключения сигнал закрывает меню. Второй
-// сигнал во время остановки — выход сразу, как у tt connect: ждать зависшую
+// сигнал во время остановки — выход сразу, как у qwdtt-cli connect: ждать зависшую
 // уборку человек не обязан.
 type menuSignals struct {
 	mu sync.Mutex
@@ -530,7 +530,7 @@ func (m *menu) connecting(ctx context.Context) (context.Context, func()) {
 	}
 }
 
-// runningChild — запущен tt с правами: пока он идёт, сигналы меню не
+// runningChild — запущен qwdtt-cli с правами: пока он идёт, сигналы меню не
 // трогают. Возвращает функцию, которая снимает отметку.
 func (m *menu) runningChild() func() {
 	s := m.signals

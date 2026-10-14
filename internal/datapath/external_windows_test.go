@@ -13,11 +13,11 @@ import (
 // прав администратора не нужно. Службы с таким именем нет — ошибка
 // называет её, а не притворяется «работает».
 func TestWaitTunnelServiceMissing(t *testing.T) {
-	err := waitTunnelService(context.Background(), "tt-test-нет-такой")
+	err := waitTunnelService(context.Background(), "qwdtt-cli-test-нет-такой")
 	if err == nil {
 		t.Fatal("несуществующая служба сочтена работающей")
 	}
-	if !strings.Contains(err.Error(), "WireGuardTunnel$tt-test-нет-такой") {
+	if !strings.Contains(err.Error(), "WireGuardTunnel$qwdtt-cli-test-нет-такой") {
 		t.Errorf("ошибка не называет службу: %v", err)
 	}
 }

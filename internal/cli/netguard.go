@@ -15,11 +15,11 @@ import (
 	"github.com/FreedomCats/qwdtt-cli/internal/netguard"
 )
 
-// netguardEnv — переменная окружения: TT_NETGUARD=1 включает netguard при
-// любом datapath и в tt ping / tt hashes. Нужна, чтобы проверить хук без прав
+// netguardEnv — переменная окружения: QWDTT_NETGUARD=1 включает netguard при
+// любом datapath и в qwdtt-cli ping / qwdtt-cli hashes. Нужна, чтобы проверить хук без прав
 // администратора: socks трафик системы не забирает, и без неё строк
 // [NETGUARD] не увидеть.
-const netguardEnv = "TT_NETGUARD"
+const netguardEnv = "QWDTT_NETGUARD"
 
 func netguardForced() bool { return os.Getenv(netguardEnv) == "1" }
 
@@ -33,11 +33,11 @@ func netguardForced() bool { return os.Getenv(netguardEnv) == "1" }
 // только IPv4 (plan-e4.md, T3).
 //
 // mark — метка SO_MARK сокетов ядра (Guard.Mark), 0 — без неё: по ней
-// защита DNS на Linux пропускает tt к DNS VK. Ставится, только когда защита
+// защита DNS на Linux пропускает qwdtt-cli к DNS VK. Ставится, только когда защита
 // включена: без прав SO_MARK отказал бы (plan-e4.md, врезка N1, п. 1).
 //
-// Интерфейс выбирается здесь один раз; tt connect дальше следит за сменой
-// сети (watchNetwork), tt ping и tt hashes — нет: они короткие.
+// Интерфейс выбирается здесь один раз; qwdtt-cli connect дальше следит за сменой
+// сети (watchNetwork), qwdtt-cli ping и qwdtt-cli hashes — нет: они короткие.
 func setupNetguard(out *printer, verbose, fullTunnel bool, mark uint32) (*netguard.Guard, error) {
 	guard := &netguard.Guard{Mark: mark}
 	if verbose {

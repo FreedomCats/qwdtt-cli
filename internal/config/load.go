@@ -129,7 +129,7 @@ func unknownKeyProblems(md toml.MetaData) []string {
 		switch last(key) {
 		case "password", "vk_hashes", "hashes":
 			problems = append(problems, fmt.Sprintf(
-				"неизвестный ключ %s: секреты в файле не хранятся — запишите значение через `tt profile set`, "+
+				"неизвестный ключ %s: секреты в файле не хранятся — запишите значение через `qwdtt-cli profile set`, "+
 					"а в профиле оставьте ссылку password_ref или vk_hashes_ref", full))
 		default:
 			problems = append(problems, fmt.Sprintf("неизвестный ключ %s", full))

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// Программа, открывшая ссылку, после выхода забирается: зомби за tt не
+// Программа, открывшая ссылку, после выхода забирается: зомби за qwdtt-cli не
 // остаётся. Проверяется по /proc, поэтому только на Linux.
 func TestStartDetachedLeavesNoZombie(t *testing.T) {
 	if err := startDetached("true", nil); err != nil {

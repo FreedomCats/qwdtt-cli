@@ -22,9 +22,9 @@ import (
 // машине разработчика:
 //
 //	CGO_ENABLED=0 go test -c -o build/out/linuxsys.test ./internal/linuxsys
-//	docker run --rm --cap-add NET_ADMIN -e TT_TEST_NETNS=1 \
-//	  -v "$PWD/build/out":/tt:ro ubuntu:latest /tt/linuxsys.test -test.v
-const netnsEnv = "TT_TEST_NETNS"
+//	docker run --rm --cap-add NET_ADMIN -e QWDTT_TEST_NETNS=1 \
+//	  -v "$PWD/build/out":/qwdtt-cli:ro ubuntu:latest /qwdtt-cli/linuxsys.test -test.v
+const netnsEnv = "QWDTT_TEST_NETNS"
 
 // Новый интерфейс с маршрутом по умолчанию лучше прежнего: подписка
 // приносит события с его индексом, выбор переходит на него, а после
@@ -146,9 +146,9 @@ func TestDNSGuardNetns(t *testing.T) {
 	}
 	defer g.Close()
 	if !dnsGuardTableExists(t) {
-		t.Fatal("после OpenDNSGuard таблицы inet tt нет")
+		t.Fatal("после OpenDNSGuard таблицы inet qwdtt-cli нет")
 	}
-	if _, err := OpenDNSGuard(mark); err == nil || !strings.Contains(err.Error(), "уже работает другой tt") {
+	if _, err := OpenDNSGuard(mark); err == nil || !strings.Contains(err.Error(), "уже работает другой qwdtt-cli") {
 		t.Errorf("второе открытие при живой таблице: %v", err)
 	}
 
@@ -204,7 +204,7 @@ func TestDNSGuardNetns(t *testing.T) {
 		t.Fatal(err)
 	}
 	if dnsGuardTableExists(t) {
-		t.Error("после Close таблица inet tt осталась")
+		t.Error("после Close таблица inet qwdtt-cli осталась")
 	}
 	expectSend(t, "udp", "198.51.100.1:53", 0, nil)
 	if err := g.Enable([]netip.Addr{tunnelDNS}); err == nil {
@@ -216,7 +216,7 @@ func TestDNSGuardNetns(t *testing.T) {
 }
 
 // Kill-switch на настоящих nftables: в «закрыто» публичный адрес — EPERM,
-// локальная сеть, loopback, сокеты tt и DHCP проходят, DNS не проходит и к
+// локальная сеть, loopback, сокеты qwdtt-cli и DHCP проходят, DNS не проходит и к
 // локальной сети; переходы в защиту DNS и обратно — без пустой таблицы.
 // Локальная сеть — 192.168.1.5 (уходит по маршруту по умолчанию) и шлюз
 // контейнера (сеть docker — 172.16/12).
@@ -294,7 +294,7 @@ func expectSendFrom(t *testing.T, port int, address string, want error) {
 	d := &net.Dialer{LocalAddr: &net.UDPAddr{Port: port}}
 	conn, err := d.Dial("udp4", address)
 	if err == nil {
-		_, err = conn.Write([]byte("tt"))
+		_, err = conn.Write([]byte("qwdtt-cli"))
 		conn.Close()
 	}
 	switch {
@@ -332,7 +332,7 @@ func expectSend(t *testing.T, network, address string, mark int, want error) {
 	t.Helper()
 	conn, err := markedDialer(mark).Dial(network, address)
 	if err == nil {
-		_, err = conn.Write([]byte("tt"))
+		_, err = conn.Write([]byte("qwdtt-cli"))
 		conn.Close()
 	}
 	switch {

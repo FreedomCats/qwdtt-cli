@@ -31,7 +31,7 @@ func fakeSudo(t *testing.T, owner *sudo.User, fail error) *[]string {
 
 var sudoUser = &sudo.User{Name: "user", Uid: 4242, Gid: 4343, HomeDir: "/home/user"}
 
-// Под sudo вызвавшему отдаётся всё, что tt создал: недостающие каталоги
+// Под sudo вызвавшему отдаётся всё, что qwdtt-cli создал: недостающие каталоги
 // сверху вниз и файлы до переименования. Существовавшее не трогается.
 func TestSaveUnderSudoGivesFilesAway(t *testing.T) {
 	calls := fakeSudo(t, sudoUser, nil)

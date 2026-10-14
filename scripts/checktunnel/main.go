@@ -1,14 +1,14 @@
 //go:build windows
 
 // Команда checktunnel печатает снимок состояния системы для живой проверки
-// tt (plan-e2.md, R2): что tt ставит в систему и что должно уйти после него.
+// qwdtt-cli (plan-e2.md, R2): что qwdtt-cli ставит в систему и что должно уйти после него.
 //
-//	go run ./scripts/checktunnel [-label "до запуска"] [-name tt] [-timeout 10s] [-offline]
+//	go run ./scripts/checktunnel [-label "до запуска"] [-name qwdtt-cli] [-timeout 10s] [-offline]
 //
-// Вывод до запуска tt, во время и после — это и есть отчёт сценария.
+// Вывод до запуска qwdtt-cli, во время и после — это и есть отчёт сценария.
 // Разделы:
 //
-//   - процессы tt.exe;
+//   - процессы qwdtt-cli.exe;
 //   - адаптеры: включённые с IP (кроме loopback и Teredo) и любые с именем
 //     туннеля или постоянным GUID адаптера wintun, с адресами, MTU, метрикой
 //     интерфейса (из winipcfg, а не из Get-NetIPInterface — там она бывает
@@ -47,6 +47,8 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
+
+	"github.com/FreedomCats/qwdtt-cli/internal/app"
 )
 
 // wintunGUID — постоянный GUID адаптера wintun
@@ -81,7 +83,7 @@ type options struct {
 func main() {
 	var o options
 	flag.StringVar(&o.label, "label", "", "подпись снимка (например, «до запуска»)")
-	flag.StringVar(&o.name, "name", "tt", "имя туннеля: адаптер external, служба WireGuardTunnel$<имя>, <имя>.conf")
+	flag.StringVar(&o.name, "name", app.Name, "имя туннеля: адаптер external, служба WireGuardTunnel$<имя>, <имя>.conf")
 	flag.StringVar(&o.confDir, "conf-dir", defaultConfDir(), "каталог <имя>.conf у datapath external")
 	flag.DurationVar(&o.timeout, "timeout", 10*time.Second, "таймаут каждого сетевого запроса")
 	flag.BoolVar(&o.offline, "offline", false, "не проверять внешний адрес и резолвер")
@@ -97,7 +99,7 @@ func main() {
 // datapath.External.dir.
 func defaultConfDir() string {
 	if base, err := os.UserConfigDir(); err == nil {
-		return filepath.Join(base, "qwdtt-cli")
+		return filepath.Join(base, app.Name)
 	}
 	return os.TempDir()
 }
@@ -107,7 +109,7 @@ func defaultConfDir() string {
 func run(w io.Writer, o options) {
 	header(w, o.label)
 
-	section(w, "Процессы tt.exe", func(w io.Writer) error { return printProcesses(w) })
+	section(w, "Процессы qwdtt-cli.exe", func(w io.Writer) error { return printProcesses(w) })
 	var guids []windows.GUID
 	section(w, "Адаптеры", func(w io.Writer) (err error) {
 		guids, err = printAdapters(w, o.name)
@@ -137,7 +139,7 @@ func printProcesses(w io.Writer) error {
 	var pids []uint32
 	e := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
 	for err = windows.Process32First(snap, &e); err == nil; err = windows.Process32Next(snap, &e) {
-		if strings.EqualFold(windows.UTF16ToString(e.ExeFile[:]), "tt.exe") {
+		if strings.EqualFold(windows.UTF16ToString(e.ExeFile[:]), app.Name+".exe") {
 			pids = append(pids, e.ProcessID)
 		}
 	}
@@ -175,7 +177,7 @@ func printAdapters(w io.Writer, name string) ([]windows.GUID, error) {
 		mark := ""
 		switch {
 		case isWintun:
-			mark = "  [tt wintun]"
+			mark = "  [qwdtt-cli wintun]"
 		case isTunnel:
 			mark = "  [туннель " + name + "]"
 		}

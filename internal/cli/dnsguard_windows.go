@@ -11,6 +11,6 @@ func openSystemDNSGuard() (dnsGuardSession, error) {
 	return g, nil
 }
 
-// dnsGuardMark — метка сокетов tt для защиты DNS: на Windows не нужна,
-// WFP пропускает весь процесс tt.
+// dnsGuardMark — метка сокетов qwdtt-cli для защиты DNS: на Windows не нужна,
+// WFP пропускает весь процесс qwdtt-cli.
 const dnsGuardMark = 0

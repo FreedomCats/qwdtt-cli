@@ -12,8 +12,8 @@ import (
 
 // lockHelperEnv включает режим помощника: тестовый бинарь, запущенный самим
 // тестом, пробует занять блокировку адаптера (мьютекс на Windows, абстрактный
-// сокет на Linux) как «второй tt» и сообщает итог кодом выхода.
-const lockHelperEnv = "TT_TUN_LOCK_HELPER"
+// сокет на Linux) как «второй qwdtt-cli» и сообщает итог кодом выхода.
+const lockHelperEnv = "QWDTT_TUN_LOCK_HELPER"
 
 func init() {
 	testHelpers = append(testHelpers, func() (int, bool) {
@@ -47,7 +47,7 @@ func tryLockFromOtherProcess(t *testing.T) error {
 	return nil
 }
 
-// Второй tt с datapath tun получает отказ, пока жив первый, и проходит,
+// Второй qwdtt-cli с datapath tun получает отказ, пока жив первый, и проходит,
 // когда первый отпустил мьютекс. Внутри одного процесса захваты считаются:
 // резерв CLI и Start попытки друг другу не мешают.
 func TestTunLockExcludesOtherProcess(t *testing.T) {

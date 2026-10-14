@@ -187,7 +187,7 @@ func TestDetectSystemDNS(t *testing.T) {
 				writeFile(t, filepath.Join(run, "NetworkManager/resolv.conf"), "nameserver 192.0.2.1\n")
 				symlink(t, filepath.Join(run, "NetworkManager/resolv.conf"), filepath.Join(etc, "resolv.conf"))
 			},
-			wantErr: "этот генератор tt не знает",
+			wantErr: "этот генератор qwdtt-cli не знает",
 		},
 		{
 			name: "битая ссылка",
@@ -204,7 +204,7 @@ func TestDetectSystemDNS(t *testing.T) {
 			if tc.setup != nil {
 				tc.setup(t, etc, run)
 			}
-			dns, err := DetectSystemDNS("tt")
+			dns, err := DetectSystemDNS("qwdtt-cli")
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("ошибка %v, ждали «%s»", err, tc.wantErr)
@@ -226,14 +226,14 @@ func TestDetectSystemDNSResolvedDown(t *testing.T) {
 	etc, _ := fakeDNSRoots(t)
 	writeFile(t, filepath.Join(etc, "resolv.conf"), "nameserver 127.0.0.53\n")
 	stubBus(t, nil, errors.New("нет сокета шины"))
-	_, err := DetectSystemDNS("tt")
+	_, err := DetectSystemDNS("qwdtt-cli")
 	if err == nil || !strings.Contains(err.Error(), "служба не отвечает") {
 		t.Fatalf("ошибка %v", err)
 	}
 
 	bus := &fakeBus{errs: map[string]error{"org.freedesktop.DBus.Peer.Ping": dbus.Error{Name: "org.freedesktop.DBus.Error.ServiceUnknown"}}}
 	stubBus(t, bus, nil)
-	if _, err := DetectSystemDNS("tt"); err == nil {
+	if _, err := DetectSystemDNS("qwdtt-cli"); err == nil {
 		t.Fatal("служба не отвечает на Ping, а ошибки нет")
 	}
 	if bus.closed != 1 {
@@ -266,7 +266,7 @@ func TestSystemDNSFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dns, err := DetectSystemDNS("tt")
+	dns, err := DetectSystemDNS("qwdtt-cli")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,12 +284,12 @@ func TestSystemDNSFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := readFile(t, path)
-	want := fileMarker + "; прежний файл — resolv.conf.tt-backup, tt вернёт его при выходе\n" +
+	want := fileMarker + "; прежний файл — resolv.conf.qwdtt-cli-backup, qwdtt-cli вернёт его при выходе\n" +
 		"nameserver 192.0.2.53\nnameserver 2001:db8::53\nsearch example.net\noptions ndots:2\n"
 	if got != want {
 		t.Errorf("свой файл:\n%s\nждали:\n%s", got, want)
 	}
-	if b := readFile(t, path+".tt-backup"); b != orig {
+	if b := readFile(t, path+".qwdtt-cli-backup"); b != orig {
 		t.Errorf("копия: %q", b)
 	}
 	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o640 {
@@ -306,7 +306,7 @@ func TestSystemDNSFile(t *testing.T) {
 	if got := readFile(t, path); !strings.Contains(got, "nameserver 192.0.2.53\nsearch") {
 		t.Errorf("после повторного Set:\n%s", got)
 	}
-	if b := readFile(t, path+".tt-backup"); b != orig {
+	if b := readFile(t, path+".qwdtt-cli-backup"); b != orig {
 		t.Errorf("повторный Set переписал копию: %q", b)
 	}
 
@@ -316,7 +316,7 @@ func TestSystemDNSFile(t *testing.T) {
 	if got := readFile(t, path); got != orig {
 		t.Errorf("после Revert: %q", got)
 	}
-	if exists(path + ".tt-backup") {
+	if exists(path + ".qwdtt-cli-backup") {
 		t.Error("копия осталась после Revert")
 	}
 	if err := dns.Revert(1); err != nil {
@@ -333,7 +333,7 @@ func TestSystemDNSFileEmptyServers(t *testing.T) {
 	etc, _ := fakeDNSRoots(t)
 	path := filepath.Join(etc, "resolv.conf")
 	writeFile(t, path, "nameserver 192.0.2.1\n")
-	dns, err := DetectSystemDNS("tt")
+	dns, err := DetectSystemDNS("qwdtt-cli")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,12 +348,12 @@ func TestSystemDNSFileEmptyServers(t *testing.T) {
 	}
 }
 
-// Файл после tt переписал кто-то другой — он остаётся, копия удаляется.
+// Файл после qwdtt-cli переписал кто-то другой — он остаётся, копия удаляется.
 func TestSystemDNSFileRewrittenByOther(t *testing.T) {
 	etc, _ := fakeDNSRoots(t)
 	path := filepath.Join(etc, "resolv.conf")
 	writeFile(t, path, "nameserver 192.0.2.1\n")
-	dns, _ := DetectSystemDNS("tt")
+	dns, _ := DetectSystemDNS("qwdtt-cli")
 	if err := dns.Set(1, testServers); err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +364,7 @@ func TestSystemDNSFileRewrittenByOther(t *testing.T) {
 	if got := readFile(t, path); got != "nameserver 198.51.100.1\n" {
 		t.Errorf("Revert затёр чужой файл: %q", got)
 	}
-	if exists(path + ".tt-backup") {
+	if exists(path + ".qwdtt-cli-backup") {
 		t.Error("копия осталась")
 	}
 }
@@ -376,13 +376,13 @@ func TestSystemDNSFileRecover(t *testing.T) {
 	path := filepath.Join(etc, "resolv.conf")
 	orig := "nameserver 192.0.2.1\n"
 	writeFile(t, path, orig)
-	crashed, _ := DetectSystemDNS("tt")
+	crashed, _ := DetectSystemDNS("qwdtt-cli")
 	if err := crashed.Set(1, testServers); err != nil {
 		t.Fatal(err)
 	}
 	// kill -9: Revert не было.
 
-	dns, err := DetectSystemDNS("tt")
+	dns, err := DetectSystemDNS("qwdtt-cli")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,16 +393,16 @@ func TestSystemDNSFileRecover(t *testing.T) {
 	if !strings.Contains(done, "возвращён") {
 		t.Errorf("Recover: %q", done)
 	}
-	if got := readFile(t, path); got != orig || exists(path+".tt-backup") {
-		t.Errorf("после Recover: %q, копия есть: %v", got, exists(path+".tt-backup"))
+	if got := readFile(t, path); got != orig || exists(path+".qwdtt-cli-backup") {
+		t.Errorf("после Recover: %q, копия есть: %v", got, exists(path+".qwdtt-cli-backup"))
 	}
 
-	writeFile(t, path+".tt-backup", "nameserver 203.0.113.1\n")
+	writeFile(t, path+".qwdtt-cli-backup", "nameserver 203.0.113.1\n")
 	done, err = dns.Recover()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(done, "переписал кто-то другой") || readFile(t, path) != orig || exists(path+".tt-backup") {
+	if !strings.Contains(done, "переписал кто-то другой") || readFile(t, path) != orig || exists(path+".qwdtt-cli-backup") {
 		t.Errorf("Recover при чужом файле: %q, файл %q", done, readFile(t, path))
 	}
 }
@@ -412,11 +412,11 @@ func TestSystemDNSFileOwnWithoutBackup(t *testing.T) {
 	etc, _ := fakeDNSRoots(t)
 	path := filepath.Join(etc, "resolv.conf")
 	writeFile(t, path, fileMarker+"; …\nnameserver 192.0.2.53\n")
-	dns, _ := DetectSystemDNS("tt")
+	dns, _ := DetectSystemDNS("qwdtt-cli")
 	if err := dns.Set(1, testServers); err == nil || !strings.Contains(err.Error(), "копии прежнего") {
 		t.Errorf("Set: %v", err)
 	}
-	if exists(path + ".tt-backup") {
+	if exists(path + ".qwdtt-cli-backup") {
 		t.Error("свой файл стал копией")
 	}
 }
@@ -425,7 +425,7 @@ func TestSystemDNSFileOwnWithoutBackup(t *testing.T) {
 func TestSystemDNSFileMissing(t *testing.T) {
 	etc, _ := fakeDNSRoots(t)
 	path := filepath.Join(etc, "resolv.conf")
-	dns, _ := DetectSystemDNS("tt")
+	dns, _ := DetectSystemDNS("qwdtt-cli")
 	if err := dns.Set(1, testServers); err != nil {
 		t.Fatal(err)
 	}
@@ -453,16 +453,16 @@ func TestSystemDNSResolvconf(t *testing.T) {
 	for _, tc := range []struct {
 		version, set, del string
 	}{
-		{"Debian resolvconf 1.91+nmu1", "resolvconf -a tun.tt", "resolvconf -d tun.tt"},
-		{"openresolv 3.13.2", "resolvconf -a tun.tt -m 0 -x", "resolvconf -f -d tun.tt"},
+		{"Debian resolvconf 1.91+nmu1", "resolvconf -a tun.qwdtt-cli", "resolvconf -d tun.qwdtt-cli"},
+		{"openresolv 3.13.2", "resolvconf -a tun.qwdtt-cli -m 0 -x", "resolvconf -f -d tun.qwdtt-cli"},
 	} {
 		t.Run(tc.version, func(t *testing.T) {
 			cmds, _ := resolvconfSetup(t, tc.version)
-			dns, err := DetectSystemDNS("tt")
+			dns, err := DetectSystemDNS("qwdtt-cli")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(dns.String(), "запись tun.tt") {
+			if !strings.Contains(dns.String(), "запись tun.qwdtt-cli") {
 				t.Errorf("String: %q", dns)
 			}
 			if done, err := dns.Recover(); err != nil || done != "" || len(cmds.calls) != 0 {
@@ -490,18 +490,18 @@ func TestSystemDNSResolvconf(t *testing.T) {
 // Запись упавшего запуска снимается Recover.
 func TestSystemDNSResolvconfRecover(t *testing.T) {
 	for _, tc := range []struct{ version, dir, del string }{
-		{"Debian resolvconf 1.91", "interface", "resolvconf -d tun.tt"},
-		{"openresolv 3.13.2", "interfaces", "resolvconf -f -d tun.tt"},
+		{"Debian resolvconf 1.91", "interface", "resolvconf -d tun.qwdtt-cli"},
+		{"openresolv 3.13.2", "interfaces", "resolvconf -f -d tun.qwdtt-cli"},
 	} {
 		t.Run(tc.version, func(t *testing.T) {
 			cmds, run := resolvconfSetup(t, tc.version)
-			writeFile(t, filepath.Join(run, "resolvconf", tc.dir, "tun.tt"), "nameserver 192.0.2.53\n")
-			dns, err := DetectSystemDNS("tt")
+			writeFile(t, filepath.Join(run, "resolvconf", tc.dir, "tun.qwdtt-cli"), "nameserver 192.0.2.53\n")
+			dns, err := DetectSystemDNS("qwdtt-cli")
 			if err != nil {
 				t.Fatal(err)
 			}
 			done, err := dns.Recover()
-			if err != nil || !strings.Contains(done, "tun.tt прошлого запуска") {
+			if err != nil || !strings.Contains(done, "tun.qwdtt-cli прошлого запуска") {
 				t.Errorf("Recover: %q, %v", done, err)
 			}
 			if !slices.Equal(cmds.calls, []string{tc.del}) {
@@ -516,7 +516,7 @@ func TestSystemDNSResolved(t *testing.T) {
 	writeFile(t, filepath.Join(etc, "resolv.conf"), "nameserver 127.0.0.53\n")
 	bus := &fakeBus{}
 	stubBus(t, bus, nil)
-	dns, err := DetectSystemDNS("tt")
+	dns, err := DetectSystemDNS("qwdtt-cli")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -557,7 +557,7 @@ func TestSystemDNSResolvedErrors(t *testing.T) {
 		"RevertLink":          dbus.Error{Name: "org.freedesktop.resolve1.NoSuchLink"},
 	}}
 	stubBus(t, bus, nil)
-	dns, err := DetectSystemDNS("tt")
+	dns, err := DetectSystemDNS("qwdtt-cli")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -598,7 +598,7 @@ func TestSystemDNSFileWarning(t *testing.T) {
 	} {
 		etc, _ := fakeDNSRoots(t)
 		writeFile(t, filepath.Join(etc, "resolv.conf"), tc.conf)
-		dns, err := DetectSystemDNS("tt")
+		dns, err := DetectSystemDNS("qwdtt-cli")
 		if err != nil {
 			t.Fatal(err)
 		}
