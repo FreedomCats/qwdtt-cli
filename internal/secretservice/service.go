@@ -52,6 +52,10 @@ var (
 	ErrUnavailable = errors.New("связки ключей (Secret Service) в этом сеансе нет")
 	// ErrNotFound — записи с таким идентификатором в связке нет.
 	ErrNotFound = errors.New("записи нет в связке ключей")
+	// ErrLocked — связка осталась заблокированной: окно разблокировки закрыли
+	// или оно не дождалось ответа. Записи целы — их прочитает следующий
+	// запуск, когда связку разблокируют.
+	ErrLocked = errors.New("связка ключей не разблокирована")
 )
 
 // promptTimeout — сколько ждать окна разблокировки. Окно может оказаться там,
@@ -277,13 +281,13 @@ func (c *client) prompt(path dbus.ObjectPath) error {
 				continue
 			}
 			if dismissed, _ := s.Body[0].(bool); dismissed {
-				return errors.New("связка ключей: окно закрыто без ответа")
+				return fmt.Errorf("%w: окно закрыто без ответа", ErrLocked)
 			}
 			return nil
 		case <-timer.C:
 			_ = obj.Call(promptInterface+".Dismiss", 0).Err
-			return fmt.Errorf("связка ключей: окно разблокировки не ответило за %s — "+
-				"оно могло открыться на экране, которого не видно (вход по SSH)", c.timeout)
+			return fmt.Errorf("%w: окно разблокировки не ответило за %s — "+
+				"оно могло открыться на экране, которого не видно (вход по SSH)", ErrLocked, c.timeout)
 		}
 	}
 }

@@ -312,6 +312,11 @@ func secretHashes(p *config.Profile, store config.SecretStore) ([]string, error)
 // secretError объясняет, что секрет не развернулся и как это починить. Само
 // значение здесь не появляется ни при каком исходе.
 func secretError(what, profile, flag string, err error) error {
+	if errors.Is(err, config.ErrKeyringLocked) {
+		// Секрет цел: человек закрыл окно разблокировки, а не потерял пароль.
+		return fmt.Errorf("%s профиля %q не прочитан: %w; разблокируйте связку ключей и повторите",
+			what, profile, err)
+	}
 	return fmt.Errorf("%s профиля %q не прочитан: %w; запишите его заново: qwdtt-cli profile set %s %s",
 		what, profile, err, profile, flag)
 }

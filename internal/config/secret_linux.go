@@ -43,6 +43,18 @@ func keyringError(err error) error {
 		return fmt.Errorf("%w: %w", errKeyringUnavailable, err)
 	case errors.Is(err, secretservice.ErrNotFound):
 		return fmt.Errorf("%w: %w", errKeyringNotFound, err)
+	case errors.Is(err, secretservice.ErrLocked):
+		// Текст у них один и тот же — второй раз его не повторяем.
+		return marked{err, ErrKeyringLocked}
 	}
 	return err
 }
+
+// marked — ошибка со своим текстом, которую errors.Is узнаёт и по метке.
+type marked struct {
+	error
+	mark error
+}
+
+func (m marked) Unwrap() error        { return m.error }
+func (m marked) Is(target error) bool { return target == m.mark }

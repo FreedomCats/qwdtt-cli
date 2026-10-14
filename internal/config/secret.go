@@ -91,6 +91,11 @@ var (
 	// errKeyringUnavailable — связки ключей в этом сеансе нет: Put пишет в файл.
 	errKeyringUnavailable = errors.New("связки ключей в этом сеансе нет")
 	errKeyringNotFound    = errors.New("записи нет в связке ключей")
+
+	// ErrKeyringLocked — секрет не прочитан, потому что связку ключей не
+	// разблокировали: окно закрыли или не ответили. Секрет цел, перезаписывать
+	// его незачем.
+	ErrKeyringLocked = errors.New("связка ключей не разблокирована")
 )
 
 // keyringScheme — схема ссылки на секрет в связке ключей.

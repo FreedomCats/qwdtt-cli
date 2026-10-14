@@ -377,6 +377,19 @@ func TestPlanConnectMissingSecret(t *testing.T) {
 	}
 }
 
+// Окно разблокировки связки закрыли — секрет цел: подсказка про связку, а не
+// про перезапись пароля.
+func TestSecretErrorLockedKeyring(t *testing.T) {
+	locked := fmt.Errorf("секрет %q: %w", "secretservice:0000", config.ErrKeyringLocked)
+	msg := secretError("пароль подключения", "home", "-password", locked).Error()
+	if !strings.Contains(msg, "разблокируйте связку ключей") {
+		t.Errorf("нет подсказки про связку: %s", msg)
+	}
+	if strings.Contains(msg, "profile set") {
+		t.Errorf("подсказка перезаписать цельный секрет: %s", msg)
+	}
+}
+
 // Без файла настроек connect не притворяется, что подключается: ошибка
 // с подсказкой, куда идти, и код возврата 1, а не 2 — командная строка верна.
 func TestConnectWithoutProfilesFile(t *testing.T) {

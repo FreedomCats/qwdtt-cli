@@ -5,6 +5,7 @@ package secretservice
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
 	"path/filepath"
@@ -90,8 +91,8 @@ func TestUnlockDismissed(t *testing.T) {
 	}
 	f.with(func() { f.locked, f.dismiss = true, true })
 
-	if _, err := c.Get("id1"); err == nil || !strings.Contains(err.Error(), "закрыто") {
-		t.Errorf("Get: %v, ожидалась ошибка «окно закрыто»", err)
+	if _, err := c.Get("id1"); !errors.Is(err, ErrLocked) || !strings.Contains(err.Error(), "закрыто") {
+		t.Errorf("Get: %v, ожидалась ErrLocked «окно закрыто»", err)
 	}
 	if err := c.Put("id2", "label", "x"); err == nil {
 		t.Error("Put в заблокированную связку прошёл")
@@ -107,8 +108,8 @@ func TestUnlockTimeout(t *testing.T) {
 	f.with(func() { f.locked, f.silent = true, true })
 	c.timeout = 200 * time.Millisecond
 
-	if _, err := c.Get("id1"); err == nil || !strings.Contains(err.Error(), "не ответило") {
-		t.Errorf("Get: %v, ожидалась ошибка таймаута", err)
+	if _, err := c.Get("id1"); !errors.Is(err, ErrLocked) || !strings.Contains(err.Error(), "не ответило") {
+		t.Errorf("Get: %v, ожидалась ErrLocked по таймауту", err)
 	}
 	f.with(func() {
 		if f.dismissed != 1 {
@@ -225,6 +226,10 @@ func TestHelper(t *testing.T) {
 	mem.err = ErrUnavailable
 	if err := h.Put("id2", "label", "x"); !errors.Is(err, ErrUnavailable) {
 		t.Errorf("Put без связки: %v, ожидалось ErrUnavailable", err)
+	}
+	mem.err = fmt.Errorf("%w: окно закрыто без ответа", ErrLocked)
+	if _, err := h.Get("id1"); !errors.Is(err, ErrLocked) || err.Error() != mem.err.Error() {
+		t.Errorf("Get при заблокированной связке: %v, ожидалось ErrLocked с тем же текстом", err)
 	}
 }
 

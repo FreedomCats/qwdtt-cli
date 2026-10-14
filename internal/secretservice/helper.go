@@ -51,6 +51,7 @@ type response struct {
 	Err         string `json:"err,omitempty"`
 	Unavailable bool   `json:"unavailable,omitempty"`
 	NotFound    bool   `json:"not_found,omitempty"`
+	Locked      bool   `json:"locked,omitempty"`
 }
 
 // RunHelper выполняет HelperCommand: читает запрос, делает операцию со связкой
@@ -106,6 +107,7 @@ func failure(err error) response {
 		Err:         err.Error(),
 		Unavailable: errors.Is(err, ErrUnavailable),
 		NotFound:    errors.Is(err, ErrNotFound),
+		Locked:      errors.Is(err, ErrLocked),
 	}
 }
 
@@ -166,6 +168,8 @@ func (h *helper) call(req request) (response, error) {
 		return resp, fmt.Errorf("пользователь %s: %w", h.user.Name, remoteError{resp.Err, ErrUnavailable})
 	case resp.NotFound:
 		return resp, ErrNotFound
+	case resp.Locked:
+		return resp, remoteError{resp.Err, ErrLocked}
 	case resp.Err != "":
 		return resp, errors.New(resp.Err)
 	}
