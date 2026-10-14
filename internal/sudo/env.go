@@ -2,7 +2,7 @@ package sudo
 
 import (
 	"os"
-	"path/filepath"
+	"path"
 	"strconv"
 	"strings"
 )
@@ -27,10 +27,12 @@ func sessionEnv(environ []string, u *User, exists func(string) bool) []string {
 		"USER":    u.Name,
 		"LOGNAME": u.Name,
 	}
-	runtimeDir := filepath.Join("/run/user", strconv.FormatUint(uint64(u.Uid), 10))
+	// Пути — Linux-овые и на любой системе: filepath на Windows дал бы
+	// \run\user\….
+	runtimeDir := path.Join("/run/user", strconv.FormatUint(uint64(u.Uid), 10))
 	if exists(runtimeDir) {
 		set["XDG_RUNTIME_DIR"] = runtimeDir
-		if bus := filepath.Join(runtimeDir, "bus"); exists(bus) {
+		if bus := path.Join(runtimeDir, "bus"); exists(bus) {
 			set["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=" + bus
 		}
 	}
@@ -51,7 +53,7 @@ func sessionEnv(environ []string, u *User, exists func(string) bool) []string {
 	return env
 }
 
-func exists(path string) bool {
-	_, err := os.Stat(path)
+func exists(name string) bool {
+	_, err := os.Stat(name)
 	return err == nil
 }
