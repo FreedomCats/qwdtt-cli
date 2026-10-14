@@ -242,6 +242,7 @@ func TestWebView2Proxy(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Setenv(browserArgsEnv, "--ignore-certificate-errors")
 
+	s.opts.Logf = t.Logf
 	var mu sync.Mutex
 	var asked []string
 	s.opts.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -257,7 +258,11 @@ func TestWebView2Proxy(t *testing.T) {
 	defer cancel()
 	token, err := s.Solve(ctx, standRequest("https://id.vk.com/fetch", 30*time.Second))
 	if err != nil {
-		t.Fatalf("Solve: %v", err)
+		// Пустой список — окно в прокси не пришло: браузер не получил
+		// --proxy-server (так было, пока аргументы шли одной переменной).
+		mu.Lock()
+		defer mu.Unlock()
+		t.Fatalf("Solve: %v; через прокси: %q", err, asked)
 	}
 	if token != "token-fetch" {
 		t.Fatalf("токен %q, ожидался со стенда", token)
@@ -276,9 +281,9 @@ func TestWebView2Proxy(t *testing.T) {
 func TestSetBrowserArgs(t *testing.T) {
 	t.Setenv(browserArgsEnv, "")
 	os.Unsetenv(browserArgsEnv)
-	restore := setBrowserArgs("--proxy-server=http://127.0.0.1:1")
-	if got := os.Getenv(browserArgsEnv); got != "--proxy-server=http://127.0.0.1:1" {
-		t.Errorf("без своего значения: %q", got)
+	value, restore := setBrowserArgs("--proxy-server=http://127.0.0.1:1")
+	if got := os.Getenv(browserArgsEnv); got != "--proxy-server=http://127.0.0.1:1" || got != value {
+		t.Errorf("без своего значения: %q, опцией %q", got, value)
 	}
 	restore()
 	if _, ok := os.LookupEnv(browserArgsEnv); ok {
@@ -286,9 +291,9 @@ func TestSetBrowserArgs(t *testing.T) {
 	}
 
 	t.Setenv(browserArgsEnv, "--lang=ru")
-	restore = setBrowserArgs("--proxy-server=http://127.0.0.1:1")
-	if got := os.Getenv(browserArgsEnv); got != "--lang=ru --proxy-server=http://127.0.0.1:1" {
-		t.Errorf("со своим значением: %q", got)
+	value, restore = setBrowserArgs("--proxy-server=http://127.0.0.1:1")
+	if got := os.Getenv(browserArgsEnv); got != "--lang=ru --proxy-server=http://127.0.0.1:1" || got != value {
+		t.Errorf("со своим значением: %q, опцией %q", got, value)
 	}
 	restore()
 	if got := os.Getenv(browserArgsEnv); got != "--lang=ru" {

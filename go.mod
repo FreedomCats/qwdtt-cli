@@ -105,3 +105,11 @@ exclude golang.zx2c4.com/wireguard/tun/netstack v0.0.0-20220703234212-c31a7b1ab4
 // В форке одна правка, malloc.go, с тестом; апстрим с 2024 года не
 // развивается. Регрессия у нас — TestDNSGuardUnderGC в internal/winsys.
 replace github.com/tailscale/wf => github.com/FreedomCats/tailscale-wf v0.0.0-20260101000000-d74d68cb0951
+
+// jchv/go-webview2 — из своего форка: библиотека не передаёт опций окружения
+// WebView2, а переменную WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS рантайм с её
+// встроенным загрузчиком не применяет — окно капчи шло мимо прокси tt
+// (найдено приёмкой R2 Э3). В форке одна правка: опция
+// AdditionalBrowserArguments через ICoreWebView2EnvironmentOptions, с тестом.
+// Регрессия у нас — TestWebView2Proxy в internal/captcha (TT_WEBVIEW2=1).
+replace github.com/jchv/go-webview2 => github.com/FreedomCats/go-webview2 v0.0.0-20261014000000-08b745a2490c

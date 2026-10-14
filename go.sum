@@ -1,5 +1,7 @@
 github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
+github.com/FreedomCats/go-webview2 v0.0.0-20261014000000-08b745a2490c h1:hHysYSVUT1KvR7cfTpiN2XP4g3EWdA2spbulg31otoo=
+github.com/FreedomCats/go-webview2 v0.0.0-20261014000000-08b745a2490c/go.mod h1:rWifBlzkgrvd7zUqlfq91sWt3473OikgnglnIILx/Jo=
 github.com/FreedomCats/tailscale-wf v0.0.0-20260101000000-d74d68cb0951 h1:605Iihz8cAnbce5QIl6pLf6pT+pE9EJEGNjM5zw3PbA=
 github.com/FreedomCats/tailscale-wf v0.0.0-20260101000000-d74d68cb0951/go.mod h1:ZXRML051h7o4OcI0d3AaILDIad/Xw0IkXaHM17dic1Y=
 github.com/andybalholm/brotli v1.2.0 h1:ukwgCxwYrmACq68yiUqwIWnGY0cTPox/M94sVwToPjQ=
@@ -34,8 +36,6 @@ github.com/google/nftables v0.3.1-0.20260430172505-f9b52ed2ba65 h1:git1jF54pv+jl
 github.com/google/nftables v0.3.1-0.20260430172505-f9b52ed2ba65/go.mod h1:rG94e4n789TcldN5fAqkB3qxgOUDo3brNpTlUIo8zgY=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
-github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808 h1:ftnsTqIUH57XQEF+PnXX9++nlHCzdkuB5zbWyMMruZo=
-github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808/go.mod h1:rWifBlzkgrvd7zUqlfq91sWt3473OikgnglnIILx/Jo=
 github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 h1:njuLRcjAuMKr7kI3D85AXWkw6/+v9PwtV6M6o11sWHQ=
 github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1/go.mod h1:alcuEEnZsY1WQsagKhZDsoPCRoOijYqhZvPwLG0kzVs=
 github.com/klauspost/compress v1.18.2 h1:iiPHWW0YrcFgpBYhsA6D1+fqHssJscY/Tm/y2Uqnapk=

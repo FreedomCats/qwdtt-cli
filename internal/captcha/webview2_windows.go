@@ -67,11 +67,17 @@ type WebView2Options struct {
 	Logf func(format string, args ...any)
 }
 
-// browserArgsEnv — переменная окружения, из которой WebView2 берёт
-// аргументы своего браузера. go-webview2 опций окружения не передаёт
-// (environmentOptions = 0), так что это единственный путь задать прокси.
-// Читается при создании окна: у окна свой профиль, значит, и свой экземпляр
-// msedgewebview2.exe, и аргументы действуют только на него.
+// browserArgsEnv — переменная окружения с аргументами браузера WebView2.
+//
+// Прокси окну передаётся опцией окружения AdditionalBrowserArguments
+// (ICoreWebView2EnvironmentOptions; в go-webview2 её нет — она в форке, см.
+// replace в go.mod). Одной переменной мало: рантайм 155 со встроенным
+// загрузчиком go-webview2 её не применяет вовсе — окно шло мимо прокси
+// (R2 Э3). Но документация обещает, что переменная, если её применят, важнее
+// опции, поэтому на время создания окна в ней то же значение, что в опции:
+// какой путь ни сработает, прокси один. Своё значение пользователя
+// сохраняется в обоих. Действует только на это окно: у окна свой профиль,
+// значит, и свой экземпляр msedgewebview2.exe.
 const browserArgsEnv = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
 
 // WebView2 — решатель с окном WebView2.
@@ -160,12 +166,14 @@ func (s *WebView2) Solve(ctx context.Context, req Request) (string, error) {
 			return
 		}
 
+		var browserArgs string
 		var restoreArgs func()
 		if proxy != nil {
-			restoreArgs = setBrowserArgs("--proxy-server=http://" + proxy.Addr())
+			browserArgs, restoreArgs = setBrowserArgs("--proxy-server=http://" + proxy.Addr())
 		}
 		w := webview2.NewWithOptions(webview2.WebViewOptions{
-			DataPath: profile,
+			DataPath:                   profile,
+			AdditionalBrowserArguments: browserArgs,
 			WindowOptions: webview2.WindowOptions{
 				Title:  windowTitle(req),
 				Width:  500,
@@ -251,17 +259,18 @@ func (s *WebView2) Solve(ctx context.Context, req Request) (string, error) {
 	}
 }
 
-// setBrowserArgs добавляет args к аргументам браузера WebView2 и возвращает,
-// чем вернуть прежнее значение. Своё значение пользователя сохраняется: наши
-// аргументы идут после, а из повторов Chromium берёт последний.
-func setBrowserArgs(args string) (restore func()) {
+// setBrowserArgs добавляет args к аргументам браузера WebView2 в переменной
+// browserArgsEnv и возвращает итоговую строку — её же окно получает опцией —
+// и чем вернуть прежнее значение. Своё значение пользователя сохраняется:
+// наши аргументы идут после, а из повторов Chromium берёт последний.
+func setBrowserArgs(args string) (value string, restore func()) {
 	before, had := os.LookupEnv(browserArgsEnv)
-	value := args
+	value = args
 	if strings.TrimSpace(before) != "" {
 		value = before + " " + args
 	}
 	_ = os.Setenv(browserArgsEnv, value)
-	return func() {
+	return value, func() {
 		if had {
 			_ = os.Setenv(browserArgsEnv, before)
 		} else {
