@@ -14,15 +14,15 @@ import (
 
 // Настоящий wireguard.exe в тестах не запускается: ему нужны права
 // администратора и он ставит службу в систему. Вместо него — сам тестовый
-// бинарь, запущенный с переменной окружения ttFakeWireGuard (см. TestMain):
+// бинарь, запущенный с переменной окружения envFakeWireGuard (см. TestMain):
 // он записывает свои аргументы и то, что видел на диске, в файл-журнал,
-// и завершается кодом из ttFakeExit.
+// и завершается кодом из envFakeExit.
 
 const (
-	ttFakeWireGuard = "QWDTT_FAKE_WIREGUARD" // журнал вызовов; непусто — работать подставным wireguard.exe
-	ttFakeExit      = "QWDTT_FAKE_EXIT"      // код возврата подставной программы
-	ttFakeHang      = "QWDTT_FAKE_HANG"      // непусто — зависнуть, чтобы проверить срок ожидания
-	ttFakeSlowStop  = "QWDTT_FAKE_SLOW_STOP" // непусто — снимать службу полсекунды, как настоящий
+	envFakeWireGuard = "QWDTT_FAKE_WIREGUARD" // журнал вызовов; непусто — работать подставным wireguard.exe
+	envFakeExit      = "QWDTT_FAKE_EXIT"      // код возврата подставной программы
+	envFakeHang      = "QWDTT_FAKE_HANG"      // непусто — зависнуть, чтобы проверить срок ожидания
+	envFakeSlowStop  = "QWDTT_FAKE_SLOW_STOP" // непусто — снимать службу полсекунды, как настоящий
 )
 
 // testHelpers — другие роли тестового бинаря, запущенного самим тестом;
@@ -31,7 +31,7 @@ const (
 var testHelpers []func() (code int, ok bool)
 
 func TestMain(m *testing.M) {
-	if journal := os.Getenv(ttFakeWireGuard); journal != "" {
+	if journal := os.Getenv(envFakeWireGuard); journal != "" {
 		os.Exit(fakeWireGuard(journal))
 	}
 	for _, helper := range testHelpers {
@@ -47,11 +47,11 @@ func TestMain(m *testing.M) {
 // конфига, обрезанное до первой строки, — так видно, что файл был на месте
 // в момент вызова и что в нём исходный текст.
 func fakeWireGuard(journal string) int {
-	if os.Getenv(ttFakeHang) != "" {
+	if os.Getenv(envFakeHang) != "" {
 		time.Sleep(10 * time.Second)
 	}
 	args := os.Args[1:]
-	if os.Getenv(ttFakeSlowStop) != "" && len(args) > 0 && args[0] == "/uninstalltunnelservice" {
+	if os.Getenv(envFakeSlowStop) != "" && len(args) > 0 && args[0] == "/uninstalltunnelservice" {
 		time.Sleep(500 * time.Millisecond)
 	}
 	line := strings.Join(args, " ")
@@ -71,7 +71,7 @@ func fakeWireGuard(journal string) int {
 	fmt.Fprintln(f, line)
 	f.Close()
 
-	if code := os.Getenv(ttFakeExit); code != "" {
+	if code := os.Getenv(envFakeExit); code != "" {
 		fmt.Fprintln(os.Stderr, "подставной wireguard.exe: отказ по заказу теста")
 		return 1
 	}
@@ -93,7 +93,7 @@ func newExternalEnv(t *testing.T) *externalEnv {
 	t.Helper()
 	dir := t.TempDir()
 	journal := filepath.Join(dir, "journal.txt")
-	t.Setenv(ttFakeWireGuard, journal)
+	t.Setenv(envFakeWireGuard, journal)
 	return &externalEnv{t: t, dir: dir, journal: journal,
 		service: func(context.Context, string) error { return nil }}
 }
@@ -213,7 +213,7 @@ func TestExternalCloseBeforeStart(t *testing.T) {
 // файл удалён, службу снимать нечего, а повторный Start возможен.
 func TestExternalInstallFailure(t *testing.T) {
 	x := newExternalEnv(t)
-	t.Setenv(ttFakeExit, "1")
+	t.Setenv(envFakeExit, "1")
 	dp := x.datapath(ExternalOptions{})
 
 	err := dp.Start(context.Background(), parsedServerConfig(t))
@@ -303,7 +303,7 @@ func TestExternalStopsOnContextCancel(t *testing.T) {
 // а ошибка говорит, сколько ждали.
 func TestExternalProgramTimeout(t *testing.T) {
 	x := newExternalEnv(t)
-	t.Setenv(ttFakeHang, "1")
+	t.Setenv(envFakeHang, "1")
 	dp := x.datapath(ExternalOptions{Timeout: 200 * time.Millisecond})
 
 	start := time.Now()
@@ -372,7 +372,7 @@ func TestExternalRequires(t *testing.T) {
 // на диске при уже снятой службе (живой прогон N4 Э2).
 func TestExternalConcurrentCloseWaits(t *testing.T) {
 	x := newExternalEnv(t)
-	t.Setenv(ttFakeSlowStop, "1")
+	t.Setenv(envFakeSlowStop, "1")
 	dp := x.datapath(ExternalOptions{})
 
 	ctx, cancel := context.WithCancel(context.Background())

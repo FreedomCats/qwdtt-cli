@@ -43,7 +43,7 @@ import (
 
 // bindingName — глобальная функция, через которую перехватчик отдаёт
 // результат в Go. Заводится Bind.
-const bindingName = "__ttCaptchaResult"
+const bindingName = "__qwdttCliCaptchaResult"
 
 // profilePrefix — начало имени временного каталога профиля WebView2 в %TEMP%.
 const profilePrefix = app.Name + "-captcha-"

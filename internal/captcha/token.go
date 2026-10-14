@@ -70,8 +70,8 @@ func successTokenFrom(body []byte) (string, error) {
 // ни строковых литералов с пробелами внутри.
 const interceptorJS = `
 (function () {
-	if (window.__ttCaptchaInstalled) { return; }
-	window.__ttCaptchaInstalled = true;
+	if (window.__qwdttCliCaptchaInstalled) { return; }
+	window.__qwdttCliCaptchaInstalled = true;
 	var sink = %s;
 	var matches = function (target) {
 		var url = (typeof target === 'string') ? target : (target && target.url);
@@ -103,12 +103,12 @@ const interceptorJS = `
 	var origOpen = XMLHttpRequest.prototype.open;
 	var origSend = XMLHttpRequest.prototype.send;
 	XMLHttpRequest.prototype.open = function (method, url) {
-		this.__ttURL = url;
+		this.__qwdttCliURL = url;
 		return origOpen.apply(this, arguments);
 	};
 	XMLHttpRequest.prototype.send = function () {
 		var xhr = this;
-		if (matches(xhr.__ttURL)) {
+		if (matches(xhr.__qwdttCliURL)) {
 			xhr.addEventListener('load', function () { report(xhr.responseText); });
 		}
 		return origSend.apply(this, arguments);
@@ -131,7 +131,7 @@ func oneLine(js string) string {
 // Пробелов внутри строковых литералов здесь нет ни одного, и это не
 // придирчивость: их бы схлопнул oneLine.
 func consoleSnippet() string {
-	const sink = `window.__ttCaptchaSink`
+	const sink = `window.__qwdttCliCaptchaSink`
 	prologue := sink + `=function(k,v){console.log('qwdtt-cli-captcha',k,v)};`
 	return oneLine(prologue + fmt.Sprintf(interceptorJS, sink))
 }
