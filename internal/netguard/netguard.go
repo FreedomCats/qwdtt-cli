@@ -96,7 +96,7 @@ func (g *Guard) Interfaces() (index4, index6 uint32) {
 type Choice struct {
 	Index4, Index6 uint32
 	// Alias4, Alias6 — имена интерфейсов для вывода («Ethernet 3», «Wi-Fi»,
-	// «enp7s0»).
+	// «eth0»).
 	Alias4, Alias6 string
 }
 

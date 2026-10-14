@@ -10,7 +10,7 @@ import (
 // Interface — выбранный физический интерфейс.
 type Interface struct {
 	Index uint32 // индекс для netguard (SO_BINDTOIFINDEX)
-	Name  string // имя, как в ip link: «enp7s0», «wlan0»
+	Name  string // имя, как в ip link: «eth0», «wlan0»
 }
 
 // DefaultInterface выбирает интерфейс маршрута по умолчанию (0.0.0.0/0 или

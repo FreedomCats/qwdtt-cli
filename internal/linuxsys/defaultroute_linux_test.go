@@ -20,7 +20,7 @@ func prefix(t *testing.T, s string) *net.IPNet {
 // fakeLinks — состояние интерфейсов поддельной таблицы: индекс → имя;
 // в down — опущенные.
 func fakeLinks(down ...int) func(int) (string, bool) {
-	names := map[int]string{1: "lo", 2: "enp7s0", 3: "wlan0", 4: "vpn0", 7: "qwdtt-cli"}
+	names := map[int]string{1: "lo", 2: "eth0", 3: "wlan0", 4: "tun0", 7: "qwdtt-cli"}
 	return func(index int) (string, bool) {
 		name, ok := names[index]
 		if !ok {
@@ -50,21 +50,21 @@ func TestPickDefault(t *testing.T) {
 		down    []int
 		want    string // имя или "" — нет
 	}{
-		{"один маршрут, Dst nil", []netlink.Route{route(nil, 2, 20100)}, 0, nil, "enp7s0"},
-		{"один маршрут, Dst /0", []netlink.Route{route(all4, 2, 20100)}, 0, nil, "enp7s0"},
+		{"один маршрут, Dst nil", []netlink.Route{route(nil, 2, 20100)}, 0, nil, "eth0"},
+		{"один маршрут, Dst /0", []netlink.Route{route(all4, 2, 20100)}, 0, nil, "eth0"},
 		{"наименьшая метрика", []netlink.Route{route(nil, 2, 20100), route(nil, 3, 600)}, 0, nil, "wlan0"},
 		{"ничья — первый", []netlink.Route{route(nil, 3, 100), route(nil, 2, 100)}, 0, nil, "wlan0"},
-		{"опущенный пропускается", []netlink.Route{route(nil, 3, 600), route(nil, 2, 20100)}, 0, []int{3}, "enp7s0"},
-		{"исчезнувший интерфейс", []netlink.Route{route(nil, 9, 1), route(nil, 2, 20100)}, 0, nil, "enp7s0"},
-		{"половины туннеля не в счёт", []netlink.Route{route(half1, 7, 0), route(half2, 7, 0), route(nil, 2, 20100)}, 0, nil, "enp7s0"},
-		{"свой адаптер исключён", []netlink.Route{route(nil, 7, 0), route(nil, 2, 20100)}, 7, nil, "enp7s0"},
-		{"корпоративные сети не в счёт", []netlink.Route{route(corp, 4, 50), route(nil, 2, 20100)}, 0, nil, "enp7s0"},
+		{"опущенный пропускается", []netlink.Route{route(nil, 3, 600), route(nil, 2, 20100)}, 0, []int{3}, "eth0"},
+		{"исчезнувший интерфейс", []netlink.Route{route(nil, 9, 1), route(nil, 2, 20100)}, 0, nil, "eth0"},
+		{"половины туннеля не в счёт", []netlink.Route{route(half1, 7, 0), route(half2, 7, 0), route(nil, 2, 20100)}, 0, nil, "eth0"},
+		{"свой адаптер исключён", []netlink.Route{route(nil, 7, 0), route(nil, 2, 20100)}, 7, nil, "eth0"},
+		{"корпоративные сети не в счёт", []netlink.Route{route(corp, 4, 50), route(nil, 2, 20100)}, 0, nil, "eth0"},
 		{"нет маршрута по умолчанию", []netlink.Route{route(corp, 4, 50)}, 0, nil, ""},
 		{"единственный опущен", []netlink.Route{route(nil, 2, 100)}, 0, []int{2}, ""},
 		{"unreachable по умолчанию", []netlink.Route{
-			{LinkIndex: 1, Priority: 1, Type: unix.RTN_UNREACHABLE}, route(nil, 2, 20100)}, 0, nil, "enp7s0"},
+			{LinkIndex: 1, Priority: 1, Type: unix.RTN_UNREACHABLE}, route(nil, 2, 20100)}, 0, nil, "eth0"},
 		{"несколько шлюзов", []netlink.Route{{Priority: 5, Type: unix.RTN_UNICAST,
-			MultiPath: []*netlink.NexthopInfo{{LinkIndex: 3}, {LinkIndex: 2}}}}, 0, []int{3}, "enp7s0"},
+			MultiPath: []*netlink.NexthopInfo{{LinkIndex: 3}, {LinkIndex: 2}}}}, 0, []int{3}, "eth0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, ok := pickDefault(tc.routes, tc.exclude, fakeLinks(tc.down...))

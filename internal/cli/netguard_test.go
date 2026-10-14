@@ -54,7 +54,7 @@ func TestNetworkChanged(t *testing.T) {
 // строгий — строка-предупреждение, перезапуск всё равно идёт.
 func TestNetworkChangedChecksReversePath(t *testing.T) {
 	strict := netguard.Choice{Index4: 5, Alias4: "wlan0"}
-	loose := netguard.Choice{Index4: 2, Alias4: "enp7s0"}
+	loose := netguard.Choice{Index4: 2, Alias4: "eth0"}
 	old := reversePathCheck
 	reversePathCheck = func(c netguard.Choice) (string, error) {
 		if c.Alias4 == "wlan0" {
