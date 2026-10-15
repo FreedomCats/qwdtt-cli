@@ -362,6 +362,42 @@ var replacements = []rule{
 		Replace: to("${1}if getConf && configDelivered {\n${1}\tatomic.StoreInt32(&configSent, 1)\n${1}}"),
 	},
 
+	// --- остановка во время запроса конфига ---
+	// Ответа на GETCONF RequestConfig ждёт до 45 с и на отмену не смотрит, а
+	// stopConn, снимающий соединение по отмене сеанса, ставится уже после
+	// запроса. Остановка (Ctrl+C, перезапуск супервизором), пришедшая в это
+	// время, ждала ответа, которого после отмены не будет: relay снят. Run
+	// ждёт все воркеры, так что держалась вся остановка — до 45 с. Стенд
+	// квоты (quota_stand_test.go) ловил это в двух прогонах из восьми.
+	{
+		File:    "session.go",
+		Count:   1,
+		Pattern: `(?m)^(\t+)// Запрос конфига$`,
+		Replace: to("${1}// Отмена сеанса снимает соединение и во время запроса конфига:\n" +
+			"${1}// ответа RequestConfig ждёт до 45 с, а stopConn ставится ниже.\n" +
+			"${1}stopConfig := context.AfterFunc(sessCtx, func() {\n" +
+			"${1}\t_ = activeConn.SetDeadline(time.Now())\n" +
+			"${1}\t_ = activeConn.Close()\n" +
+			"${1}})\n${0}"),
+	},
+	{
+		File:         "session.go",
+		Count:        1,
+		Pattern:      `(?m)^(\t+)log\.Printf\("\[ВОРКЕР #%d\] \[READY\] Туннель готов к работе ✓", sessionID\)$`,
+		InsertBefore: `stopConfig()`,
+	},
+	// Чтение сеанса перед каждым Read ставит дедлайн +30 мин. Если отмена
+	// пришла раньше — stopConn уже выставил дедлайн «сейчас», — он
+	// затирался, и Read ждал 30 минут; Run — вместе с ним. Проверка после
+	// установки дедлайна гонки не оставляет: stopConn срабатывает после
+	// отмены, то есть либо проверка её увидит, либо его дедлайн ляжет позже.
+	{
+		File:    "session.go",
+		Count:   1,
+		Pattern: `(?m)^(\t+)_ = activeConn\.SetReadDeadline\(time\.Now\(\)\.Add\(sessionReadTimeout\)\)$`,
+		Replace: to("${0}\n${1}if sessCtx.Err() != nil {\n${1}\treturn\n${1}}"),
+	},
+
 	// --- сброшенные пакеты ---
 	// Ядро выбрасывает пакет, когда очередь полна, и в десктопном режиме молча:
 	// единственный счётчик, tunDroppedCount, живёт под if d.tunFile != nil —

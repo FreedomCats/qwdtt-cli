@@ -464,6 +464,12 @@ func RunSession(
 	stats.ActiveConnections.Add(1)
 	defer stats.ActiveConnections.Add(-1)
 
+	// Отмена сеанса снимает соединение и во время запроса конфига:
+	// ответа RequestConfig ждёт до 45 с, а stopConn ставится ниже.
+	stopConfig := context.AfterFunc(sessCtx, func() {
+		_ = activeConn.SetDeadline(time.Now())
+		_ = activeConn.Close()
+	})
 	// Запрос конфига
 	if getConfig && configCh != nil {
 		conf, confErr := RequestConfig(activeConn, localPort, deviceID, password)
@@ -491,6 +497,7 @@ func RunSession(
 		}
 	}
 
+	stopConfig()
 	logf("[ВОРКЕР #%d] [READY] Туннель готов к работе ✓", sessionID)
 	emitStage(StageWorkers, StageOK, sessionID, "")
 
@@ -618,6 +625,9 @@ func RunSession(
 		b := make([]byte, 2000)
 		for {
 			_ = activeConn.SetReadDeadline(time.Now().Add(sessionReadTimeout))
+			if sessCtx.Err() != nil {
+				return
+			}
 			n, readErr := activeConn.Read(b)
 			if readErr != nil {
 				if sessCtx.Err() != nil {
