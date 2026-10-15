@@ -74,6 +74,9 @@ type store struct {
 	path string
 	// keyring открывает связку ключей; nil — её на этой системе нет.
 	keyring func() (keyring, error)
+	// refused — связку в этом хранилище уже отказались разблокировать
+	// (ErrKeyringLocked); см. openKeyring.
+	refused error
 }
 
 // keyring — связка ключей: значения лежат в ней, а в файле хранилища — только
@@ -167,7 +170,7 @@ func (s *store) Put(name, value string) (string, error) {
 // именем — и из связки, и из файла — заменяется: так секрет переезжает из
 // файла в связку при перезаписи.
 func (s *store) putKeyring(name, value string) (string, error) {
-	k, err := s.keyring()
+	k, err := s.openKeyring()
 	if err != nil {
 		return "", err
 	}
@@ -184,7 +187,7 @@ func (s *store) putKeyring(name, value string) (string, error) {
 		}
 	}
 
-	if err := k.Put(id, "qwdtt-cli "+name, value); err != nil {
+	if err := s.note(k.Put(id, "qwdtt-cli "+name, value)); err != nil {
 		return "", fmt.Errorf("не удалось записать секрет %q: %w", name, err)
 	}
 	data.Secrets[id] = secretEntry{Name: name, Store: keyringScheme}
@@ -233,12 +236,13 @@ func (s *store) Get(ref string) (string, error) {
 }
 
 func (s *store) getKeyring(ref, id string) (string, error) {
-	k, err := s.keyring()
+	k, err := s.openKeyring()
 	if err != nil {
 		return "", fmt.Errorf("секрет %q: %w", ref, err)
 	}
 	defer k.Close()
 	value, err := k.Get(id)
+	s.note(err)
 	if errors.Is(err, errKeyringNotFound) {
 		return "", fmt.Errorf("секрет %q не найден в связке ключей — возможно, его удалили из неё вручную", ref)
 	}
@@ -254,12 +258,12 @@ func (s *store) Delete(ref string) error {
 		return err
 	}
 	if scheme == keyringScheme {
-		k, err := s.keyring()
+		k, err := s.openKeyring()
 		if err != nil {
 			return fmt.Errorf("секрет %q: %w", ref, err)
 		}
 		defer k.Close()
-		if err := k.Delete(id); err != nil && !errors.Is(err, errKeyringNotFound) {
+		if err := s.note(k.Delete(id)); err != nil && !errors.Is(err, errKeyringNotFound) {
 			return fmt.Errorf("секрет %q: %w", ref, err)
 		}
 	}
@@ -275,6 +279,26 @@ func (s *store) Delete(ref string) error {
 	}
 	delete(data.Secrets, id)
 	return s.write(data)
+}
+
+// openKeyring открывает связку ключей. Если в этом хранилище её уже
+// отказались разблокировать — окно закрыли или не ответили, — связка не
+// открывается, а возвращается та же ошибка: иначе команда, которой нужно
+// несколько секретов (`qwdtt-cli profile show`), показывала бы окно
+// разблокировки на каждый.
+func (s *store) openKeyring() (keyring, error) {
+	if s.refused != nil {
+		return nil, s.refused
+	}
+	return s.keyring()
+}
+
+// note запоминает отказ разблокировать связку и возвращает err как есть.
+func (s *store) note(err error) error {
+	if errors.Is(err, ErrKeyringLocked) {
+		s.refused = err
+	}
+	return err
 }
 
 // splitRef разбирает ссылку и убеждается, что она из здешнего хранилища:

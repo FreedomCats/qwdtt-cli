@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -175,6 +176,43 @@ func TestKeyringPutErrorIsNotFallback(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Errorf("файл хранилища создан: %v", err)
+	}
+}
+
+// Окно разблокировки закрыли — следующие секреты того же хранилища связку
+// не открывают: второе окно на тот же отказ не появляется. Прочие ошибки
+// (записи нет) не запоминаются.
+func TestKeyringRefusalSticks(t *testing.T) {
+	k := newFakeKeyring()
+	s := keyringStore(filepath.Join(t.TempDir(), SecretsFileName), k)
+	password, err := s.Put("home.password", "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hashes, err := s.Put("home.vk_hashes", "y")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Get(keyringScheme + ":0123456789abcdef"); err == nil {
+		t.Fatal("Get несуществующей записи прошёл")
+	}
+
+	k.err = fmt.Errorf("%w: окно закрыто без ответа", ErrKeyringLocked)
+	opened := k.opened
+	if _, err := s.Get(password); !errors.Is(err, ErrKeyringLocked) {
+		t.Fatalf("Get: %v", err)
+	}
+	// Связку тем временем разблокировали — хранилище всё равно её не открывает:
+	// отказ действует до конца команды.
+	k.err = nil
+	if _, err := s.Get(hashes); !errors.Is(err, ErrKeyringLocked) {
+		t.Errorf("второй Get: %v", err)
+	}
+	if err := s.Delete(hashes); !errors.Is(err, ErrKeyringLocked) {
+		t.Errorf("Delete: %v", err)
+	}
+	if k.opened != opened+1 {
+		t.Errorf("связку открывали %d раз после отказа, ждали 1", k.opened-opened)
 	}
 }
 
