@@ -1,0 +1,16 @@
+diff --git a/go_client/main.go b/go_client/main.go
+index 108af15..c08b2b2 100644
+--- a/go_client/main.go
++++ b/go_client/main.go
+@@ -77,6 +77,11 @@ func classifyHashCheckError(err error) (string, string) {
+ 	if err == nil {
+ 		return "ok", ""
+ 	}
++	// Тип ошибки надёжнее текста: «Invalid join link (error_code=954)» не
++	// содержит ни одной строки из проверок ниже.
++	if callErr, ok := asCallUnavailableError(err); ok {
++		return "dead", fmt.Sprintf("Звонок не найден или закрыт (error_code=%d)", callErr.Code)
++	}
+ 	text := strings.ToLower(err.Error())
+ 	switch {
+ 	case strings.Contains(text, "captcha_required") || strings.Contains(text, "captcha_wait_required"):

@@ -1,0 +1,41 @@
+diff --git a/go_client/group.go b/go_client/group.go
+index 2cdf2bb..914fb13 100644
+--- a/go_client/group.go
++++ b/go_client/group.go
+@@ -76,7 +76,6 @@ func WorkerGroup(
+ 
+ 	log.Printf("[ГРУППА #%d] Креды OK, TURN: %v, %d воркеров", groupID, creds.TurnURLs, len(workerIDs))
+ 
+-	var configRequestInFlight int32
+ 	var wg sync.WaitGroup
+ 	var credsMu sync.RWMutex
+ 	var refreshMu sync.Mutex
+@@ -156,10 +155,9 @@ func WorkerGroup(
+ 					return
+ 				}
+ 
+-				getConf := false
+-				if shouldGetConfig && atomic.LoadInt32(&configSent) == 0 {
+-					getConf = atomic.CompareAndSwapInt32(&configRequestInFlight, 0, 1)
+-				}
++				// Конфиг просит каждый воркер, входящий в сеанс, пока он не получен:
++				// воркер, упёршийся в квоту (486), не должен держать запрос за всех.
++				getConf := shouldGetConfig && atomic.LoadInt32(&configSent) == 0
+ 				var cc chan<- string
+ 				if getConf {
+ 					cc = configCh
+@@ -175,12 +173,8 @@ func WorkerGroup(
+ 
+ 				quotaRetry := false
+ 				fastRetry := false
+-				if getConf {
+-					if configDelivered {
+-						atomic.StoreInt32(&configSent, 1)
+-					} else {
+-						atomic.StoreInt32(&configRequestInFlight, 0)
+-					}
++				if getConf && configDelivered {
++					atomic.StoreInt32(&configSent, 1)
+ 				}
+ 
+ 				if sessErr != nil {

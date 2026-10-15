@@ -1,0 +1,15 @@
+diff --git a/go_client/group.go b/go_client/group.go
+index 2cdf2bb..2e2e439 100644
+--- a/go_client/group.go
++++ b/go_client/group.go
+@@ -71,6 +71,10 @@ func WorkerGroup(
+ 		creds = &Credentials{User: user, Pass: pass, TurnURLs: turnURLs, CacheStreamID: credStreamID}
+ 	} else {
+ 		log.Printf("[ГРУППА #%d] Ошибка кредов: %v", groupID, err)
++		// Эстафету передаём и при неудаче: иначе следующая группа ждёт вечно.
++		if signalReady != nil {
++			close(signalReady)
++		}
+ 		return
+ 	}
+ 
