@@ -59,6 +59,9 @@ type env struct {
 	// так в тестах, где окна не открывают. Ошибка — окна не будет, и это
 	// не повод не подключаться: см. captchaSolver.
 	captchaWindow func(opts captcha.WebView2Options) (captcha.Solver, error)
+	// captchaBrowser собирает решатель капчи с браузером под управлением
+	// (Linux). Пусто — без него; так в тестах, где браузеров не запускают.
+	captchaBrowser func(opts captcha.BrowserOptions) (captcha.Solver, error)
 	// hashCheck подменяет core.RunHashCheck — проверку хешей в меню
 	// (menu_edit.go). Пусто — настоящая проверка; подменяют тесты, где сети нет.
 	hashCheck func(ctx context.Context, cfg core.Config, sink core.Sink) error
@@ -142,8 +145,9 @@ func Main(args []string, build Build) int {
 		build:   build,
 		openURL: captcha.OpenInBrowser,
 
-		captchaWindow: newCaptchaWindow,
-		signals:       true,
+		captchaWindow:  newCaptchaWindow,
+		captchaBrowser: newCaptchaBrowser,
+		signals:        true,
 	}
 	defer pauseBeforeExit(e)
 

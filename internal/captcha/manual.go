@@ -50,6 +50,10 @@ type ManualOptions struct {
 	// CLI, а не библиотеки, и тестам это не нужно. Готовая реализация рядом —
 	// OpenInBrowser.
 	Open func(rawURL string) error
+
+	// Hint — строка, которую стоит показать вместе с инструкцией: например,
+	// чем ручной режим можно заменить. Пусто — ничего.
+	Hint string
 }
 
 // Manual — консольный решатель.
@@ -91,6 +95,9 @@ func (m *Manual) prompt(req Request) {
 	left := req.Left(time.Now()).Round(time.Second)
 
 	fmt.Fprintf(out, "\nVK просит решить капчу. Время на это — %s.\n\n", left)
+	if m.opts.Hint != "" {
+		fmt.Fprintf(out, "%s\n\n", m.opts.Hint)
+	}
 	fmt.Fprintf(out, "  1. Откройте ссылку:\n     %s\n", req.RedirectURI)
 
 	if m.opts.Open != nil {

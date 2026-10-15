@@ -415,16 +415,19 @@ func requirementProblems(req datapath.Requirements) []string {
 	return problems
 }
 
-// captchaSolver выбирает решатель капчи: окно WebView2, где оно возможно
-// (E3), иначе консольный (E2). Консольный — запасное дно: работает всегда.
+// captchaSolver выбирает решатель капчи: окно WebView2 на Windows (E3),
+// браузер под управлением на Linux, иначе консольный (E2). Консольный —
+// запасное дно: работает всегда, и в него же уходит капча, если браузер не
+// запустился (fallbackCaptcha).
 //
-// Сообщения обоих уходят в stderr через out.aside, чтобы статусная строка
+// Сообщения всех уходят в stderr через out.aside, чтобы статусная строка
 // не встала посреди приглашения; консольный читает ответ со stdin команды.
 //
 // При kill-switch (ks не nil) консольный снимает его на время капчи: страницу
-// открывает браузер пользователя, а не qwdtt-cli (plan-e3.md, K4). Окно WebView2
-// ходит через прокси qwdtt-cli, соединяясь dial (сокетами qwdtt-cli мимо туннеля, W2), и
-// kill-switch не трогает; не поднялся прокси — окно без него, тоже со снятием.
+// открывает браузер пользователя, а не qwdtt-cli (plan-e3.md, K4). Окно
+// WebView2 и браузер под управлением ходят через прокси qwdtt-cli, соединяясь
+// dial (сокетами qwdtt-cli мимо туннеля, W2), и kill-switch не трогают; не
+// поднялся прокси — без него, тоже со снятием.
 func captchaSolver(e *env, out *printer, ks *killSwitchGuard, dial captcha.DialFunc) captcha.Solver {
 	wrap := func(s captcha.Solver) captcha.Solver {
 		if ks == nil {
@@ -432,38 +435,89 @@ func captchaSolver(e *env, out *printer, ks *killSwitchGuard, dial captcha.DialF
 		}
 		return killSwitchCaptcha{Solver: s, guard: ks}
 	}
-	console := wrap(captcha.NewManual(captcha.ManualOptions{In: e.stdin, Out: out.aside(e.stderr), Open: e.openURL}))
+	manual := captcha.ManualOptions{In: e.stdin, Out: out.aside(e.stderr), Open: e.openURL}
+	console := func() captcha.Solver { return wrap(captcha.NewManual(manual)) }
 
-	if e.captchaWindow == nil {
-		return console
-	}
 	// По SSH окно откроется не там, где сидит пользователь, а то и вовсе
 	// нигде: сеанс службы рабочего стола не имеет. Консоль же у него под рукой.
 	if os.Getenv("SSH_CONNECTION") != "" {
-		return console
+		return console()
+	}
+	var logf func(string, ...any)
+	if out.verbose {
+		logf = out.logf
 	}
 
-	opts := captcha.WebView2Options{Out: out.aside(e.stderr)}
-	if out.verbose {
-		opts.Logf = out.logf
-	}
-	window, err := e.captchaWindow(opts)
-	if err != nil {
+	if e.captchaWindow != nil {
+		window, err := proxiedSolver(func(dial captcha.DialFunc) (captcha.Solver, error) {
+			return e.captchaWindow(captcha.WebView2Options{Out: out.aside(e.stderr), Dial: dial, Logf: logf})
+		}, wrap, ks, dial, out.logf)
+		if err == nil {
+			return window
+		}
 		// Вне Windows окна и не ждут — предупреждать не о чем.
 		if !errors.Is(err, errors.ErrUnsupported) {
 			fmt.Fprintf(e.stderr, "Предупреждение: %v — капчу, если VK её попросит, придётся решать через консоль\n", err)
 		}
-		return console
+	}
+
+	if e.captchaBrowser != nil {
+		browser, err := proxiedSolver(func(dial captcha.DialFunc) (captcha.Solver, error) {
+			return e.captchaBrowser(captcha.BrowserOptions{Out: out.aside(e.stderr), Dial: dial, Logf: logf})
+		}, wrap, ks, dial, out.logf)
+		if err == nil {
+			return fallbackCaptcha{Solver: browser, fallback: console(), logf: out.logf}
+		}
+		if errors.Is(err, captcha.ErrNoBrowser) {
+			// Не ошибка: капча решится и в ручном режиме. Подсказка — там же,
+			// где она пригодится, а не при каждом запуске.
+			manual.Hint = "Браузер на Chromium (Chrome, Chromium, Яндекс Браузер, Edge, Brave) не найден. " +
+				"С ним капча решалась бы в окне, без консоли браузера."
+		} else if !errors.Is(err, errors.ErrUnsupported) {
+			fmt.Fprintf(e.stderr, "Предупреждение: %v — капчу, если VK её попросит, придётся решать через консоль\n", err)
+		}
+	}
+	return console()
+}
+
+// proxiedSolver собирает решатель с окном. Без kill-switch — как есть.
+// При kill-switch окно ходит через прокси qwdtt-cli и kill-switch не снимает;
+// запасное — то же окно без прокси, со снятием (proxiedCaptcha). Ошибка —
+// окна не будет вовсе.
+func proxiedSolver(build func(dial captcha.DialFunc) (captcha.Solver, error),
+	wrap func(captcha.Solver) captcha.Solver, ks *killSwitchGuard, dial captcha.DialFunc,
+	logf func(string, ...any)) (captcha.Solver, error) {
+
+	direct, err := build(nil)
+	if err != nil {
+		return nil, err
 	}
 	if ks == nil || dial == nil {
-		return wrap(window)
+		return wrap(direct), nil
 	}
-	opts.Dial = dial
-	proxied, err := e.captchaWindow(opts)
+	proxied, err := build(dial)
 	if err != nil {
-		return wrap(window)
+		return wrap(direct), nil
 	}
-	return proxiedCaptcha{Solver: proxied, direct: wrap(window), logf: out.logf}
+	return proxiedCaptcha{Solver: proxied, direct: wrap(direct), logf: logf}, nil
+}
+
+// fallbackCaptcha — браузер под управлением с ручным режимом про запас:
+// браузер не запустился (captcha.ErrBrowser — человек окна с капчей не
+// видел), и та же капча решается в fallback, пока у ядра есть время.
+type fallbackCaptcha struct {
+	captcha.Solver
+	fallback captcha.Solver
+	logf     func(string, ...any)
+}
+
+func (s fallbackCaptcha) Solve(ctx context.Context, req captcha.Request) (string, error) {
+	token, err := s.Solver.Solve(ctx, req)
+	if !errors.Is(err, captcha.ErrBrowser) || ctx.Err() != nil {
+		return token, err
+	}
+	s.logf("Внимание: %v — капча решается через консоль браузера", err)
+	return s.fallback.Solve(ctx, req)
 }
 
 // newCaptchaWindow — настоящий решатель с окном для env.captchaWindow.
@@ -474,6 +528,15 @@ func newCaptchaWindow(opts captcha.WebView2Options) (captcha.Solver, error) {
 		return nil, err
 	}
 	return window, nil
+}
+
+// newCaptchaBrowser — настоящий решатель с браузером для env.captchaBrowser.
+func newCaptchaBrowser(opts captcha.BrowserOptions) (captcha.Solver, error) {
+	browser, err := captcha.NewBrowser(opts)
+	if err != nil {
+		return nil, err
+	}
+	return browser, nil
 }
 
 // ──────────────────────────── запуск ────────────────────────────

@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/FreedomCats/qwdtt-cli/internal/captcha"
 	"github.com/FreedomCats/qwdtt-cli/internal/config"
@@ -453,7 +454,8 @@ func TestConnectStopsOnCancelledContext(t *testing.T) {
 
 // windowSolver — подставной решатель с окном: captchaSolver должен отдать
 // именно его, а не консольный. proxied — собран с Dial (окно через прокси).
-type windowSolver struct{ proxied bool }
+// browser — это браузер под управлением, а не окно WebView2.
+type windowSolver struct{ proxied, browser bool }
 
 func (windowSolver) Solve(context.Context, captcha.Request) (string, error) { return "", nil }
 func (windowSolver) NeedsHuman() bool                                       { return true }
@@ -468,29 +470,56 @@ func TestCaptchaSolverChoice(t *testing.T) {
 	unsupported := func(captcha.WebView2Options) (captcha.Solver, error) {
 		return nil, fmt.Errorf("окно капчи есть только на Windows: %w", errors.ErrUnsupported)
 	}
+	browser := func(opts captcha.BrowserOptions) (captcha.Solver, error) {
+		return windowSolver{proxied: opts.Dial != nil, browser: true}, nil
+	}
+	noBrowser := func(captcha.BrowserOptions) (captcha.Solver, error) {
+		return nil, captcha.ErrNoBrowser
+	}
+	browserUnsupported := func(captcha.BrowserOptions) (captcha.Solver, error) {
+		return nil, fmt.Errorf("браузер под управлением есть только на Linux: %w", errors.ErrUnsupported)
+	}
 	dial := (&net.Dialer{}).DialContext
 
+	const (
+		console = iota
+		gotWindow
+		gotBrowser
+	)
 	cases := []struct {
 		name       string
 		window     func(captcha.WebView2Options) (captcha.Solver, error)
+		browser    func(captcha.BrowserOptions) (captcha.Solver, error)
 		ssh        bool
 		killSwitch bool
 		dial       captcha.DialFunc
-		wantWindow bool
+		want       int
 		wantProxy  bool
 		wantWarn   bool
 	}{
-		{name: "окно есть", window: window, wantWindow: true},
+		{name: "окно есть", window: window, want: gotWindow},
 		// Без kill-switch прокси не нужен, даже если есть чем соединяться.
-		{name: "окно есть, без kill-switch, диалер", window: window, dial: dial, wantWindow: true},
-		{name: "окно есть, kill-switch", window: window, killSwitch: true, dial: dial, wantWindow: true, wantProxy: true},
+		{name: "окно есть, без kill-switch, диалер", window: window, dial: dial, want: gotWindow},
+		{name: "окно есть, kill-switch", window: window, killSwitch: true, dial: dial, want: gotWindow, wantProxy: true},
 		// Нечем соединяться — окно само, со снятием kill-switch.
-		{name: "окно есть, kill-switch, без диалера", window: window, killSwitch: true, wantWindow: true},
+		{name: "окно есть, kill-switch, без диалера", window: window, killSwitch: true, want: gotWindow},
 		{name: "окна не заводили", window: nil},
 		{name: "окна не заводили, kill-switch", window: nil, killSwitch: true, dial: dial},
 		{name: "нет Runtime", window: missing, wantWarn: true},
 		{name: "не Windows", window: unsupported},
 		{name: "по SSH", window: window, ssh: true},
+		// Окно WebView2 важнее браузера: на Windows браузера и не бывает.
+		{name: "окно и браузер", window: window, browser: browser, want: gotWindow},
+		{name: "браузер", window: unsupported, browser: browser, want: gotBrowser},
+		{name: "браузер, kill-switch", window: unsupported, browser: browser, killSwitch: true, dial: dial,
+			want: gotBrowser, wantProxy: true},
+		{name: "браузер, kill-switch, без диалера", window: unsupported, browser: browser, killSwitch: true,
+			want: gotBrowser},
+		{name: "браузер по SSH", window: unsupported, browser: browser, ssh: true},
+		{name: "нет Runtime, браузер", window: missing, browser: browser, want: gotBrowser, wantWarn: true},
+		// Браузера нет — не предупреждение: ручной режим подскажет сам.
+		{name: "нет браузера", window: unsupported, browser: noBrowser},
+		{name: "браузер не на Linux", window: missing, browser: browserUnsupported, wantWarn: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -501,12 +530,24 @@ func TestCaptchaSolverChoice(t *testing.T) {
 			t.Setenv("SSH_CONNECTION", ssh)
 
 			var out, errOut strings.Builder
-			e := &env{stdout: &out, stderr: &errOut, stdin: strings.NewReader(""), captchaWindow: tc.window}
+			e := &env{stdout: &out, stderr: &errOut, stdin: strings.NewReader(""),
+				captchaWindow: tc.window, captchaBrowser: tc.browser}
 			var ks *killSwitchGuard
 			if tc.killSwitch {
 				ks = &killSwitchGuard{session: &fakeLockdownSession{}, logf: func(string, ...any) {}}
 			}
 			solver := captchaSolver(e, newPrinter(&out, false), ks, tc.dial)
+
+			// Браузер — с ручным режимом про запас.
+			if fallback, ok := solver.(fallbackCaptcha); ok {
+				if tc.want != gotBrowser {
+					t.Errorf("ручной режим про запас у %T", fallback.Solver)
+				}
+				checkConsole(t, fallback.fallback, ks)
+				solver = fallback.Solver
+			} else if tc.want == gotBrowser {
+				t.Errorf("у браузера нет ручного режима про запас: %T", solver)
+			}
 
 			// Окно через прокси kill-switch не снимает; снимает его запасное
 			// окно без прокси.
@@ -521,29 +562,116 @@ func TestCaptchaSolverChoice(t *testing.T) {
 				solver = proxied.direct
 			}
 
-			if wrapped, ok := solver.(killSwitchCaptcha); ok {
-				if !tc.killSwitch || wrapped.guard != ks {
-					t.Errorf("обёртка kill-switch: %+v, kill-switch: %v", wrapped, tc.killSwitch)
+			if tc.want == console {
+				checkConsole(t, solver, ks)
+			} else {
+				solver = unwrapKillSwitch(t, solver, ks)
+				w, isWindow := solver.(windowSolver)
+				if !isWindow || w.browser != (tc.want == gotBrowser) {
+					t.Errorf("решатель %#v, ожидался %d", solver, tc.want)
 				}
-				solver = wrapped.Solver
-			} else if tc.killSwitch {
-				t.Errorf("решатель %T не снимает kill-switch на время капчи", solver)
-			}
-
-			w, isWindow := solver.(windowSolver)
-			if isWindow != tc.wantWindow {
-				t.Errorf("решатель %T, окно ожидалось: %v", solver, tc.wantWindow)
-			}
-			if isWindow && w.proxied {
-				t.Error("окно без обёртки прокси собрано с Dial")
-			}
-			if _, isConsole := solver.(*captcha.Manual); !tc.wantWindow && !isConsole {
-				t.Errorf("решатель %T, ожидался консольный", solver)
+				if w.proxied {
+					t.Error("окно без обёртки прокси собрано с Dial")
+				}
 			}
 			warned := strings.Contains(errOut.String(), "Предупреждение")
 			if warned != tc.wantWarn {
 				t.Errorf("предупреждение: %v, ожидалось: %v; stderr: %q", warned, tc.wantWarn, errOut.String())
 			}
 		})
+	}
+}
+
+// unwrapKillSwitch снимает обёртку kill-switch: она должна быть ровно тогда,
+// когда kill-switch включён.
+func unwrapKillSwitch(t *testing.T, solver captcha.Solver, ks *killSwitchGuard) captcha.Solver {
+	t.Helper()
+	if wrapped, ok := solver.(killSwitchCaptcha); ok {
+		if ks == nil || wrapped.guard != ks {
+			t.Errorf("обёртка kill-switch: %+v, kill-switch: %v", wrapped, ks != nil)
+		}
+		return wrapped.Solver
+	}
+	if ks != nil {
+		t.Errorf("решатель %T не снимает kill-switch на время капчи", solver)
+	}
+	return solver
+}
+
+func checkConsole(t *testing.T, solver captcha.Solver, ks *killSwitchGuard) {
+	t.Helper()
+	if _, ok := unwrapKillSwitch(t, solver, ks).(*captcha.Manual); !ok {
+		t.Errorf("решатель %T, ожидался консольный", solver)
+	}
+}
+
+// Браузер не запустился — та же капча в ручном режиме. Прочие исходы
+// браузера — как есть: человек окно видел, и второй раз его не просят.
+func TestFallbackCaptcha(t *testing.T) {
+	cases := []struct {
+		name         string
+		err          error
+		wantFallback bool
+	}{
+		{name: "токен"},
+		{name: "окно закрыто", err: captcha.ErrWindowClosed},
+		{name: "отказ VK", err: errors.New("VK отказал: 14")},
+		{name: "браузер не запустился", err: fmt.Errorf("%w: exit status 1", captcha.ErrBrowser), wantFallback: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &fakeLockdownSession{}
+			browser := &stepSolver{session: session, token: "токен браузера", err: tc.err}
+			manual := &stepSolver{session: session, token: "токен вручную"}
+			var logged []string
+			solver := fallbackCaptcha{Solver: browser, fallback: manual,
+				logf: func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }}
+
+			got, err := solver.Solve(context.Background(), captcha.Request{})
+			if manual.called != tc.wantFallback {
+				t.Fatalf("ручной режим: %v, ожидалось: %v", manual.called, tc.wantFallback)
+			}
+			switch {
+			case tc.wantFallback:
+				if got != "токен вручную" || err != nil {
+					t.Errorf("Solve = %q, %v", got, err)
+				}
+				if len(logged) != 1 || !strings.Contains(logged[0], "через консоль браузера") {
+					t.Errorf("строки: %q", logged)
+				}
+			case tc.err != nil:
+				if !errors.Is(err, tc.err) {
+					t.Errorf("ошибка %v, ожидалась %v", err, tc.err)
+				}
+			default:
+				if got != "токен браузера" || err != nil {
+					t.Errorf("Solve = %q, %v", got, err)
+				}
+			}
+		})
+	}
+
+	// Срок вышел — ручной режим уже не успеть.
+	browser := &stepSolver{session: &fakeLockdownSession{}, err: captcha.ErrBrowser}
+	manual := &stepSolver{session: &fakeLockdownSession{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	solver := fallbackCaptcha{Solver: browser, fallback: manual, logf: func(string, ...any) {}}
+	if _, err := solver.Solve(ctx, captcha.Request{}); !errors.Is(err, captcha.ErrBrowser) || manual.called {
+		t.Errorf("после срока: %v, ручной режим: %v", err, manual.called)
+	}
+}
+
+// Браузера нет — ручной режим подсказывает, что его можно заменить.
+func TestCaptchaSolverNoBrowserHint(t *testing.T) {
+	t.Setenv("SSH_CONNECTION", "")
+	var out, errOut strings.Builder
+	e := &env{stdout: &out, stderr: &errOut, stdin: strings.NewReader("\n"),
+		captchaBrowser: func(captcha.BrowserOptions) (captcha.Solver, error) { return nil, captcha.ErrNoBrowser }}
+	solver := captchaSolver(e, newPrinter(&out, false), nil, nil)
+
+	_, _ = solver.Solve(context.Background(), captcha.Request{RedirectURI: "https://id.vk.com/", Deadline: time.Now().Add(time.Minute)})
+	if !strings.Contains(errOut.String(), "Браузер на Chromium") {
+		t.Errorf("нет подсказки о браузере: %q", errOut.String())
 	}
 }

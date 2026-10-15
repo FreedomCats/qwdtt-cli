@@ -28,7 +28,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -37,21 +36,11 @@ import (
 	webview2 "github.com/jchv/go-webview2"
 	"github.com/jchv/go-webview2/webviewloader"
 	"golang.org/x/sys/windows"
-
-	"github.com/FreedomCats/qwdtt-cli/internal/app"
 )
 
 // bindingName — глобальная функция, через которую перехватчик отдаёт
 // результат в Go. Заводится Bind.
 const bindingName = "__qwdttCliCaptchaResult"
-
-// profilePrefix — начало имени временного каталога профиля WebView2 в %TEMP%.
-const profilePrefix = app.Name + "-captcha-"
-
-// staleProfileAge — каталог профиля старше этого считается брошенным и
-// убирается при следующем запуске. Окно капчи живёт не дольше двух минут,
-// так что час — с большим запасом: чужой живой профиль под руку не попадёт.
-const staleProfileAge = time.Hour
 
 // WebView2Options — настройки решателя с окном.
 type WebView2Options struct {
@@ -114,12 +103,6 @@ func NewWebView2(opts WebView2Options) (*WebView2, error) {
 
 // NeedsHuman: да — решает человек, окно только показывает страницу.
 func (*WebView2) NeedsHuman() bool { return true }
-
-// outcome — чем кончилось окно.
-type outcome struct {
-	token string
-	err   error
-}
 
 // Solve открывает окно со страницей капчи и ждёт токена из перехватчика.
 //
@@ -255,7 +238,7 @@ func (s *WebView2) Solve(ctx context.Context, req Request) (string, error) {
 			return got.token, got.err
 		default:
 		}
-		return "", errors.New("окно капчи закрыто")
+		return "", ErrWindowClosed
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
@@ -337,32 +320,4 @@ func windowTitle(req Request) string {
 		return "Капча VK — qwdtt-cli"
 	}
 	return "Капча VK — ответить до " + req.Deadline.Format("15:04:05")
-}
-
-// removeProfile удаляет временный профиль WebView2.
-//
-// Сразу не выйдет: процессы msedgewebview2.exe держат файлы каталога ещё
-// какое-то время после закрытия окна. Поэтому несколько попыток, а при неудаче
-// каталог остаётся в %TEMP%. Это не ошибка — секретов в нём нет, а следующий
-// запуск уберёт его по возрасту (sweepStaleProfiles).
-func removeProfile(dir string) {
-	for attempt := 0; attempt < 40; attempt++ {
-		if err := os.RemoveAll(dir); err == nil {
-			return
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-}
-
-// sweepStaleProfiles убирает профили, брошенные прошлыми запусками: те, что
-// removeProfile не успел удалить до конца процесса.
-func sweepStaleProfiles() {
-	matches, _ := filepath.Glob(filepath.Join(os.TempDir(), profilePrefix+"*"))
-	for _, dir := range matches {
-		info, err := os.Stat(dir)
-		if err != nil || !info.IsDir() || time.Since(info.ModTime()) < staleProfileAge {
-			continue
-		}
-		_ = os.RemoveAll(dir)
-	}
 }

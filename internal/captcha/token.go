@@ -23,6 +23,16 @@ var ErrSlider = errors.New("VK показал слайдер")
 // ErrNoToken — в ответе не нашлось ни токена, ни внятной ошибки.
 var ErrNoToken = errors.New("в ответе VK нет success_token")
 
+// ErrWindowClosed — человек закрыл окно капчи, не решив её. Ядро получит отказ
+// сразу и пойдёт дальше, а не выстоит весь таймаут.
+var ErrWindowClosed = errors.New("окно капчи закрыто")
+
+// outcome — чем кончилось окно капчи: токеном или ошибкой.
+type outcome struct {
+	token string
+	err   error
+}
+
 // checkResponse — ответ VK на captchaNotRobot.check. Разобраны только те поля,
 // которые что-то значат для решателя; остальное VK волен менять.
 type checkResponse struct {
