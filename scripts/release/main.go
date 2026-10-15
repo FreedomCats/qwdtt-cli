@@ -1,5 +1,5 @@
-// Команда release собирает релиз qwdtt-cli: три бинаря, zip для Windows и
-// tar.gz для Linux и macOS.
+// Команда release собирает релиз qwdtt-cli: бинари для каждой платформы, zip
+// для Windows и tar.gz для Linux и macOS.
 //
 //	go run ./scripts/release
 //	go run ./scripts/release -version 0.1.0
@@ -19,12 +19,14 @@
 //
 //	dist/qwdtt-cli_<версия>_windows_amd64/qwdtt-cli.exe
 //	dist/qwdtt-cli_<версия>_linux_amd64/qwdtt-cli
+//	dist/qwdtt-cli_<версия>_linux_arm64/qwdtt-cli
 //	dist/qwdtt-cli_<версия>_darwin_arm64/qwdtt-cli
 //	dist/qwdtt-cli_<версия>_windows_amd64.zip
 //	    каталог qwdtt-cli_<версия>_windows_amd64/ с qwdtt-cli.exe, wintun.dll,
 //	    wintun-LICENSE.txt, THIRD_PARTY_NOTICES.txt, qwdtt-cli.example.toml,
 //	    LICENSE, README.md
 //	dist/qwdtt-cli_<версия>_linux_amd64.tar.gz
+//	dist/qwdtt-cli_<версия>_linux_arm64.tar.gz
 //	dist/qwdtt-cli_<версия>_darwin_arm64.tar.gz
 //	    каталог qwdtt-cli_<версия>_<платформа>/ с qwdtt-cli,
 //	    THIRD_PARTY_NOTICES.txt, qwdtt-cli.example.toml, LICENSE, README.md
@@ -53,7 +55,7 @@
 //	                 Содержимое для собираемых платформ перезаписывается, чужие
 //	                 файлы не трогаются
 //	-platforms       платформы через запятую в виде os/arch; по умолчанию
-//	                 windows/amd64,linux/amd64,darwin/arm64
+//	                 windows/amd64,linux/amd64,linux/arm64,darwin/arm64
 //	-nozip           не собирать архивы — ни zip, ни tar.gz (и не брать wintun.dll)
 //	-wintun-archive  уже скачанный wintun-<версия>.zip — сборка без сети
 //
@@ -91,7 +93,7 @@ type options struct {
 
 func main() {
 	var o options
-	platforms := flag.String("platforms", "windows/amd64,linux/amd64,darwin/arm64", "платформы через запятую в виде os/arch")
+	platforms := flag.String("platforms", "windows/amd64,linux/amd64,linux/arm64,darwin/arm64", "платформы через запятую в виде os/arch")
 	flag.StringVar(&o.Version, "version", "", "строка версии (по умолчанию git describe --tags --always --dirty)")
 	flag.StringVar(&o.Out, "out", "", "каталог результата (по умолчанию dist в корне репозитория)")
 	flag.BoolVar(&o.NoZip, "nozip", false, "не собирать архивы и не брать wintun.dll")

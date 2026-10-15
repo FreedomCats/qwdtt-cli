@@ -897,7 +897,8 @@ netlink (`FlushTable` + правила + `Flush`). Метка `SO_MARK` у со�
 ходит через прокси капчи на `lo`, а прокси — сокетами `qwdtt-cli` с меткой, как окно WebView2
 на Windows (§09).
 
-Поставка — `qwdtt-cli_<версия>_linux_amd64.tar.gz` из `go run ./scripts/release`: каталог со
+Поставка — `qwdtt-cli_<версия>_linux_amd64.tar.gz` и `…_linux_arm64.tar.gz` из
+`go run ./scripts/release`: каталог со
 статическим `qwdtt-cli` (`CGO_ENABLED=0`, без glibc, 0755), `LICENSE`,
 `THIRD_PARTY_NOTICES.txt`, `README.md`, `qwdtt-cli.example.toml`. Архив пишет сам скрипт, а не
 `tar` системы, в формате ustar с фиксированным временем записей — права на исполнение не

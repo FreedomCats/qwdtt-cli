@@ -24,6 +24,7 @@ func TestRun(t *testing.T) {
 	dir := writeFiles(t,
 		"qwdtt-cli_v0.2.0_darwin_arm64.tar.gz",
 		"qwdtt-cli_v0.2.0_freebsd_amd64.tar.gz",
+		"qwdtt-cli_v0.2.0_linux_arm64.tar.gz",
 		"qwdtt-cli_v0.2.0_linux_amd64.tar.gz",
 		"qwdtt-cli_v0.2.0_windows_amd64.zip",
 		"SHA256SUMS.txt",
@@ -37,6 +38,7 @@ func TestRun(t *testing.T) {
 	want := "## Скачать\n\n" +
 		"- **Windows** (x86-64): [qwdtt-cli_v0.2.0_windows_amd64.zip](" + d + "qwdtt-cli_v0.2.0_windows_amd64.zip)\n" +
 		"- **Linux** (x86-64): [qwdtt-cli_v0.2.0_linux_amd64.tar.gz](" + d + "qwdtt-cli_v0.2.0_linux_amd64.tar.gz)\n" +
+		"- **Linux** (ARM64): [qwdtt-cli_v0.2.0_linux_arm64.tar.gz](" + d + "qwdtt-cli_v0.2.0_linux_arm64.tar.gz)\n" +
 		"- **macOS** (ARM64, только режим `socks`): [qwdtt-cli_v0.2.0_darwin_arm64.tar.gz](" + d + "qwdtt-cli_v0.2.0_darwin_arm64.tar.gz)\n" +
 		"- **freebsd** (x86-64): [qwdtt-cli_v0.2.0_freebsd_amd64.tar.gz](" + d + "qwdtt-cli_v0.2.0_freebsd_amd64.tar.gz)\n" +
 		"- **Исходники**: [zip](https://github.com/owner/repo/archive/refs/tags/v0.2.0.zip) · " +

@@ -73,9 +73,10 @@
 администратора — из меню `qwdtt-cli` попросит их сам — и `wintun.dll`: она уже лежит в архиве
 и должна оставаться рядом с `qwdtt-cli.exe`.
 
-Для Linux готовая сборка — архив `qwdtt-cli_<версия>_linux_amd64.tar.gz`. В нём каталог
-с тем же именем: `qwdtt-cli`, пример настроек, лицензия, `THIRD_PARTY_NOTICES.txt` и этот
-файл.
+Для Linux готовая сборка — архив `qwdtt-cli_<версия>_linux_amd64.tar.gz`, а для 64-битных
+ARM-машин (Raspberry Pi 4 и 5 с 64-битной системой, ARM-серверы) —
+`qwdtt-cli_<версия>_linux_arm64.tar.gz`. В архиве каталог с тем же именем: `qwdtt-cli`,
+пример настроек, лицензия, `THIRD_PARTY_NOTICES.txt` и этот файл.
 
 ```
 tar xzf qwdtt-cli_<версия>_linux_amd64.tar.gz
