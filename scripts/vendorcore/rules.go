@@ -249,7 +249,7 @@ var replacements = []rule{
 	// делом заставляет искать, где же включается raw-режим.
 	//
 	// Диспетчер трогать не нужно: NewDispatcherPendingTUN и AttachTUN оставлены
-	// намеренно, raw-путь может пригодиться Э4 на Linux (см. doc/plan-e1.md).
+	// намеренно, raw-путь может пригодиться Э4 на Linux (см. doc/local/plan-e1.md — локальный журнал, вне git).
 	{
 		File:    "group.go",
 		Count:   1,
