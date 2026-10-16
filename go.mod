@@ -104,7 +104,7 @@ exclude golang.zx2c4.com/wireguard/tun/netstack v0.0.0-20220703234212-c31a7b1ab4
 // («bulkBarrierPreWrite: unaligned arguments», найдено живым прогоном S1 Э2).
 // В форке одна правка, malloc.go, с тестом; апстрим с 2024 года не
 // развивается. Регрессия у нас — TestDNSGuardUnderGC в internal/winsys.
-replace github.com/tailscale/wf => github.com/FreedomCats/tailscale-wf v0.0.0-20260101000000-d74d68cb0951
+replace github.com/tailscale/wf => github.com/FreedomCats/tailscale-wf v0.0.0-20261016000000-b03557658b85
 
 // jchv/go-webview2 — из своего форка: библиотека не передаёт опций окружения
 // WebView2, а переменную WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS рантайм с её
