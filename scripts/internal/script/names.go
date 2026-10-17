@@ -11,8 +11,7 @@ import (
 // остального (строчная раньше), знаки — раньше цифр, цифры — раньше букв,
 // а среди знаков «_» раньше «-», «-» раньше «.» (listen_unix.go раньше
 // listen.go, creds_vkcalls.go раньше creds.go). Порядок сверен с pwsh 7.4,
-// сортирующим по ICU; на Windows у .NET своя таблица (NLS), с ней порядок
-// не сверялся.
+// сортирующим по ICU, и с pwsh 7 на Windows — там .NET тоже сортирует по ICU.
 func SortNames(names []string) {
 	slices.SortStableFunc(names, CompareNames)
 }
