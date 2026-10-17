@@ -621,7 +621,14 @@ func (plan *connectPlan) run(ctx context.Context, e *env, verbose bool) error {
 	if killSwitch != nil && guard != nil {
 		captchaDial = (&net.Dialer{Control: guard.Control}).DialContext
 	}
-	dispatcher := captcha.New(captcha.Options{Solver: captchaSolver(e, out, killSwitch, captchaDial), Control: ctrl, Logf: out.logf})
+	// Stop — тот же ctx, что у tun.Run: по Ctrl+C окно капчи закрывается и
+	// ядро получает отказ сразу, а не после остановки туннеля (см. Stop).
+	dispatcher := captcha.New(captcha.Options{
+		Solver:  captchaSolver(e, out, killSwitch, captchaDial),
+		Control: ctrl,
+		Logf:    out.logf,
+		Stop:    ctx,
+	})
 	defer dispatcher.Close()
 	var own ownAdapter
 	tun, err := supervisor.NewTunnel(supervisor.Options{

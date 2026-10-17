@@ -126,6 +126,13 @@ type Options struct {
 	// HumanWindow — окно, короче которого не стоит просить человека.
 	// 0 — DefaultHumanWindow.
 	HumanWindow time.Duration
+
+	// Stop — остановка клиента (Ctrl+C). С её отменой решатель получает
+	// отмену, а ядро — отказ, не дожидаясь Close. Это не то же, что Close в
+	// defer: ядро ждёт ответа на капчу без своего ctx, до трёх минут, и
+	// остановка туннеля ждёт его воркер — до defer дело бы не дошло. nil —
+	// только Close.
+	Stop context.Context
 }
 
 // Dispatcher принимает события ядра и отвечает на них через решатель.
@@ -157,7 +164,11 @@ func New(opts Options) *Dispatcher {
 		opts.HumanWindow = DefaultHumanWindow
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	parent := opts.Stop
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
 	return &Dispatcher{
 		opts:    opts,
 		ctx:     ctx,

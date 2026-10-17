@@ -368,6 +368,42 @@ func TestCloseCancelsAndWaits(t *testing.T) {
 	drain(t)
 }
 
+// Остановка клиента освобождает ядро сама, без Close: решатель получает
+// отмену, ядро — отказ. Иначе Ctrl+C при открытом окне капчи ждал бы срока
+// капчи: ядро ждёт ответа без своего ctx, а Close зовётся уже после
+// остановки туннеля, которая ждёт ядро.
+func TestStopCancelsSolverAndDeclines(t *testing.T) {
+	solver := &fakeSolver{token: "не пригодится", block: make(chan struct{})}
+	defer close(solver.block)
+
+	stop, cancel := context.WithCancel(context.Background())
+	d := newDispatcher(t, Options{Solver: solver, Control: core.NewControl(), Stop: stop}, time.Hour)
+
+	d.Observe(required("manual"))
+	deadline := time.Now().Add(2 * time.Second)
+	for len(solver.seen()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(solver.seen()) == 0 {
+		t.Fatal("решатель так и не взялся за капчу")
+	}
+
+	cancel()
+	if got := answer(t, 2*time.Second); got != "error:cancelled" {
+		t.Fatalf("ядро получило %q, ожидался отказ по остановке", got)
+	}
+
+	// Ядро после отказа может спросить снова — остановленный клиент
+	// отказывает сразу, решатель не трогается.
+	d.Observe(required("manual"))
+	if got := answer(t, 2*time.Second); got != "error:cancelled" {
+		t.Errorf("новая просьба после остановки: ядро получило %q, ожидался отказ", got)
+	}
+	if n := len(solver.seen()); n != 1 {
+		t.Errorf("решатель вызван %d раз, ожидался один", n)
+	}
+}
+
 // После Close новые события не берутся в работу, но ядро всё равно получает
 // отказ — иначе воркер выстаивал бы таймаут на уже остановленном клиенте.
 func TestObserveAfterCloseDeclines(t *testing.T) {
