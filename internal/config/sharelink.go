@@ -76,6 +76,13 @@ func ParseShareLink(text string) (*ShareLink, error) {
 		}
 		text = decoded
 	}
+	// Ссылку вставляют скрытым вводом, и вставленная дважды подряд не видна.
+	// Разбор её бы принял: пароль — последний параметр qwdtt://config и
+	// последнее поле wdtt://, к нему приклеилось бы начало второй копии, и
+	// сервер отвечал бы «неверный пароль». «wdtt:» есть и в «qwdtt:».
+	if strings.Count(strings.ToLower(text), "wdtt:") > 1 {
+		return nil, errors.New("в тексте две ссылки подряд — похоже, ссылка вставлена дважды; вставьте её один раз")
+	}
 	if strings.HasPrefix(strings.ToLower(text), "wdtt:") {
 		return parseWDTTLink(text)
 	}

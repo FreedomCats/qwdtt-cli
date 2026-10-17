@@ -83,6 +83,12 @@ func TestParseShareLinkErrors(t *testing.T) {
 		"qwdtt://config?name=x&pass=secret1": "нет адреса",
 		"qwdtt://config?peer=example.org:0":  "неверный адрес",
 		"qwdtt://config?peer=%zz&pass=x":     "повреждена",
+		// Вставлена дважды: без проверки паролем стало бы
+		// «secret1qwdtt://config?name=x».
+		strings.Repeat("qwdtt://config?name=x&peer=example.org&pass=secret1", 2):           "дважды",
+		strings.Repeat("wdtt://203.0.113.10:56000:56001:9000:secret1:aaaaaaaaaaaaaaaa", 2): "дважды",
+		base64.StdEncoding.EncodeToString([]byte(strings.Repeat(
+			"qwdtt://config?peer=example.org&pass=secret1", 2))): "дважды",
 	} {
 		_, err := ParseShareLink(text)
 		if err == nil {
