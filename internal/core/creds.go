@@ -621,7 +621,7 @@ func solveCaptchaBySelectedMode(
 
 	switch getCaptchaMode() {
 	case "wv":
-		logf("[STREAM %d] [КАПЧА] WBV: режим из настроек Android (attempt %d)", streamID, attempt)
+		logf("[STREAM %d] [КАПЧА] режим wv: сразу окно капчи (attempt %d)", streamID, attempt)
 		return requestWebViewCaptcha(streamID, captchaErr, "selected", captchaSelectedWebViewTimeout)
 	case "rjs":
 		logf("[STREAM %d] [КАПЧА] RJS: Go v2 выбран в настройках (attempt %d)", streamID, attempt)

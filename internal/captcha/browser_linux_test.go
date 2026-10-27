@@ -80,6 +80,27 @@ func TestBrowserArgs(t *testing.T) {
 	}
 }
 
+// Флаги окна с автокликом встают перед адресом: после него Chromium флагов
+// уже не ждёт.
+func TestInsertArgs(t *testing.T) {
+	base := browserArgs("/tmp/profile", "")
+	args := insertArgs(insertArgs(base, autoWindowArgs...), offscreenArg)
+	if args[len(args)-1] != "about:blank" {
+		t.Fatalf("последним должен идти адрес: %q", args)
+	}
+	for _, want := range append([]string{offscreenArg}, autoWindowArgs...) {
+		if !slices.Contains(args, want) {
+			t.Errorf("нет %s: %q", want, args)
+		}
+	}
+	if got := strings.Join(base, " "); strings.Contains(got, "--no-startup-window") {
+		t.Errorf("insertArgs испортил исходную строку: %q", base)
+	}
+	if got := insertArgs(base); len(got) != len(base) {
+		t.Errorf("без флагов: %q", got)
+	}
+}
+
 func newBrowserStand(t *testing.T) *Browser {
 	t.Helper()
 	if os.Getenv("QWDTT_BROWSER") == "" {

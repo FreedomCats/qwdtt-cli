@@ -43,7 +43,8 @@ func TestConvertInsert(t *testing.T) {
 		"\t\tcaptchaAttempt := captchaErr.CaptchaAttempt\n" +
 		"\t\tfmt.Printf(\"CAPTCHA_SOLVE|%s|%s|%s\\n\", mode, captchaErr.RedirectURI, captchaErr.SessionToken)\n" +
 		"\t\tcaptchaManualWebViewTimeout   = 60 * time.Second\n" +
-		"\t\tcaptchaSelectedWebViewTimeout = 120 * time.Second\n}\n"
+		"\t\tcaptchaSelectedWebViewTimeout = 120 * time.Second\n" +
+		"\t\tlog.Printf(\"[STREAM %d] [КАПЧА] WBV: режим из настроек Android (attempt %d)\", streamID, attempt)\n}\n"
 	got, err := convertFile("creds.go", in)
 	if err != nil {
 		t.Fatal(err)
@@ -57,10 +58,14 @@ func TestConvertInsert(t *testing.T) {
 		"\t\temit(EventCaptchaRequired{Session: streamID,",
 		"captchaManualWebViewTimeout   = 180 * time.Second",
 		"captchaSelectedWebViewTimeout = 180 * time.Second",
+		"\t\tlogf(\"[STREAM %d] [КАПЧА] режим wv: сразу окно капчи (attempt %d)\", streamID, attempt)\n",
 	} {
 		if !strings.Contains(got, line) {
 			t.Errorf("нет %q в\n%s", line, got)
 		}
+	}
+	if strings.Contains(got, "Android") {
+		t.Errorf("строка режима wv по-прежнему ссылается на Android:\n%s", got)
 	}
 }
 

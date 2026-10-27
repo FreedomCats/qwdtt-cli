@@ -33,10 +33,12 @@ type outcome struct {
 	err   error
 }
 
-// checkResponse — ответ VK на captchaNotRobot.check. Разобраны только те поля,
-// которые что-то значат для решателя; остальное VK волен менять.
+// checkResponse — ответ VK на captchaNotRobot.check (и другие методы API
+// капчи, page.go). Разобраны только те поля, которые что-то значат для
+// решателя; остальное VK волен менять. Response nil — его в ответе нет.
 type checkResponse struct {
-	Response struct {
+	Response *struct {
+		Status          string `json:"status"`
 		SuccessToken    string `json:"success_token"`
 		ShowCaptchaType string `json:"show_captcha_type"`
 	} `json:"response"`
@@ -52,10 +54,11 @@ func successTokenFrom(body []byte) (string, error) {
 		return "", fmt.Errorf("ответ VK не разбирается как JSON: %w", err)
 	}
 
+	resp := parsed.Response
 	switch {
-	case parsed.Response.SuccessToken != "":
-		return parsed.Response.SuccessToken, nil
-	case parsed.Response.ShowCaptchaType == "slider":
+	case resp != nil && resp.SuccessToken != "":
+		return resp.SuccessToken, nil
+	case resp != nil && resp.ShowCaptchaType == "slider":
 		return "", ErrSlider
 	case len(parsed.Error) > 0:
 		return "", fmt.Errorf("VK отказал: %s", strings.TrimSpace(string(parsed.Error)))

@@ -253,6 +253,15 @@ var replacements = []rule{
 		Pattern: `(?m)^(\t+)captchaSelectedWebViewTimeout = 120 \* time\.Second$`,
 		Replace: to(`${1}captchaSelectedWebViewTimeout = 180 * time.Second`),
 	},
+	// Строка режима wv. Ядро печатает её на каждую капчу, и с -v «режим из
+	// настроек Android» сбивал пользователя с толку: Android здесь ни при чём,
+	// режим задаёт оболочка (config.Profile.Core).
+	{
+		File:    "creds.go",
+		Count:   1,
+		Pattern: `(?m)^(\t+)log\.Printf\("\[STREAM %d\] \[КАПЧА\] WBV: режим из настроек Android \(attempt %d\)", streamID, attempt\)$`,
+		Replace: to(`${1}log.Printf("[STREAM %d] [КАПЧА] режим wv: сразу окно капчи (attempt %d)", streamID, attempt)`),
+	},
 
 	// --- режим rawtun (задача B6) ---
 	// Режим принимал TUN-дескриптор от Android и на десктопе не поддерживается:
