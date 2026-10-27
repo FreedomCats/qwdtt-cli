@@ -79,9 +79,10 @@ Windows — 4 прогона из 4, Linux (X11) — 2 из 2 в `socks` и в `
 ## 3. Чем qwdtt-cli отличается
 
 - **Ядро — библиотека в процессе**, а не подпроцесс: режим капчи — поле
-  `core.Config.CaptchaMode` (`auto`, `rjs`, `wv`; сейчас оболочка его не задаёт — `auto`).
-  В режиме `wv` ядро (`solveCaptchaBySelectedMode`, `internal/core/creds.go`) сразу зовёт
-  окно `selected` на `captchaSelectedWebViewTimeout` = 120 с, нативный решатель не
+  `core.Config.CaptchaMode` (`auto`, `rjs`, `wv`; до А1 оболочка его не задавала — `auto`,
+  после А1 задаёт `wv`). В режиме `wv` ядро (`solveCaptchaBySelectedMode`,
+  `internal/core/creds.go`) сразу зовёт окно `selected` на `captchaSelectedWebViewTimeout`
+  (у апстрима 120 с, после А1 — 180 с правилом `vendorcore`), нативный решатель не
   вызывается. Срок диспетчер берёт из `core.CaptchaTimeout`.
 - **Мост — диспетчер** `internal/captcha/solver.go` (`Dispatcher`, `Solver`,
   `NeedsHuman`, `HumanWindow`), ответ — `core.Control.SubmitCaptcha`; в csqtt-cli на этом

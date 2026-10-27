@@ -215,7 +215,7 @@ var globalCaptchaLockout atomic.Int64
 const (
 	captchaAutoWebViewTimeout     = 10 * time.Second
 	captchaManualWebViewTimeout   = 180 * time.Second
-	captchaSelectedWebViewTimeout = 120 * time.Second
+	captchaSelectedWebViewTimeout = 180 * time.Second
 )
 
 // ─── Random delay ───

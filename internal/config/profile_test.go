@@ -28,6 +28,18 @@ func TestCoreDefaults(t *testing.T) {
 	}
 }
 
+// Режим капчи — не умолчание ядра (auto), а всегда wv: на капчу ядро сразу
+// зовёт окно, без своего решателя. Ни в каком профиле его не поменять.
+func TestCoreCaptchaModeWebView(t *testing.T) {
+	for _, src := range []string{minimalFile, fullFile} {
+		cfg := parse(t, src).Profiles["home"].Core()
+		cfg.Normalize()
+		if cfg.CaptchaMode != "wv" {
+			t.Errorf("CaptchaMode = %q, ожидался wv", cfg.CaptchaMode)
+		}
+	}
+}
+
 // Секреты Core не подставляет: ссылки разворачивает вызывающий (задача C2).
 func TestCoreLeavesSecretsEmpty(t *testing.T) {
 	cfg := parse(t, fullFile).Profiles["home"].Core()

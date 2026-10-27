@@ -42,7 +42,8 @@ func TestConvertInsert(t *testing.T) {
 		"\t\tlog.Printf(\"[STREAM %d] [Captcha] Solve failed: %v\", streamID, solveErr)\n" +
 		"\t\tcaptchaAttempt := captchaErr.CaptchaAttempt\n" +
 		"\t\tfmt.Printf(\"CAPTCHA_SOLVE|%s|%s|%s\\n\", mode, captchaErr.RedirectURI, captchaErr.SessionToken)\n" +
-		"\t\tcaptchaManualWebViewTimeout   = 60 * time.Second\n}\n"
+		"\t\tcaptchaManualWebViewTimeout   = 60 * time.Second\n" +
+		"\t\tcaptchaSelectedWebViewTimeout = 120 * time.Second\n}\n"
 	got, err := convertFile("creds.go", in)
 	if err != nil {
 		t.Fatal(err)
@@ -55,10 +56,46 @@ func TestConvertInsert(t *testing.T) {
 		"\t\temitStage(StageCaptcha, StageOK, streamID, \"\")\n\t\tcaptchaAttempt :=",
 		"\t\temit(EventCaptchaRequired{Session: streamID,",
 		"captchaManualWebViewTimeout   = 180 * time.Second",
+		"captchaSelectedWebViewTimeout = 180 * time.Second",
 	} {
 		if !strings.Contains(got, line) {
 			t.Errorf("нет %q в\n%s", line, got)
 		}
+	}
+}
+
+// Окна, на которые ядро зовёт человека, — manual и selected — по три минуты;
+// машинное auto остаётся как в апстриме. Фрагмент — как в апстримном creds.go.
+func TestConvertCaptchaTimeouts(t *testing.T) {
+	in := "package main\n\nconst (\n" +
+		"\tcaptchaAutoWebViewTimeout     = 10 * time.Second\n" +
+		"\tcaptchaManualWebViewTimeout   = 60 * time.Second\n" +
+		"\tcaptchaSelectedWebViewTimeout = 120 * time.Second\n)\n"
+
+	// Остальные правила creds.go в этот фрагмент не попадают, а каждое
+	// обязано совпасть: оставляем только сроки окон.
+	saved := replacements
+	t.Cleanup(func() { replacements = saved })
+	replacements = nil
+	for _, r := range saved {
+		if r.File == "creds.go" && strings.Contains(r.Pattern, "WebViewTimeout") {
+			replacements = append(replacements, r)
+		}
+	}
+	if len(replacements) != 2 {
+		t.Fatalf("правил сроков окон капчи %d, ожидалось 2", len(replacements))
+	}
+
+	got, err := convertFile("creds.go", in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "package core\n\nconst (\n" +
+		"\tcaptchaAutoWebViewTimeout     = 10 * time.Second\n" +
+		"\tcaptchaManualWebViewTimeout   = 180 * time.Second\n" +
+		"\tcaptchaSelectedWebViewTimeout = 180 * time.Second\n)\n"
+	if got != want {
+		t.Errorf("получилось:\n%s\nожидалось:\n%s", got, want)
 	}
 }
 

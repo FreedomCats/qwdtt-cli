@@ -132,7 +132,11 @@ type SocksSection struct {
 // вызывающий, развернув PasswordRef и VkHashesRef через хранилище (задача C2).
 // Поэтому core.Config.Validate после Core ещё не проходит — и не должен.
 //
-// Умолчания берутся из core.DefaultConfig целиком.
+// Умолчания берутся из core.DefaultConfig целиком. Кроме режима капчи: его
+// в профиле нет, и он всегда wv — на капчу ядро сразу просит окно (selected),
+// нативный решатель Go v2 не зовётся. Решатель ядра перестал разбирать
+// страницу капчи VK, и цепочка auto лишь тянула время до того же окна
+// (architecture.md, Р5).
 //
 // Полей datapath здесь нет: ядру всё равно, кто заберёт у него конфиг. Выбор
 // реализации (Profile.Datapath, умолчание — EffectiveDatapath) и её
@@ -142,6 +146,7 @@ func (p *Profile) Core() core.Config {
 	cfg := core.DefaultConfig()
 
 	cfg.Peer = p.Peer
+	cfg.CaptchaMode = "wv"
 
 	if p.Workers != 0 {
 		cfg.Workers = p.Workers

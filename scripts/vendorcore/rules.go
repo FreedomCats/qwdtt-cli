@@ -232,13 +232,26 @@ var replacements = []rule{
 	//
 	// Цена ошибки — задержка одного воркера: остальные в это время работают,
 	// а globalCaptchaLockout отсчитывается уже после отказа и от величины
-	// не зависит. Два соседних окна не трогаем: они машинные, и человека
-	// на них не зовут (internal/captcha/solver.go, NeedsHuman).
+	// не зависит. Окно auto не трогаем: оно машинное, и человека на него не
+	// зовут (internal/captcha/solver.go, NeedsHuman).
 	{
 		File:    "creds.go",
 		Count:   1,
 		Pattern: `(?m)^(\t+)captchaManualWebViewTimeout   = 60 \* time\.Second$`,
 		Replace: to(`${1}captchaManualWebViewTimeout   = 180 * time.Second`),
+	},
+	// Окно режима wv (задача «Автоклик капчи», doc/autoclick-captcha.md).
+	// Оболочка запускает ядро в wv: нативный решатель Go v2 перестал разбирать
+	// страницу капчи, и цепочка auto лишь тянула время до ручного окна. В wv
+	// ядро на капчу сразу просит окно selected — то же окно, что manual, и с
+	// тем же человеком за ним, поэтому и срок ему тот же. Две минуты апстрима
+	// впритык: автоклик в этом окне съедает часть срока, прежде чем окно
+	// выйдет человеку.
+	{
+		File:    "creds.go",
+		Count:   1,
+		Pattern: `(?m)^(\t+)captchaSelectedWebViewTimeout = 120 \* time\.Second$`,
+		Replace: to(`${1}captchaSelectedWebViewTimeout = 180 * time.Second`),
 	},
 
 	// --- режим rawtun (задача B6) ---

@@ -58,7 +58,9 @@ type Config struct {
 	VkAnonPath string
 	// VkCredsFile — файл с готовыми TURN-кредами от аккаунта VK.
 	VkCredsFile string
-	// CaptchaMode — auto, rjs или wv.
+	// CaptchaMode — auto, rjs или wv. Умолчание — auto, как у флага ядра;
+	// оболочка задаёт wv (config.Profile.Core): капча сразу уходит наружу,
+	// окном selected, без нативного решателя.
 	CaptchaMode string
 
 	// --- транспорт ---

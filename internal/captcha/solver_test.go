@@ -74,7 +74,7 @@ func (s *fakeSolver) seen() []Request {
 }
 
 // newDispatcher собирает диспетчер с коротким окном ядра: настоящие — десять
-// секунд, минута и две, и тест на таймаут шёл бы минуту.
+// секунд и три минуты, и тест на таймаут шёл бы минуты.
 func newDispatcher(t *testing.T, opts Options, window time.Duration) *Dispatcher {
 	t.Helper()
 	drain(t)
@@ -161,7 +161,8 @@ func TestUnknownModeReadsAsAuto(t *testing.T) {
 	}
 }
 
-// Срок берётся у ядра, а не выдумывается: три режима — три окна.
+// Срок берётся у ядра, а не выдумывается: у трёх режимов два срока —
+// десять секунд у auto и три минуты у manual и selected.
 func TestTimeoutFollowsCore(t *testing.T) {
 	d := New(Options{})
 	for _, mode := range []string{"auto", "manual", "selected", "невнятный"} {
@@ -171,6 +172,11 @@ func TestTimeoutFollowsCore(t *testing.T) {
 	}
 	if core.CaptchaTimeout("manual") <= core.CaptchaTimeout("auto") {
 		t.Error("окно ручного режима не длиннее автоматического — что-то не так с картой режимов")
+	}
+	// selected — то же окно человеку, что manual; срок ему поднят до того же
+	// правилом в scripts/vendorcore.
+	if core.CaptchaTimeout("selected") != core.CaptchaTimeout("manual") {
+		t.Errorf("окно selected %v, у manual %v", core.CaptchaTimeout("selected"), core.CaptchaTimeout("manual"))
 	}
 }
 
@@ -266,7 +272,7 @@ func TestHumanSolverRefusesShortWindow(t *testing.T) {
 	}
 }
 
-// А минуту ручного режима — предлагают.
+// А три минуты ручного режима — предлагают.
 func TestHumanSolverTakesLongWindow(t *testing.T) {
 	solver := &fakeSolver{human: true, token: "успел"}
 	d := newDispatcher(t, Options{
@@ -279,6 +285,43 @@ func TestHumanSolverTakesLongWindow(t *testing.T) {
 
 	if got := answer(t, 2*time.Second); got != "успел" {
 		t.Errorf("ядро получило %q, ожидался токен", got)
+	}
+}
+
+// Режим wv, в котором оболочка запускает ядро: на капчу сразу приходит
+// selected. Человек получает окно на полный срок ядра — тот же, что у manual,
+// за вычетом запаса, — а не отказ ErrTooShort.
+func TestHumanSolverTakesSelectedWindow(t *testing.T) {
+	solver := &fakeSolver{human: true, token: "решил-человек"}
+	drain(t)
+	d := New(Options{Solver: solver, Control: core.NewControl()})
+	t.Cleanup(func() {
+		d.Close()
+		drain(t)
+	})
+
+	before := time.Now()
+	d.Observe(required("selected"))
+	after := time.Now()
+
+	if got := answer(t, 2*time.Second); got != "решил-человек" {
+		t.Fatalf("ядро получило %q, ожидался токен", got)
+	}
+	calls := solver.seen()
+	if len(calls) != 1 {
+		t.Fatalf("решатель вызван %d раз, ожидался один", len(calls))
+	}
+	req := calls[0]
+	if req.Mode != ModeSelected {
+		t.Errorf("Mode = %q, ожидался %q", req.Mode, ModeSelected)
+	}
+	want := core.CaptchaTimeout("selected") - DefaultMargin
+	// Срок отсчитывается в Observe, от момента события.
+	if req.Deadline.Before(before.Add(want)) || req.Deadline.After(after.Add(want)) {
+		t.Errorf("срок %v, ожидалось %v: полный срок ядра минус запас", req.Deadline.Sub(before), want)
+	}
+	if want != core.CaptchaTimeout("manual")-DefaultMargin {
+		t.Errorf("срок selected %v отличается от manual", want)
 	}
 }
 
@@ -372,14 +415,23 @@ func TestCloseCancelsAndWaits(t *testing.T) {
 // отмену, ядро — отказ. Иначе Ctrl+C при открытом окне капчи ждал бы срока
 // капчи: ядро ждёт ответа без своего ctx, а Close зовётся уже после
 // остановки туннеля, которая ждёт ядро.
+//
+// Режимы — оба, в которых окно ждёт человека: manual цепочки auto и selected
+// режима wv.
 func TestStopCancelsSolverAndDeclines(t *testing.T) {
-	solver := &fakeSolver{token: "не пригодится", block: make(chan struct{})}
+	for _, mode := range []string{"manual", "selected"} {
+		t.Run(mode, func(t *testing.T) { testStopCancelsSolverAndDeclines(t, mode) })
+	}
+}
+
+func testStopCancelsSolverAndDeclines(t *testing.T, mode string) {
+	solver := &fakeSolver{human: true, token: "не пригодится", block: make(chan struct{})}
 	defer close(solver.block)
 
 	stop, cancel := context.WithCancel(context.Background())
 	d := newDispatcher(t, Options{Solver: solver, Control: core.NewControl(), Stop: stop}, time.Hour)
 
-	d.Observe(required("manual"))
+	d.Observe(required(mode))
 	deadline := time.Now().Add(2 * time.Second)
 	for len(solver.seen()) == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
@@ -395,7 +447,7 @@ func TestStopCancelsSolverAndDeclines(t *testing.T) {
 
 	// Ядро после отказа может спросить снова — остановленный клиент
 	// отказывает сразу, решатель не трогается.
-	d.Observe(required("manual"))
+	d.Observe(required(mode))
 	if got := answer(t, 2*time.Second); got != "error:cancelled" {
 		t.Errorf("новая просьба после остановки: ядро получило %q, ожидался отказ", got)
 	}
