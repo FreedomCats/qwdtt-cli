@@ -26,8 +26,9 @@ import (
 //
 // Он проверяет всё, кроме самой VK: окно, Bind и перехватчик на настоящем
 // движке, оба пути страницы (fetch и XMLHttpRequest), слайдер, отказ VK,
-// закрытие крестиком, отмену по ctx и уборку профиля. Страницы делают запрос
-// сами, без человека, так что окна мелькают и закрываются.
+// ERROR_LIMIT и ошибку initSession, закрытие крестиком, отмену по ctx и
+// уборку профиля; автоклик — autoclick_windows_test.go. Страницы делают
+// запрос сами, без человека, так что окна мелькают и закрываются.
 
 func newStandSolver(t *testing.T) *WebView2 {
 	t.Helper()
@@ -72,6 +73,36 @@ func TestWebView2VKError(t *testing.T) {
 	_, err := s.Solve(context.Background(), standRequest(srv.URL+"/error", 30*time.Second))
 	if err == nil || !strings.Contains(err.Error(), "VK отказал") || !strings.Contains(err.Error(), "14") {
 		t.Fatalf("ошибка %v, ожидался отказ VK с кодом 14", err)
+	}
+}
+
+// Окно у человека (manual, без автоклика): ERROR_LIMIT и ошибка VK на
+// initSession закрывают окно сразу, а не по сроку — решать в нём нечего.
+func TestWebView2PageOutcomes(t *testing.T) {
+	s := newStandSolver(t)
+	srv := newCaptchaStand(t)
+
+	for _, tc := range []struct {
+		scenario string
+		want     error
+	}{
+		{"limit", ErrLimit},
+		{"initerror", ErrPageInit},
+	} {
+		t.Run(tc.scenario, func(t *testing.T) {
+			before := profilesNow()
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			start := time.Now()
+			_, err := s.Solve(ctx, standRequest(srv.page(tc.scenario, "fetch"), 30*time.Second))
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("ошибка %v, ожидалась %v", err, tc.want)
+			}
+			if took := time.Since(start); took > 15*time.Second {
+				t.Errorf("окно закрылось через %s", took)
+			}
+			waitProfilesGone(t, before)
+		})
 	}
 }
 

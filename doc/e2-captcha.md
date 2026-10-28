@@ -195,7 +195,8 @@ func (s *WebView2) Solve(ctx context.Context, req captcha.Request) (string, erro
 >   прибитой нити решатель зовёт `CoInitializeEx(COINIT_APARTMENTTHREADED)` сам.
 > - Привязка одна, `__qwdttCliCaptchaResult(kind, value)`, а не две: так устроен перехватчик
 >   в `token.go`. `"slider"` окно не закрывает — человек решит и слайдер, а ручное окно
->   Android слайдер не ловило вовсе.
+>   Android слайдер не ловило вовсе. *Позже (А3): у окна свой перехватчик `interceptor.go`,
+>   ответы API капчи целиком разбирает `page.go` — общий с окном CDP.*
 
 ### Что придётся учесть
 

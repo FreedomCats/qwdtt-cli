@@ -2,10 +2,14 @@
 
 // webview2_windows.go — окно капчи на WebView2 (задача E3).
 //
-// Точный перенос того, что делал Android: своё окно со своим движком, тот же
-// перехватчик JS из token.go. От пользователя остаётся одно действие — решить
-// капчу; токен уходит ядру сам, консоль не участвует. Проект и разбор
-// подводных камней — doc/e2-captcha.md §3.
+// Перенос того, что делал Android: своё окно со своим движком и перехватчик
+// JS (interceptor.go), который отдаёт в Go ответы API страницы капчи; их
+// разбирает pageWatch (page.go), тот же, что у браузера по CDP. От
+// пользователя остаётся одно действие — решить капчу; токен уходит ядру сам,
+// консоль не участвует. Проект и разбор подводных камней — doc/e2-captcha.md
+// §3. На selected окно сначала прячется за край экрана и пробует пройти
+// капчу само (autoclick.go, hiddenwindow_windows.go,
+// webview2_devtools_windows.go); перенесено из csqtt-cli.
 //
 // Библиотека — github.com/jchv/go-webview2: без cgo, загрузчик WebView2Loader.dll
 // встроен. Три её особенности определили устройство решателя, и в эскизе §3
@@ -24,6 +28,7 @@ package captcha
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -38,9 +43,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// bindingName — глобальная функция, через которую перехватчик отдаёт
-// результат в Go. Заводится Bind.
-const bindingName = "__qwdttCliCaptchaResult"
+// bindingName — глобальная функция, через которую перехватчик отдаёт ответы
+// API в Go. Заводится Bind.
+const bindingName = "__qwdttCliCaptchaReply"
 
 // WebView2Options — настройки решателя с окном.
 type WebView2Options struct {
@@ -54,7 +59,8 @@ type WebView2Options struct {
 	// Прокси не поднялся — Solve отказывает с ErrProxy, окна не открыв.
 	Dial DialFunc
 
-	// Logf — строки прокси (отказы); nil — молчать.
+	// Logf — строки прокси (отказы), страницы капчи (pageWatch) и автоклика;
+	// nil — молчать.
 	Logf func(format string, args ...any)
 }
 
@@ -78,6 +84,15 @@ type WebView2 struct {
 	// opened — зовётся с ручкой окна, как только оно создано. Только для
 	// тестов: через неё они закрывают окно так же, как крестик.
 	opened func(webview2.WebView)
+	// Только для тестов автоклика: hidden получает скрытое окно сразу после
+	// создания; revealed зовётся на нити окна, когда оно показано человеку;
+	// quietReveal — показать его без переднего плана и без активации, чтобы
+	// не отнимать фокус у того, кто за машиной; autoTiming — свои сроки
+	// автофазы вместо defaultAutoTiming.
+	hidden      func(*hiddenWindow)
+	revealed    func(webview2.WebView)
+	quietReveal bool
+	autoTiming  *autoTiming
 }
 
 // NewWebView2 проверяет, что WebView2 Runtime установлен, и собирает решатель.
@@ -101,10 +116,16 @@ func NewWebView2(opts WebView2Options) (*WebView2, error) {
 	return &WebView2{opts: opts}, nil
 }
 
-// NeedsHuman: да — решает человек, окно только показывает страницу.
+// NeedsHuman: да — окно может уйти человеку, и срок нужен человеческий, даже
+// когда капчу сначала пробует автоклик.
 func (*WebView2) NeedsHuman() bool { return true }
 
 // Solve открывает окно со страницей капчи и ждёт токена из перехватчика.
+//
+// На selected окно создаётся за краем экрана и сначала пробует пройти капчу
+// само (autoclick.go); показывается человеку, только если не вышло. На
+// manual — сразу человеку: эту просьбу ядро шлёт только в цепочке auto,
+// которой оболочка не включает (solver.go).
 //
 // Возвращается сразу, как только исход известен: токен ядру нужен сейчас,
 // а окно закрывается и профиль убирается уже без нас.
@@ -139,6 +160,33 @@ func (s *WebView2) Solve(ctx context.Context, req Request) (string, error) {
 	win := &windowHandle{}
 	done := make(chan struct{})
 
+	// Автофаза: её ctx кончается вместе с Solve, а начинается она, когда окно
+	// создано и страница открывается (started).
+	actx, stopAuto := context.WithCancel(ctx)
+	defer stopAuto()
+	var auto *autoRun
+	var hidden *hiddenWindow // пишется и читается на нити окна
+	checks := make(chan checkReply, 8)
+	started := make(chan *webviewDriver, 1)
+	autoDone := make(chan struct{})
+	if req.Mode == ModeSelected {
+		auto = newAutoRun(s.opts.Out, s.opts.Logf, req, func() {
+			win.dispatch(func(w webview2.WebView) {
+				if hidden != nil {
+					hidden.reveal()
+				}
+				if s.revealed != nil {
+					s.revealed(w)
+				}
+			})
+		})
+		if s.autoTiming != nil {
+			auto.timing = *s.autoTiming
+		}
+	} else {
+		close(autoDone)
+	}
+
 	go func() {
 		// Окно, его насос сообщений и COM живут на одной прибитой нити.
 		// Отпускать её не будем: горутина кончится, и нить уйдёт вместе с ней,
@@ -150,19 +198,39 @@ func (s *WebView2) Solve(ctx context.Context, req Request) (string, error) {
 			report(outcome{err: err})
 			return
 		}
+		// До перехватчика скрытого окна: место за краем экрана он берёт в
+		// физических пикселях (dpi_windows.go).
+		scale := dpiAwareThread()
 
+		var extra []string
+		if proxy != nil {
+			extra = append(extra, "--proxy-server=http://"+proxy.Addr())
+		}
+		if auto != nil {
+			var err error
+			if hidden, err = hideNextWindow(s.quietReveal); err != nil {
+				// Спрятать не вышло — окно сразу человеку, как на manual.
+				s.logf("[CAPTCHA] окно капчи не спрятать: %v", err)
+			} else {
+				defer hidden.unhook()
+				extra = append(extra, hiddenBrowserArgs)
+				// Размер — под монитор, за которым окно будет числиться за
+				// краем; при показе reveal пересчитает его под основной.
+				scale = hidden.scale(scale)
+			}
+		}
 		var browserArgs string
 		var restoreArgs func()
-		if proxy != nil {
-			browserArgs, restoreArgs = setBrowserArgs("--proxy-server=http://" + proxy.Addr())
+		if len(extra) > 0 {
+			browserArgs, restoreArgs = setBrowserArgs(strings.Join(extra, " "))
 		}
 		w := webview2.NewWithOptions(webview2.WebViewOptions{
 			DataPath:                   profile,
 			AdditionalBrowserArguments: browserArgs,
 			WindowOptions: webview2.WindowOptions{
 				Title:  windowTitle(req),
-				Width:  500,
-				Height: 680,
+				Width:  scaledSize(500, scale),
+				Height: scaledSize(680, scale),
 				Center: true,
 			},
 		})
@@ -177,31 +245,55 @@ func (s *WebView2) Solve(ctx context.Context, req Request) (string, error) {
 		}
 		win.set(w)
 		defer win.clear()
+		var driver *webviewDriver
+		if hidden != nil {
+			if s.hidden != nil {
+				s.hidden(hidden)
+			}
+			// Перехватчик не узнал окно (в другой версии форка у него может быть
+			// другой класс): оно уже на экране, и автоклик в нём шёл бы на виду.
+			if hidden.hwnd == 0 {
+				s.logf("[CAPTCHA] автоклик: окно не спряталось — перехватчик его не узнал")
+			} else if dt, err := newDevtools(w); err != nil {
+				s.logf("[CAPTCHA] автоклик: нет DevTools окна: %v", err)
+			} else {
+				defer dt.release()
+				driver = &webviewDriver{win: win, dt: dt}
+			}
+		}
 
 		// Bind и перехватчик ставятся до Navigate: оба — скрипты, которые
 		// WebView2 выполняет на каждой новой странице до её собственного кода.
 		// Приёмник перехватчик ищет лениво, при вызове, поэтому порядок двух
 		// скриптов между собой не важен.
-		_ = w.Bind(bindingName, func(kind, value string) {
-			switch kind {
-			case "token":
-				report(outcome{token: value})
-			case "error":
-				report(outcome{err: fmt.Errorf("VK отказал: %s", value)})
-			default:
-				// "slider": VK показал слайдер вместо чекбокса. Человек
-				// решит и его — окно остаётся открытым, токен придёт
-				// следующим ответом. Так же и на Android: ручное окно
-				// слайдер не ловило вовсе (ManlCaptchaWebViewManager.kt).
-				return
+		watch := pageWatch{logf: s.opts.Logf}
+		if auto != nil {
+			watch.checked = func(r checkReply) {
+				select {
+				case checks <- r:
+				default:
+				}
 			}
-			w.Destroy()
+			watch.auto = auto.active
+		}
+		_ = w.Bind(bindingName, func(method, body string) {
+			// Ответ без исхода (слайдер, BOT, initSession) — окно остаётся
+			// открытым: человек решает дальше, токен придёт следующим check.
+			// Так же и на Android: ручное окно слайдер не ловило вовсе
+			// (ManlCaptchaWebViewManager.kt).
+			if out := watch.observe(method, []byte(body)); out != nil {
+				report(*out)
+				w.Destroy()
+			}
 		})
-		w.Init(fmt.Sprintf(interceptorJS, "function(k,v){return window."+bindingName+"(k,v);}"))
+		w.Init(pageInterceptorJS(bindingName))
 		w.Navigate(req.RedirectURI)
 
 		if s.opened != nil {
 			s.opened(w)
+		}
+		if auto != nil {
+			started <- driver
 		}
 		w.Run()
 	}()
@@ -220,18 +312,48 @@ func (s *WebView2) Solve(ctx context.Context, req Request) (string, error) {
 	stop := context.AfterFunc(ctx, win.close)
 	defer stop()
 
-	fmt.Fprintf(s.opts.Out, "\nVK просит решить капчу — открыто окно, время на это %s.\n"+
-		"Если окна не видно, оно может оказаться за консолью: поищите его на панели задач.\n",
-		req.Left(time.Now()).Round(time.Second))
+	if auto != nil {
+		auto.announce()
+		go func() {
+			defer close(autoDone)
+			var driver *webviewDriver
+			select {
+			case driver = <-started:
+			case <-actx.Done():
+				return
+			}
+			if driver == nil {
+				// Окно не спряталось или без DevTools: сразу человеку.
+				auto.fail(errAutoUnavailable)
+				return
+			}
+			auto.run(actx, driver, checks)
+		}()
+	} else {
+		fmt.Fprintf(s.opts.Out, "\nVK просит решить капчу — открыто окно, время на это %s.\n%s\n",
+			req.Left(time.Now()).Round(time.Second), humanHint)
+	}
+	// endAuto кончает автофазу раньше, чем окно: автоклик, получивший «окно
+	// закрыто» при живом ctx, счёл бы это неудачей и сказал бы о ней
+	// человеку, хотя исход уже есть.
+	endAuto := func() {
+		stopAuto()
+		<-autoDone
+	}
 
 	select {
 	case got := <-result:
+		endAuto()
 		win.close()
 		if got.err == nil && strings.TrimSpace(got.token) == "" {
 			got.err = ErrNoToken
 		}
+		if got.err == nil && auto != nil {
+			auto.solved()
+		}
 		return got.token, got.err
 	case <-done:
+		endAuto()
 		// Токен и окно могли кончиться одновременно: токен важнее.
 		select {
 		case got := <-result:
@@ -240,6 +362,7 @@ func (s *WebView2) Solve(ctx context.Context, req Request) (string, error) {
 		}
 		return "", ErrWindowClosed
 	case <-ctx.Done():
+		endAuto()
 		return "", ctx.Err()
 	}
 }
@@ -303,6 +426,20 @@ func (h *windowHandle) close() {
 	}
 }
 
+// dispatch выполняет f на нити окна, если окно ещё живо. Для тех, кто живёт
+// на чужой нити: автофазы и показа окна человеку. false — окна уже нет, f не
+// позовётся.
+func (h *windowHandle) dispatch(f func(w webview2.WebView)) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed || h.w == nil {
+		return false
+	}
+	w := h.w
+	w.Dispatch(func() { f(w) })
+	return true
+}
+
 // initCOM заводит однопоточный апартамент COM на текущей нити. S_FALSE —
 // апартамент уже есть, и это не ошибка.
 func initCOM() error {
@@ -320,4 +457,35 @@ func windowTitle(req Request) string {
 		return "Капча VK — qwdtt-cli"
 	}
 	return "Капча VK — ответить до " + req.Deadline.Format("15:04:05")
+}
+
+// webviewDriver — страница окна WebView2 для автоклика: методы DevTools
+// зовутся на нити окна, ответ ждётся на своей.
+type webviewDriver struct {
+	win *windowHandle
+	dt  *devtools
+}
+
+func (d *webviewDriver) devtools(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	reply := make(chan devtoolsReply, 1)
+	ok := d.win.dispatch(func(webview2.WebView) {
+		if err := d.dt.call(method, params, func(r devtoolsReply) { reply <- r }); err != nil {
+			reply <- devtoolsReply{err: err}
+		}
+	})
+	if !ok {
+		return nil, ErrWindowClosed
+	}
+	select {
+	case r := <-reply:
+		return r.result, r.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (s *WebView2) logf(format string, args ...any) {
+	if s.opts.Logf != nil {
+		s.opts.Logf(format, args...)
+	}
 }

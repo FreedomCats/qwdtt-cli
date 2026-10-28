@@ -17,10 +17,10 @@
 // описываем страницу в журнале (autoclick_diag.go).
 //
 // Платформе остаётся только autoDriver (методы DevTools страницы) и показ
-// окна человеку (autoRun.reveal). Сейчас это браузер по CDP на Linux
-// (browser_linux.go, autoclick_cdp.go); окно WebView2 на Windows автоклика
-// пока не делает. В сеансе Wayland окна не спрятать, и автоклик там идёт в
-// видимом окне.
+// окна человеку (autoRun.reveal): WebView2 на Windows (webview2_windows.go,
+// webview2_devtools_windows.go, hiddenwindow_windows.go), браузер по CDP на
+// Linux (browser_linux.go, autoclick_cdp.go). В сеансе Wayland окна не
+// спрятать, и автоклик там идёт в видимом окне.
 package captcha
 
 import (
@@ -70,6 +70,8 @@ var (
 	errAutoNoCheckbox = errors.New("на странице нет галочки")
 	errAutoSlider     = errors.New("VK просит собрать слайдер")
 	errAutoNoReply    = errors.New("VK не ответил на галочку")
+	// errAutoUnavailable — окно WebView2 не спряталось или не даёт DevTools.
+	errAutoUnavailable = errors.New("автоклик в этом окне недоступен")
 	// errAutoLimit — VK ответил на автоклик ERROR_LIMIT: капчу не решить и
 	// человеку, исход (ErrLimit) окно отдаёт само, окно человеку не нужно.
 	errAutoLimit = errors.New("VK: лимит попыток капчи исчерпан")
