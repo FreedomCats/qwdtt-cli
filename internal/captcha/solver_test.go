@@ -482,6 +482,58 @@ func TestCloseTwice(t *testing.T) {
 	d.Close()
 }
 
+// Close дожидается уборки окна, которая идёт уже после Solve, — молча, если
+// она короткая. Окно на стенде — TestWebView2CloseWaitsCleanup.
+func TestCloseWaitsCleanups(t *testing.T) {
+	var mu sync.Mutex
+	var lines []string
+	d := New(Options{Logf: func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, format)
+	}})
+
+	cleaned := cleanups.add()
+	time.AfterFunc(300*time.Millisecond, cleaned)
+	start := time.Now()
+	d.Close()
+	if took := time.Since(start); took < 250*time.Millisecond {
+		t.Errorf("Close вернулся через %s, не дождавшись уборки", took)
+	}
+	if !cleanups.wait(0) {
+		t.Error("после Close уборка не кончилась")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(lines) != 0 {
+		t.Errorf("строки при короткой уборке: %q", lines)
+	}
+}
+
+// Ожидание уборки кончается по сроку, а учёт после этого работает дальше.
+func TestCleanupSetWaitLimit(t *testing.T) {
+	var c cleanupSet
+	if !c.wait(0) {
+		t.Fatal("без уборок ожидание не вернулось сразу")
+	}
+
+	cleaned := c.add()
+	if c.wait(50 * time.Millisecond) {
+		t.Fatal("дождался незаконченной уборки")
+	}
+	cleaned()
+	cleaned() // повтор безвреден
+	if !c.wait(0) {
+		t.Fatal("уборка кончилась, а ожидание её не видит")
+	}
+
+	cleaned = c.add()
+	time.AfterFunc(20*time.Millisecond, cleaned)
+	if !c.wait(time.Second) {
+		t.Fatal("вторую уборку не дождался")
+	}
+}
+
 // ──────────────────────── чужие события ────────────────────────
 
 func TestObserveIgnoresOtherEvents(t *testing.T) {

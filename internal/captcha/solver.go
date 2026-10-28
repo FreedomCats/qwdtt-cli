@@ -200,8 +200,9 @@ func (d *Dispatcher) Observe(ev core.Event) {
 	d.solve(d.request(required, time.Now()))
 }
 
-// Close отменяет незаконченное решение и дожидается его. Безопасен при
-// повторном вызове.
+// Close отменяет незаконченное решение и дожидается его, а с ним — уборки
+// окон капчи (cleanups): CLI зовёт его на выходе, и окно с профилем не должны
+// пережить процесс. Безопасен при повторном вызове.
 func (d *Dispatcher) Close() {
 	d.mu.Lock()
 	d.closed = true
@@ -209,6 +210,24 @@ func (d *Dispatcher) Close() {
 
 	d.cancel()
 	d.wg.Wait()
+	d.waitCleanups()
+}
+
+// cleanupNotice — уборка окна дольше этого уже заметна на остановке, и о ней
+// стоит сказать. Обычно она укладывается в секунду и проходит молча.
+const cleanupNotice = 2 * time.Second
+
+// waitCleanups ждёт уборки окон капчи, но не дольше cleanupWait. Окна не было
+// или оно уже убрано — возвращается сразу.
+func (d *Dispatcher) waitCleanups() {
+	if cleanups.wait(cleanupNotice) {
+		return
+	}
+	d.logf("[КАПЧА] жду, пока закроется окно капчи и удалится его профиль")
+	if !cleanups.wait(cleanupWait - cleanupNotice) {
+		d.logf("[КАПЧА] уборка окна капчи не кончилась за %s — его профиль может остаться во временном каталоге "+
+			"(его уберёт запуск qwdtt-cli, когда профилю будет больше часа)", cleanupWait)
+	}
 }
 
 // request превращает событие ядра в просьбу, добавляя к ней срок.

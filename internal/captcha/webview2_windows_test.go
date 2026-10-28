@@ -175,6 +175,52 @@ func TestWebView2ThroughDispatcher(t *testing.T) {
 	}
 }
 
+// Ctrl+C при открытом окне — и у человека, и посреди автофазы: Solve
+// возвращается сразу, а уборки окна — закрытия, прокси, профиля — дожидается
+// Close диспетчера. Иначе qwdtt-cli выходил раньше, чем убирался профиль, и
+// тот оставался в %TEMP%.
+func TestWebView2CloseWaitsCleanup(t *testing.T) {
+	s := newStandSolver(t)
+	s.quietReveal = true
+	srv := newCaptchaStand(t)
+
+	// Галочки на странице нет: на selected автофаза ищет её все 30 с, и
+	// остановка приходится посреди неё.
+	for _, mode := range []string{"manual", "selected"} {
+		t.Run(mode, func(t *testing.T) {
+			before := profilesNow()
+			stop, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			// Секунда — чтобы страница успела открыться и msedgewebview2.exe
+			// занял файлы профиля.
+			s.opened = func(webview2.WebView) { time.AfterFunc(time.Second, cancel) }
+			d := newDispatcher(t, Options{Solver: s, Control: core.NewControl(), Logf: t.Logf, Stop: stop}, time.Minute)
+
+			ev := required(mode)
+			ev.RedirectURI = srv.page("autonone", "fetch")
+			d.Observe(ev)
+			if got := answer(t, 30*time.Second); got == "" || strings.Contains(got, "stand-token") {
+				t.Fatalf("ядро получило %q, ожидался отказ", got)
+			}
+
+			start := time.Now()
+			d.Close()
+			t.Logf("Close ждал уборку окна %s", time.Since(start).Round(time.Millisecond))
+			var left []string
+			for dir := range profilesNow() {
+				if !before[dir] {
+					left = append(left, dir)
+				}
+			}
+			if len(left) > 0 {
+				t.Errorf("после Close остался профиль: %s", strings.Join(left, ", "))
+			}
+			// Не дождался — уберётся сам: следующему тесту он не нужен.
+			waitProfilesGone(t, before)
+		})
+	}
+}
+
 // Окно через прокси qwdtt-cli (plan-e3.md, W2): страница грузится только через
 // него. Диалер уводит id.vk.com:443 на стенд с TLS — токен со стенда
 // значит, что окно ходило через прокси, а не к настоящей VK. Сертификат

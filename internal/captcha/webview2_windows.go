@@ -128,7 +128,8 @@ func (*WebView2) NeedsHuman() bool { return true }
 // которой оболочка не включает (solver.go).
 //
 // Возвращается сразу, как только исход известен: токен ядру нужен сейчас,
-// а окно закрывается и профиль убирается уже без нас.
+// а окно закрывается и профиль убирается уже без нас. Дожидается этого
+// Dispatcher.Close — при выходе из qwdtt-cli.
 func (s *WebView2) Solve(ctx context.Context, req Request) (string, error) {
 	var proxy *Proxy
 	if s.opts.Dial != nil {
@@ -300,8 +301,11 @@ func (s *WebView2) Solve(ctx context.Context, req Request) (string, error) {
 
 	// Профиль убирается, когда окно закрыто, и не раньше: до этого его файлы
 	// держит msedgewebview2.exe. Прокси — тогда же: окну он нужен, пока оно
-	// открыто, а не пока ждём токен.
+	// открыто, а не пока ждём токен. Выход из qwdtt-cli этой уборки ждёт
+	// (cleanups).
+	cleaned := cleanups.add()
 	go func() {
+		defer cleaned()
 		<-done
 		if proxy != nil {
 			proxy.Close()

@@ -222,6 +222,7 @@ func waylandSession() bool { return os.Getenv("WAYLAND_DISPLAY") != "" }
 // Возвращается, как только исход известен: браузер закрывается и профиль
 // убирается уже без нас. Кроме отмены ctx — тогда уборка дожидается, чтобы
 // окно не пережило qwdtt-cli: и посреди автофазы, и при окне у человека.
+// Фоновую уборку при выходе из qwdtt-cli дожидается Dispatcher.Close.
 func (b *Browser) Solve(ctx context.Context, req Request) (string, error) {
 	var proxy *Proxy
 	if b.opts.Dial != nil {
@@ -288,7 +289,13 @@ func (b *Browser) Solve(ctx context.Context, req Request) (string, error) {
 	if ctx.Err() != nil {
 		cleanup()
 	} else {
-		go cleanup()
+		// Исход есть (токен, ошибка VK, срок, окно закрыто человеком), а
+		// браузер ещё закрывается: выход из qwdtt-cli этой уборки ждёт (cleanups).
+		cleaned := cleanups.add()
+		go func() {
+			defer cleaned()
+			cleanup()
+		}()
 	}
 	return token, err
 }
