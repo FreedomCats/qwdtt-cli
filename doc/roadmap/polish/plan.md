@@ -1,6 +1,6 @@
 ---
 kind: root
-status: todo
+status: in-progress
 lang: en
 source: doc/architecture.md
 branch: main

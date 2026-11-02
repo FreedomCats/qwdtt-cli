@@ -1,6 +1,7 @@
 ---
 kind: stage
-status: todo
+status: in-progress
+base: 42a4134
 ---
 
 # Core against upstream
@@ -18,13 +19,19 @@ and `turn_endpoint.go`, about 1000 lines. The captcha path
 mode are untouched there; the parser of the captcha page (`captcha init json not found`) is
 not fixed.
 
-The `vendorcore` rules were written against `fae121e`. On `develop`, the rules for
-`main.go`, `session.go` and `group.go` would have to be rewritten: the flags changed, and
-`Transport` replaces `TCPTransport`. That is the main cost of the move.
+The `vendorcore` rules were written against `fae121e`. The first estimate was that on
+`develop` the rules for `main.go`, `session.go` and `group.go` would have to be rewritten. A
+trial run while splitting the stage narrows that: against `d19a628` only 2 of the 42
+replacement rules stop matching — the two netguard points of the TURN dialer, which moved
+from `session.go` to the new `turn_endpoint.go`. The rules for `main.go` and `group.go` still
+match, because `func main()` is cut out whole. The rest falls on our own files: `run.go`
+(`Host` → `Hosts`, `TCPTransport` → `Transport`), the netguard coverage test and `go.mod`.
+Taking stock properly is [`02-develop-inventory`](02-develop-inventory/plan.md).
 
-Also worth taking while the core is being touched: the `[КАПЧА] WBV: режим из настроек
-Android` line is printed with `-v` on every captcha (`creds.go:624`), and the comment of
-`captchaPlan` in `run.go` is stale since E2.
+Also worth taking while the core is being touched: the comment of `captchaPlan` in `run.go`
+is stale since E2 — it is in the "Done when" of [`02-captcha`](../02-captcha/plan.md) and
+stays there. The `[КАПЧА] WBV: режим из настроек Android` line is already replaced by a
+`vendorcore` rule (`rules.go`, the `wv` mode line) and needs nothing more.
 
 ## Done when
 
@@ -41,3 +48,15 @@ Android` line is printed with `-v` on every captcha (`creds.go:624`), and the co
 3. Put the choice to the user with the cost of each option.
 4. Carry out the decision: either record it and stop, or update the core, the rules and the
    shell.
+
+## Children
+
+1. [`01-pinned-check`](01-pinned-check/plan.md) — task: `vendorcore -check` against a fresh
+   clone at the pinned commit, and a `-check` that says so when the clone is at another
+   commit or has local changes.
+2. [`02-develop-inventory`](02-develop-inventory/plan.md) — task: the difference against
+   upstream `develop`, written down from a trial run outside the repository.
+3. [`03-develop-decision`](03-develop-decision/plan.md) — the user's choice between `master`
+   and `develop`; `lead` puts it to the user, it is not a coordinator task.
+4. [`04-carry-out`](04-carry-out/plan.md) — stage: carry out the decision; split once the
+   decision is known.
