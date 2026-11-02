@@ -102,7 +102,12 @@ Neither the time of day nor the time zone gets into the history:
 The `.invalid` domain is reserved (RFC 2606): nobody has such an email, and GitHub will
 not attribute the commits to someone else's account.
 
-No `Co-Authored-By` trailer and no other attribution lines naming the agent.
+Every commit ends with the attribution trailer, after the body:
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+A `Claude-Session` line with a link to the session is not added: the link identifies the
+account the session belongs to.
 
 The same applies at `--amend`, `rebase` and `cherry-pick`: git sets the committer date to
 the current time.
