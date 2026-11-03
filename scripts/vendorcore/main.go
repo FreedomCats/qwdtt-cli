@@ -27,6 +27,13 @@
 // с этим репозиторием. -check ничего не пишет, только сообщает, разошёлся ли
 // internal/core с апстримом; код возврата 1, если есть расхождения.
 //
+// With -check the clone must be on the commit recorded in
+// internal/core/CORE_VERSION: on another commit the comparison would answer a
+// different question, so the command says so, names both commits and what to
+// do, and exits with code 1. Uncommitted changes to go_client in the clone are
+// reported too: the comparison then runs against the clone's working tree, not
+// against the commit.
+//
 // Перенесена с PowerShell (scripts/vendor-core.ps1) и даёт тот же
 // internal/core байт в байт, кроме строки в CORE_VERSION о том, чем он создан.
 package main
@@ -104,6 +111,63 @@ func getUpstreamVersion(path string) (upstreamVersion, error) {
 	}, nil
 }
 
+// coreCommit takes the upstream commit the core was vendored from out of the
+// CORE_VERSION text. An empty string means nothing is pinned: there is no file
+// yet, or it has no commit line. run writes the file as `key = value`, lines
+// starting with `#` are comments, and dirty may carry a trailing comment after
+// `#`. The function only reads text: no files, no git.
+func coreCommit(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		if i := strings.IndexByte(line, '#'); i >= 0 {
+			line = line[:i]
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if ok && strings.TrimSpace(key) == "commit" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+// checkNotice is a line -check prints before the comparison; an empty Color
+// means plain output.
+type checkNotice struct {
+	Color, Text string
+}
+
+// checkPreamble decides whether internal/core can be compared with the clone at
+// all and what to say about it. pinned is the commit from CORE_VERSION; empty
+// means nothing is pinned and everything stays as before. stop means do not
+// compare: on a foreign commit a replacement rule will not match, and its error
+// would hide the real cause. Neither git nor the disk is touched here: the
+// input is the already collected information about the clone.
+func checkPreamble(pinned string, v upstreamVersion) (stop bool, notes []checkNotice) {
+	if pinned == "" {
+		return false, nil
+	}
+	// run writes `commit = unknown` when the upstream has no .git: there is no
+	// commit to compare with and no checkout that would make sense.
+	if strings.EqualFold(pinned, "unknown") {
+		return false, []checkNotice{{Text: "CORE_VERSION has no commit: the core has to be vendored again. Comparing with go_client as it lies."}}
+	}
+	if v.Commit == "unknown" {
+		return false, []checkNotice{{Text: "The upstream clone has no .git: the commit cannot be checked, comparing with the go_client files as they lie."}}
+	}
+	if !strings.EqualFold(pinned, v.Commit) {
+		return true, []checkNotice{
+			{Color: script.Yellow, Text: fmt.Sprintf("The upstream clone is on %s, but internal/core was vendored from %s.", v.Commit, pinned)},
+			{Text: "  to check the core:            git -C <clone> checkout " + pinned},
+			{Text: "  to vendor the clone's commit: run without -check"},
+		}
+	}
+	if v.Dirty {
+		return false, []checkNotice{
+			{Color: script.Yellow, Text: fmt.Sprintf("go_client in the clone has uncommitted changes: the comparison runs against the working tree, not against commit %s. See git -C <clone> status -- go_client.", pinned)},
+		}
+	}
+	return false, nil
+}
+
 // readText читает файл как Get-Content -Raw -Encoding UTF8: без BOM.
 func readText(path string) (string, error) {
 	raw, err := os.ReadFile(path)
@@ -176,6 +240,29 @@ func run(root, upstream string, check bool) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+
+	// With -check, first find out whether the clone can answer the question at
+	// all: is it on the pinned commit, and is go_client clean. In write mode
+	// switching to another commit is the point of the command, so there is no
+	// such check there.
+	if check {
+		pinned := ""
+		if text, err := readText(filepath.Join(target, "CORE_VERSION")); err == nil {
+			pinned = coreCommit(text)
+		}
+		stop, notes := checkPreamble(pinned, version)
+		for _, n := range notes {
+			if n.Color != "" {
+				script.Color(n.Color, n.Text)
+			} else {
+				script.Say(n.Text)
+			}
+		}
+		if stop {
+			return 1, nil
+		}
+	}
+
 	upstreamNames, err := goFiles(source)
 	if err != nil {
 		return 0, err

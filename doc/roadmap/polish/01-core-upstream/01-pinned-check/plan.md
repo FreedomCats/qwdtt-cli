@@ -1,14 +1,10 @@
 ---
 kind: task
-status: blocked
+status: done
 detailed: true
 ---
 
 # The core against a fresh clone at the pinned commit
-
-> **Blocked:** the coordinator could not start — the `programmer` and `reviewer`
-> agents are not available in the session. Waiting for the user to restart the session.
-> Nothing was changed yet.
 
 ## Task
 
@@ -133,3 +129,32 @@ confirmed and recorded. No change to `internal/core`.
   second git call for the same thing.
 - The early return in step 3 must stay in `-check` only: in write mode moving to another
   commit is the whole point.
+
+## Outcome
+
+`internal/core` is exactly what `vendorcore` makes of the upstream at the pinned commit
+`fae121efc3ef57b633516601d3c0d6b1be1fde7c`: against a fresh clone at that commit `-check`
+prints that the core matches and exits 0, with no warning. Upstream `master` (`a296c57`,
+release 1.4.4) has no change in `go_client` since `fae121e`, so the core is current with
+`master`, not merely close to it. Nothing in `internal/core` or `CORE_VERSION` changed.
+
+`-check` now names the cause when the clone cannot answer the question:
+
+- **Another commit.** The clone's commit is compared with the one in `CORE_VERSION` before
+  anything is converted. On a different commit the command names both, says how to check
+  the core (`git -C <clone> checkout <pinned>`) and how to vendor the clone's commit (run
+  without `-check`), and exits 1 — no replacement rule fails and no list of diverging files
+  appears.
+- **Local changes in `go_client`.** A yellow line before the result says that the
+  comparison runs against the clone's working tree and not against the commit, and points
+  at `git -C <clone> status -- go_client`; the comparison then goes on as before.
+- **No `.git` in the clone.** One line says the commit cannot be checked, and the
+  comparison goes on against the files as they lie.
+- **`commit = unknown` in `CORE_VERSION`** — what write mode records for an upstream
+  without `.git`. One line says the core has to be vendored again; no unusable `checkout`
+  is offered.
+
+The decision sits in a pure function (`checkPreamble`) and the `CORE_VERSION` reader in
+another (`coreCommit`), both covered by unit tests without network and without git; the
+existing tests, including the write-mode one over an upstream without `.git`, pass
+unchanged. Write mode is untouched.

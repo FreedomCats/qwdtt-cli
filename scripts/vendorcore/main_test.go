@@ -228,3 +228,140 @@ func TestConvertGroupConfig(t *testing.T) {
 		t.Errorf("получилось:\n%s\nожидалось:\n%s", got, want)
 	}
 }
+
+// CORE_VERSION is written by run itself: keys padded with spaces, and dirty
+// carries a trailing comment after #. The header lines are the ones run writes.
+// Empty text and text without a commit line mean nothing is pinned.
+func TestCoreCommit(t *testing.T) {
+	cases := map[string]string{
+		"# Версия ядра qWDTT, перенесённого в internal/core.\n" +
+			"# Файл создаётся командой go run ./scripts/vendorcore — руками не править.\n" +
+			"\n" +
+			"upstream = https://github.com/SpaceNeuroX/proxy-turn-vk-android\n" +
+			"commit   = fae121efc3ef57b633516601d3c0d6b1be1fde7c\n" +
+			"date     = 2026-08-26T17:50:02+02:00\n" +
+			"files    = 19\n": "fae121efc3ef57b633516601d3c0d6b1be1fde7c",
+
+		"upstream = https://github.com/SpaceNeuroX/proxy-turn-vk-android\n" +
+			"commit   = a296c57eaba69bb9479a24f9157856490890e47d\n" +
+			"date     = 2026-08-01T00:00:00+00:00\n" +
+			"files    = 19\n" +
+			"dirty    = true  # в апстриме есть незакоммиченные правки go_client\n": "a296c57eaba69bb9479a24f9157856490890e47d",
+
+		"upstream = https://github.com/SpaceNeuroX/proxy-turn-vk-android\n" +
+			"date     = 2026-08-01T00:00:00+00:00\n" +
+			"files    = 19\n": "",
+
+		"": "",
+	}
+	for text, want := range cases {
+		if got := coreCommit(text); got != want {
+			t.Errorf("coreCommit(%q) = %q, want %q", text, got, want)
+		}
+	}
+}
+
+const (
+	pinnedA = "fae121efc3ef57b633516601d3c0d6b1be1fde7c"
+	otherB  = "a296c57eaba69bb9479a24f9157856490890e47d"
+)
+
+// Same commit, clean clone: compare silently.
+func TestCheckPreambleSameCommit(t *testing.T) {
+	stop, notes := checkPreamble(pinnedA, upstreamVersion{Commit: pinnedA})
+	if stop || len(notes) != 0 {
+		t.Errorf("stop=%v, notes: %v", stop, notes)
+	}
+}
+
+// Another commit: stop, name both commits and the checkout command.
+func TestCheckPreambleOtherCommit(t *testing.T) {
+	stop, notes := checkPreamble(pinnedA, upstreamVersion{Commit: otherB})
+	if !stop {
+		t.Fatalf("stop=false, notes: %v", notes)
+	}
+	text := ""
+	for _, n := range notes {
+		text += n.Text + "\n"
+	}
+	for _, want := range []string{pinnedA, otherB, "git -C <clone> checkout " + pinnedA} {
+		if !strings.Contains(text, want) {
+			t.Errorf("no %q in\n%s", want, text)
+		}
+	}
+}
+
+// Hashes are compared case-insensitively: git prints them lower case, but they
+// may end up in the file in any case.
+func TestCheckPreambleCommitCase(t *testing.T) {
+	stop, notes := checkPreamble(strings.ToUpper(pinnedA), upstreamVersion{Commit: pinnedA})
+	if stop || len(notes) != 0 {
+		t.Errorf("stop=%v, notes: %v", stop, notes)
+	}
+}
+
+// Clone without .git: the commit cannot be checked, but that does not prevent
+// comparing.
+func TestCheckPreambleUnknownCommit(t *testing.T) {
+	stop, notes := checkPreamble(pinnedA, upstreamVersion{Commit: "unknown", Date: "unknown"})
+	if stop {
+		t.Fatalf("stop=true, notes: %v", notes)
+	}
+	text := ""
+	for _, n := range notes {
+		text += n.Text + "\n"
+	}
+	if !strings.Contains(text, "cannot be checked") {
+		t.Errorf("no line about the commit in\n%s", text)
+	}
+}
+
+// run writes commit = unknown when the upstream has no .git. There is nothing
+// to compare with and no checkout to suggest: vendor the core again.
+func TestCheckPreamblePinnedUnknown(t *testing.T) {
+	for _, v := range []upstreamVersion{
+		{Commit: pinnedA},
+		{Commit: pinnedA, Dirty: true},
+		{Commit: "unknown", Date: "unknown"},
+	} {
+		stop, notes := checkPreamble("unknown", v)
+		if stop {
+			t.Fatalf("%v: stop=true, notes: %v", v, notes)
+		}
+		if len(notes) != 1 {
+			t.Fatalf("%v: %d notes, want one: %v", v, len(notes), notes)
+		}
+		if !strings.Contains(notes[0].Text, "has no commit") || strings.Contains(notes[0].Text, "checkout") {
+			t.Errorf("%v: %q", v, notes[0].Text)
+		}
+	}
+}
+
+// Pinned commit, but go_client is dirty: warn and compare on.
+func TestCheckPreambleDirty(t *testing.T) {
+	stop, notes := checkPreamble(pinnedA, upstreamVersion{Commit: pinnedA, Dirty: true})
+	if stop {
+		t.Fatalf("stop=true, notes: %v", notes)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("%d notes, want one: %v", len(notes), notes)
+	}
+	for _, want := range []string{"uncommitted changes", pinnedA, "git -C <clone> status -- go_client"} {
+		if !strings.Contains(notes[0].Text, want) {
+			t.Errorf("no %q in %q", want, notes[0].Text)
+		}
+	}
+}
+
+// Nothing pinned (no CORE_VERSION yet): everything as before, silently.
+func TestCheckPreambleNothingPinned(t *testing.T) {
+	for _, v := range []upstreamVersion{
+		{Commit: otherB, Dirty: true},
+		{Commit: otherB},
+		{Commit: "unknown", Date: "unknown"},
+	} {
+		if stop, notes := checkPreamble("", v); stop || len(notes) != 0 {
+			t.Errorf("%v: stop=%v, notes: %v", v, stop, notes)
+		}
+	}
+}
