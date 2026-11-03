@@ -1,6 +1,6 @@
 ---
 kind: task
-status: blocked
+status: done
 depends: [02-develop-inventory]
 ---
 
@@ -24,6 +24,13 @@ What `lead` does here:
    [`04-carry-out`](../04-carry-out/plan.md).
 4. Write a short `## Outcome` here — the decision and its reason, without dates — and set
    `status: done`.
+
+## Outcome
+
+The user chose to keep tracking upstream `master`. Do not move the vendored core to
+`develop` now; record the branch and the trigger for reconsidering the move in
+`doc/architecture.md`. The incomplete trial evidence was not enough reason to adopt the
+unreleased branch.
 
 ## The question
 

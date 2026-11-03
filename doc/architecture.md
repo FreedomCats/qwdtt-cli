@@ -141,6 +141,9 @@ RTP-обфускации (`wrap.go`, HKDF-SHA256). Его утечка равн�
 механические замены: `log.Printf` → `logf`, `fmt.Printf(маркер)` → `emit(...)`,
 `main()` → `Run(cfg)`.
 
+**Branch policy.** The vendored core follows upstream's stable `master` branch. Reconsider
+moving to `develop` when `develop` reaches `master`.
+
 **Причина.** qWDTT активно развивается. Чем ближе вендор к апстриму, тем дешевле переносить
 обновления. Механический характер правок позволяет описать перенос скриптом.
 

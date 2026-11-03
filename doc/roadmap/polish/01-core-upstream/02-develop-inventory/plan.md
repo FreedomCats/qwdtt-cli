@@ -23,7 +23,8 @@ is committed is the written inventory and nothing else: no change to `internal/c
 
 The inventory goes into `inventory.md` next to this `plan.md` (a file of the node, not a
 node), in English, without paths of the machine, dates or anything `AGENTS.md` forbids. It
-is what `lead` hands to the user in `03` and what `04-carry-out` is split from.
+is what `lead` hands to the user in `03`; `04-carry-out` records the resulting decision in the
+architecture documentation.
 
 ### Already known from the planning trial
 
@@ -86,8 +87,8 @@ following; the task confirms it and fills the gaps, it does not start from nothi
    resolving whether `tls` belongs in `turn_transport` and its flags, whether custom TURN
    addresses should become a profile setting, and whether the `turns:` filtering change is
    acceptable. Estimate the move in roadmap terms (tasks, affected files, and live checks
-   needed), so `03-develop-decision` can present the choice and `04-carry-out` can be split
-   after the user's answer.
+   needed), so `03-develop-decision` can present the choice and `04-carry-out` can record
+   the user's decision in the architecture documentation.
 6. **Write and verify the inventory.** Create only
    `doc/roadmap/polish/01-core-upstream/02-develop-inventory/inventory.md`, in English. State
    the trial's actual commands/checks and results, including whether a TLS dial subtest under

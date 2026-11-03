@@ -366,5 +366,5 @@ Reached`. Конфиг WireGuard ядро просит одним воркеро
 - Ошибки ядра, которые мы нашли, у других не исправлены и мешают их пользователям (PWDTT #37).
   У нас они исправлены правилами переноса ядра; предложения в апстрим подготовлены
   (`upstream-proposals.md`) — 954 из них самое дешёвое и полезное.
-- Апстрим ядра живой и обновляется: перед релизами сверять `CORE_VERSION` с SpaceNeuroX
-  (`git log fae121e..` в клоне апстрима).
+- The vendored core follows upstream's stable `master`; reconsider `develop` when it reaches
+  `master`.

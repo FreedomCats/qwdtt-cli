@@ -58,5 +58,5 @@ stays there. The `[КАПЧА] WBV: режим из настроек Android` li
    upstream `develop`, written down from a trial run outside the repository.
 3. [`03-develop-decision`](03-develop-decision/plan.md) — the user's choice between `master`
    and `develop`; `lead` puts it to the user, it is not a coordinator task.
-4. [`04-carry-out`](04-carry-out/plan.md) — stage: carry out the decision; split once the
-   decision is known.
+4. [`04-carry-out`](04-carry-out/plan.md) — task: record the decision in the architecture
+   documentation.
