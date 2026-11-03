@@ -239,17 +239,17 @@ func TestCoreCommit(t *testing.T) {
 			"\n" +
 			"upstream = https://github.com/SpaceNeuroX/proxy-turn-vk-android\n" +
 			"commit   = fae121efc3ef57b633516601d3c0d6b1be1fde7c\n" +
-			"date     = 2026-08-26T17:50:02+02:00\n" +
+			"date     = <date>\n" +
 			"files    = 19\n": "fae121efc3ef57b633516601d3c0d6b1be1fde7c",
 
 		"upstream = https://github.com/SpaceNeuroX/proxy-turn-vk-android\n" +
 			"commit   = a296c57eaba69bb9479a24f9157856490890e47d\n" +
-			"date     = 2026-08-01T00:00:00+00:00\n" +
+			"date     = <date>\n" +
 			"files    = 19\n" +
 			"dirty    = true  # в апстриме есть незакоммиченные правки go_client\n": "a296c57eaba69bb9479a24f9157856490890e47d",
 
 		"upstream = https://github.com/SpaceNeuroX/proxy-turn-vk-android\n" +
-			"date     = 2026-08-01T00:00:00+00:00\n" +
+			"date     = <date>\n" +
 			"files    = 19\n": "",
 
 		"": "",

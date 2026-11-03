@@ -1,10 +1,16 @@
 ---
 kind: task
-status: done
+status: dropped
 detailed: true
 ---
 
 # The difference against upstream `develop`
+
+## Dropped
+
+This inventory task is excluded from the roadmap: upstream `develop` is unstable and the
+project will not upgrade to it. The inventory below is retained as historical documentation,
+not as a completion requirement or recommendation to move branches.
 
 ## Task
 

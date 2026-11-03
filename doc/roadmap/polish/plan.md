@@ -22,8 +22,8 @@ what is left and in which order.
 
 ## Done when
 
-- `go run ./scripts/vendorcore -check` against a fresh clone of the upstream commit passes,
-  and the decision about the upstream `develop` branch is recorded.
+- `go run ./scripts/vendorcore -check` against a fresh clone of the pinned upstream commit
+  passes, and the stable `master` branch policy and its reconsideration trigger are recorded.
 - A captcha never leaves the user waiting without a window: `hashes`, `ping` and the hash
   check in the menu go through the captcha dispatcher like `connect` does.
 - No open item from the old lists is missing without a decision: each one is either done,
@@ -52,13 +52,12 @@ These belong to the user, not to an agent, and are not nodes:
 
 ## Stages
 
-1. [Core against upstream](01-core-upstream/plan.md) — where the vendored core stands, and
-   whether to move to the upstream `develop` branch.
+1. [Core against upstream](01-core-upstream/plan.md) — verify the pinned vendored core and
+   record the stable upstream branch policy.
 2. [Captcha leftovers](02-captcha/plan.md) — the paths that wait for a captcha without a
    window, the stale comment, the hidden-process Windows run.
 3. [TURN quota](03-quota/plan.md) — the live run under an exhausted quota.
 4. [Platforms](04-platforms/plan.md) — Wayland, several monitors, `linux/arm64` on hardware.
 5. [Upstream proposals](05-upstream-proposals/plan.md) — every rule we apply, written down.
 
-The order puts the largest unknown first: the core update may change the code the later
-stages touch.
+The stages follow the stable upstream policy and address the remaining independent work.
