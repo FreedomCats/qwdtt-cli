@@ -1,69 +1,69 @@
 #!/usr/bin/env bash
-# Воспроизведение ошибок go_client апстрима и проверка правок.
-#
-#   ./run.sh                 — клонирует апстрим во временный каталог
-#   ./run.sh <клон>          — берёт готовый клон (его рабочее дерево сбрасывается)
-#
-# Шаги: коммит fae121e без правок — тесты падают; с патчами 1, 2, 3, 5 —
-# проходят. Отдельно — гонка 5б со вставленной задержкой, до и после правок.
-# Нужны git и Go 1.26; сеть — только для клонирования и go mod tidy.
-# Весь прогон — около двух с половиной минут: 5а без правки ждёт 45 с, 5б — 65 с.
+# Compatibility entry point; all reproduction and result checks live in Go.
 set -euo pipefail
 
-COMMIT=fae121efc3ef57b633516601d3c0d6b1be1fde7c
-REPO=https://github.com/SpaceNeuroX/proxy-turn-vk-android
-HERE=$(cd "$(dirname "$0")" && pwd)
-# В go.mod апстрима — «go 1.26», а версии с таким именем для скачивания нет:
-# называем точную.
-export GOTOOLCHAIN=${GOTOOLCHAIN:-go1.26.2}
-
-if [ $# -ge 1 ]; then
-	CLONE=$(cd "$1" && pwd)
-else
-	CLONE=$(mktemp -d)/proxy-turn-vk-android
-	git clone -q "$REPO" "$CLONE"
+export GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOWORK=off
+export GOENV=off GOFLAGS= GOVCS='*:off' GOTELEMETRY=off GO111MODULE=on
+export GOOS= GOARCH= GOEXPERIMENT=
+export GOPRIVATE= GONOPROXY=none GONOSUMDB=none GOINSECURE= GOAUTH=off GOCACHEPROG=
+if [[ $# != 1 || -z $1 ]]; then
+	printf 'usage: %s <prepared-local-source>\n' "$0" >&2
+	exit 2
 fi
-GC=$CLONE/go_client
+if ! SOURCE=$(CDPATH= cd -- "$1" && pwd -P); then
+	printf 'upstreamrepro: supply an existing prepared local source directory; no clone or fetch is attempted\n' >&2
+	exit 1
+fi
+HERE=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+cd -- "$HERE/../.."
+if ! command -v go >/dev/null; then
+	printf 'upstreamrepro: install a compatible local Go toolchain and put it on PATH; downloads are disabled\n' >&2
+	exit 1
+fi
 
-reset() {
-	git -C "$CLONE" checkout -q "$COMMIT"
-	git -C "$CLONE" checkout -q -- .
-	rm -f "$GC/repro_test.go"
+# Build once so the runner receives signals and its exit status is preserved.
+TEMP_ROOT=$(CDPATH= cd -- "${TMPDIR:-/tmp}" && pwd -P)
+case "$TEMP_ROOT/" in
+	"$SOURCE/"*|"$PWD/"*)
+		printf 'upstreamrepro: set TMPDIR to a directory outside the source and project\n' >&2
+		exit 1
+		;;
+esac
+LAUNCH=$(mktemp -d "$TEMP_ROOT/upstreamrepro-launch.XXXXXXXX")
+CHILD=
+BOOTSTRAP=
+cleanup() {
+	trap '' INT TERM
+	if [[ -n $BOOTSTRAP ]]; then
+		# The build and all compiler descendants have their own process group.
+		if kill -KILL -- "-$BOOTSTRAP" 2>/dev/null; then :; fi
+		if wait "$BOOTSTRAP" 2>/dev/null; then :; fi
+	fi
+	rm -rf -- "$LAUNCH"
 }
-trap reset EXIT
-
-# Задержка 300 мс перед SetReadDeadline в чтении сеанса — окно гонки 5б
-# из микросекунд становится заметным. Только для демонстрации.
-inject_delay() {
-	sed -i 's/^\(\t*\)\(_ = activeConn\.SetReadDeadline(time\.Now()\.Add(sessionReadTimeout))\)$/\1time.Sleep(300 * time.Millisecond) \/\/ REPRO: окно гонки\n\1\2/' "$GC/session.go"
-	[ "$(grep -c 'REPRO: окно гонки' "$GC/session.go")" = 1 ] || { echo "задержка не вставилась" >&2; exit 1; }
+trap cleanup EXIT
+stop() {
+	trap '' INT TERM
+	if [[ -n $CHILD && -z $BOOTSTRAP ]]; then
+		if kill -TERM "$CHILD" 2>/dev/null; then :; fi
+		if wait "$CHILD"; then :; fi
+	fi
+	exit "$1"
 }
-
-run_tests() {
-	# Код возврата go test не важен: падения здесь и есть результат.
-	(cd "$GC" && "$@" go test -tags upstream_repro -count=1 -timeout 10m -v -run "$TESTS" . 2>&1 || true) |
-		grep -E '^\s*--- (PASS|FAIL|SKIP)|repro_test\.go:[0-9]+:' || true
-}
-
-reset
-cp "$HERE/repro_test.go" "$GC/"
-(cd "$GC" && go mod tidy >/dev/null)
-
-echo "== $COMMIT без правок"
-TESTS='TestRepro' run_tests env
-echo
-echo "== без правок, гонка 5б с задержкой"
-inject_delay
-TESTS='TestReproStopRightAfterSessionStart' run_tests env REPRO_INJECT_DELAY=1
-git -C "$CLONE" checkout -q -- go_client/session.go
-
-for p in 1-closed-call 2-baton 3-config-quota 5-stop; do
-	git -C "$CLONE" apply "$HERE/$p.patch"
-done
-echo
-echo "== с правками 1, 2, 3, 5"
-TESTS='TestRepro' run_tests env
-echo
-echo "== с правками, гонка 5б с задержкой"
-inject_delay
-TESTS='TestReproStopRightAfterSessionStart' run_tests env REPRO_INJECT_DELAY=1
+# Defer interruptions until the separate build group has been recorded.
+PENDING=
+trap 'PENDING=130' INT
+trap 'PENDING=143' TERM
+set -m
+GOCACHE="$LAUNCH/build-cache" GOMODCACHE="$LAUNCH/module-cache" GOTMPDIR="$LAUNCH" \
+	go build -buildvcs=false -o "$LAUNCH/upstreamrepro" ./scripts/upstreamrepro &
+BOOTSTRAP=$!
+set +m
+trap 'stop 130' INT
+trap 'stop 143' TERM
+if [[ -n $PENDING ]]; then stop "$PENDING"; fi
+wait "$BOOTSTRAP"
+BOOTSTRAP=
+"$LAUNCH/upstreamrepro" "$SOURCE" &
+CHILD=$!
+wait "$CHILD"

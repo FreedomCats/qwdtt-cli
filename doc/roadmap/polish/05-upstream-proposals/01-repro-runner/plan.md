@@ -1,6 +1,6 @@
 ---
 kind: task
-status: in-progress
+status: done
 detailed: true
 base: 07cf28f
 ---
@@ -109,3 +109,43 @@ tests, normally four to six files; do not fold the missing proposal artifacts in
 No user service, credential or live access is needed. Cached build prerequisites are
 required; absence is a reported limitation, never permission to download them. The lead
 updates the user-facing Markdown instructions in child 03 after the artifact set settles.
+
+## Outcome
+
+Implemented and accepted after independent review and one correction round.
+
+- Added a standard-library runner in `scripts/upstreamrepro/` and a compatibility wrapper
+  that resolves the local source before changing directories, applies the offline environment
+  before building, and preserves runner exit statuses and handled interruptions.
+- The full pinned commit remains `fae121efc3ef57b633516601d3c0d6b1be1fde7c`. Private Git
+  metadata reads the caller's object store without its remotes, promisor configuration or
+  local archive attributes. Each baseline/patched and ordinary/injected case uses its own
+  archive extraction; patches, module preparation and the exact-once delay stay disposable.
+- Explicit case and patch tables drive anchored test selection and structured process,
+  package and test validation. Baseline failures require their original assertions;
+  compilation, setup/bind errors, panics, timeouts and unexpected results cannot count as
+  evidence. Complete command diagnostics are retained.
+- Synthetic fixtures cover dirty source preservation, cleanup on success/error/interruption,
+  archive containment, patch/injection errors, result validation, offline settings and
+  relative paths containing spaces. The existing four patches and five reproductions
+  remain unchanged.
+- Both initial review findings were accepted and corrected: bootstrap compilation now
+  runs in its own process group so compiler descendants are terminated before cleanup,
+  and the executor timeout test expects the platform-specific termination status while
+  requiring the context deadline error. A bootstrap-interruption fixture exercises
+  descendants that would otherwise survive their parent and recreate deleted inputs.
+
+Focused `go test ./scripts/upstreamrepro`, its race variant, runner vet, offline
+`go build ./...`, Bash syntax and whitespace checks passed after the corrections, with
+independent verification. The reviewer also confirmed bootstrap cleanup during a cold
+build with both SIGINT and SIGTERM on a disposable project fixture: no tracked live
+descendants or launch inputs remained. The Windows runner test binary cross-compiles
+offline; Windows execution and non-Unix cancellation runtime behaviour remain unverified.
+No review findings were rejected, and no confirmed problem was left partially fixed
+because of implementation cost. No separate incidental old-code issue was reported.
+
+No ordinary full test suite, real caller-clone reproduction, live/outbound or browser check
+was run. Real pinned artifact validation and the additional counter/captcha evidence belong
+to child 02; user-facing Markdown remains for child 03 and transformation accounting for
+child 04. The existing reproduction README still describes the previous script until its
+scheduled reconciliation.
