@@ -402,8 +402,13 @@ func logStartup(cfg *Config) {
 	logf("[КЛИЕНТ] Captcha: %s", captchaPlan(cfg.CaptchaMode))
 }
 
-// captchaPlan описывает словами, каким путём ядро пойдёт решать капчу.
-// Шаги через WebView появятся в Э2; до тех пор их место занимает ручной режим.
+// captchaPlan summarizes the core's captcha path for the startup log.
+// wv immediately requests external handling (event mode "selected"), without Go v2.
+// rjs makes up to two Go v2 attempts, then one WBV Auto request ("auto").
+// Default/auto makes up to two Go v2 attempts, then up to two WBV Auto requests
+// ("auto"), one final Go v2 attempt, and a manual request ("manual").
+// Later stages follow only failures, subject to the existing cancellation and
+// dead-session early-return checks.
 func captchaPlan(mode string) string {
 	switch mode {
 	case "wv":
