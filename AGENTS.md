@@ -102,9 +102,10 @@ Neither the time of day nor the time zone gets into the history:
 The `.invalid` domain is reserved (RFC 2606): nobody has such an email, and GitHub will
 not attribute the commits to someone else's account.
 
-Every commit ends with the attribution trailer, after the body:
-
-    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Do not add `Co-Authored-By`, `Assisted-by`, or other AI attribution trailers automatically.
+Add attribution only when explicitly requested by the user, and identify only the actual
+contributor. Never copy a model name or identity from an old commit or a repository rule.
+Check the final commit message for automatically appended attribution as well.
 
 A `Claude-Session` line with a link to the session is not added: the link identifies the
 account the session belongs to.
