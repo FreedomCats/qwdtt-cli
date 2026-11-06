@@ -1,11 +1,17 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
+	"time"
 
+	"github.com/FreedomCats/qwdtt-cli/internal/captcha"
+	"github.com/FreedomCats/qwdtt-cli/internal/config"
 	"github.com/FreedomCats/qwdtt-cli/internal/core"
 )
 
@@ -225,3 +231,370 @@ func TestPrinterPing(t *testing.T) {
 }
 
 var errFake = errors.New("искусственная ошибка")
+
+type diagnosticSolver struct {
+	mu       sync.Mutex
+	requests []captcha.Request
+	started  chan struct{}
+	canceled chan struct{}
+	cleanup  chan struct{}
+	start    sync.Once
+	stop     sync.Once
+	wait     bool
+}
+
+func (s *diagnosticSolver) Solve(ctx context.Context, req captcha.Request) (string, error) {
+	s.mu.Lock()
+	s.requests = append(s.requests, req)
+	s.mu.Unlock()
+	if s.started != nil {
+		s.start.Do(func() { close(s.started) })
+	}
+	if s.wait {
+		<-ctx.Done()
+		s.markCanceled()
+		if s.cleanup != nil {
+			<-s.cleanup
+		}
+		return "", ctx.Err()
+	}
+	select {
+	case <-ctx.Done():
+		s.markCanceled()
+		return "", ctx.Err()
+	default:
+	}
+	return "made-up-captcha-token", nil
+}
+
+func (s *diagnosticSolver) markCanceled() {
+	if s.canceled != nil {
+		s.stop.Do(func() { close(s.canceled) })
+	}
+}
+
+func (*diagnosticSolver) NeedsHuman() bool { return false }
+
+func diagnosticControlEnv(solver *diagnosticSolver) (*env, *strings.Builder, *strings.Builder) {
+	var stdout, stderr strings.Builder
+	control := core.NewControl()
+	e := &env{
+		stdout: &stdout, stderr: &stderr, stdin: strings.NewReader(""), captchaSolver: solver,
+		captchaControl: func() *core.Control { return control },
+	}
+	return e, &stdout, &stderr
+}
+
+// Core has one process-wide response channel; these tests must remain sequential.
+func isolateCaptchaResults(t *testing.T) {
+	t.Helper()
+	drainCaptchaResults()
+	t.Cleanup(drainCaptchaResults)
+}
+
+func drainCaptchaResults() {
+	for {
+		select {
+		case <-core.CaptchaResultChan:
+		default:
+			return
+		}
+	}
+}
+
+func assertCaptchaResultsEmpty(t *testing.T) {
+	t.Helper()
+	select {
+	case got := <-core.CaptchaResultChan:
+		t.Errorf("unexpected captcha response left in core channel: %q", got)
+	default:
+	}
+}
+
+func (s *diagnosticSolver) assertRequest(t *testing.T) {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.requests) != 1 {
+		t.Fatalf("solver received %d requests, want 1", len(s.requests))
+	}
+	req := s.requests[0]
+	if req.Mode != captcha.ModeSelected || req.RedirectURI != "https://captcha.example/" || req.SessionToken != "made-up-session" {
+		t.Errorf("captcha request = %+v", req)
+	}
+	if left := time.Until(req.Deadline); left <= 0 || left > core.CaptchaTimeout("selected")-captcha.DefaultMargin {
+		t.Errorf("captcha deadline leaves %s, want a positive bounded interval", left)
+	}
+}
+
+func TestDiagnosticCaptchaDispatch(t *testing.T) {
+	for _, path := range []string{"hashes", "ping"} {
+		t.Run(path, func(t *testing.T) {
+			t.Setenv(netguardEnv, "")
+			isolateCaptchaResults(t)
+			solver := &diagnosticSolver{}
+			e, stdout, _ := diagnosticControlEnv(solver)
+			dialErr := errors.New("injected dial control")
+			control := func(string, string, syscall.RawConn) error { return dialErr }
+			plan := &diagPlan{
+				profile: &config.Profile{Name: "home"},
+				cfg: core.Config{Peer: "203.0.113.10:56000", DNS: "google",
+					Hashes: []string{"madeup-hash-one", "madeup-hash-two"}, DialControl: control},
+			}
+			checkControl := func(cfg core.Config) {
+				if cfg.DialControl == nil || !errors.Is(cfg.DialControl("tcp", "192.0.2.1:443", nil), dialErr) {
+					t.Error("diagnostic did not preserve DialControl")
+				}
+			}
+			if path == "ping" {
+				e.runPing = func(ctx context.Context, cfg core.Config, sink core.Sink) error {
+					checkControl(cfg)
+					if cfg.Peer != "203.0.113.10:56000" {
+						t.Errorf("peer = %q", cfg.Peer)
+					}
+					sink.Emit(core.EventCaptchaRequired{Mode: "selected", RedirectURI: "https://captcha.example/", SessionToken: "made-up-session"})
+					if got := receiveCaptcha(t); got != "made-up-captcha-token" {
+						t.Errorf("captcha response = %q", got)
+					}
+					sink.Emit(core.EventPing{RTT: 42 * time.Millisecond})
+					return nil
+				}
+			} else {
+				e.hashCheck = func(ctx context.Context, cfg core.Config, sink core.Sink) error {
+					checkControl(cfg)
+					sink.Emit(core.EventCaptchaRequired{Mode: "selected", RedirectURI: "https://captcha.example/", SessionToken: "made-up-session"})
+					if got := receiveCaptcha(t); got != "made-up-captcha-token" {
+						t.Errorf("captcha response = %q", got)
+					}
+					sink.Emit(core.EventHashCheck{Index: 1, Total: 2, Hash: cfg.Hashes[0], Status: core.HashCheckOK})
+					sink.Emit(core.EventHashCheck{Index: 2, Total: 2, Hash: cfg.Hashes[1], Status: core.HashCheckDead})
+					return nil
+				}
+			}
+			var err error
+			if path == "ping" {
+				err = plan.ping(context.Background(), e, false)
+			} else {
+				err = plan.hashes(context.Background(), e, false)
+			}
+			if err != nil {
+				t.Fatalf("diagnostic returned error: %v", err)
+			}
+			got := stdout.String()
+			want := "задержка до сервера через TURN: 42 мс"
+			if path == "hashes" {
+				want = "годных хешей 1 из 2"
+				if strings.Count(got, "хеш 1/2") != 1 || strings.Count(got, "хеш 2/2") != 1 {
+					t.Errorf("hash events were missing or printed more than once:\n%s", got)
+				}
+			}
+			if strings.Count(got, want) != 1 {
+				t.Errorf("ordinary result %q missing or duplicated:\n%s", want, got)
+			}
+			if strings.Contains(got, "made-up-session") || strings.Contains(got, "captcha.example") {
+				t.Errorf("captcha event was printed:\n%s", got)
+			}
+			solver.assertRequest(t)
+			assertCaptchaResultsEmpty(t)
+		})
+	}
+}
+
+func TestDiagnosticCaptchaDefaultsWithoutBrowser(t *testing.T) {
+	isolateCaptchaResults(t)
+	var stdout, stderr strings.Builder
+	e := &env{stdout: &stdout, stderr: &stderr, stdin: strings.NewReader("made-up-captcha-token\n")}
+	dispatch := newDiagnosticCaptcha(context.Background(), e, newPrinter(e.stdout, false), nil)
+	defer dispatch.close()
+	dispatch.sink(func(core.Event) {}).Emit(core.EventCaptchaRequired{
+		Mode: "selected", RedirectURI: "https://captcha.example/", SessionToken: "made-up-session",
+	})
+	if got := receiveCaptcha(t); got != "made-up-captcha-token" {
+		t.Errorf("manual captcha response = %q", got)
+	}
+	dispatch.close()
+	if strings.Count(stderr.String(), "VK просит решить капчу.") != 1 {
+		t.Errorf("manual captcha prompt missing or duplicated:\n%s", stderr.String())
+	}
+	assertCaptchaResultsEmpty(t)
+}
+
+// A canceled core worker may still wait on the captcha channel without its context.
+// The cancel cases only return from the fake core after receiving a refusal.
+func TestDiagnosticCaptchaLifecycle(t *testing.T) {
+	for _, path := range []string{"ping", "hashes", "menu"} {
+		for _, outcome := range []string{"success", "error", "cancel"} {
+			t.Run(path+"/"+outcome, func(t *testing.T) {
+				t.Setenv(netguardEnv, "")
+				isolateCaptchaResults(t)
+				cleanup := make(chan struct{})
+				var release sync.Once
+				finishCleanup := func() { release.Do(func() { close(cleanup) }) }
+				defer finishCleanup()
+				solver := &diagnosticSolver{started: make(chan struct{}), canceled: make(chan struct{}), cleanup: cleanup, wait: true}
+				e, _, stderr := diagnosticControlEnv(solver)
+				plan := &diagPlan{profile: &config.Profile{Name: "home"}, cfg: core.Config{
+					Peer: "203.0.113.10:56000", DNS: "google", Hashes: []string{"madeup-hash-one"},
+				}}
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				m := &menu{e: e, signals: &menuSignals{exit: func() { t.Error("Ctrl+C exited the menu") }}}
+				received := make(chan string, 1)
+				run := func(coreCtx context.Context, _ core.Config, sink core.Sink) error {
+					sink.Emit(core.EventCaptchaRequired{Mode: "selected", RedirectURI: "https://captcha.example/", SessionToken: "made-up-session"})
+					if outcome == "cancel" {
+						response, err := receiveCaptchaResult()
+						if err != nil {
+							return err
+						}
+						received <- response
+						if path == "ping" {
+							return coreCtx.Err()
+						}
+						return nil // RunHashCheck returns nil even when canceled.
+					}
+					if err := waitForDiagnosticSolver(solver); err != nil {
+						return err
+					}
+					if outcome == "error" {
+						return errFake
+					}
+					switch path {
+					case "ping":
+						sink.Emit(core.EventPing{RTT: 42 * time.Millisecond})
+					case "hashes", "menu":
+						sink.Emit(core.EventHashCheck{Index: 1, Total: 1, Hash: "madeup-hash-one", Status: core.HashCheckOK})
+					}
+					return nil
+				}
+				e.runPing, e.hashCheck = run, run
+
+				done := make(chan error, 1)
+				go func() {
+					switch path {
+					case "ping":
+						done <- plan.ping(ctx, e, false)
+					case "hashes":
+						done <- plan.hashes(ctx, e, false)
+					case "menu":
+						kept := m.checkHashes(ctx, &config.Profile{}, plan.cfg.Hashes)
+						if len(kept) != 1 || kept[0] != plan.cfg.Hashes[0] {
+							done <- errors.New("menu did not keep its non-dead hash")
+							return
+						}
+						done <- nil
+					}
+				}()
+				returned := false
+				t.Cleanup(func() {
+					cancel()
+					finishCleanup()
+					if !returned {
+						select {
+						case <-done:
+						case <-time.After(2 * time.Second):
+							t.Error("diagnostic did not stop during test cleanup")
+						}
+					}
+				})
+				if outcome == "cancel" {
+					if err := waitForDiagnosticSolver(solver); err != nil {
+						cancel()
+						t.Error(err)
+					} else if path == "menu" {
+						m.signals.handle()
+					} else {
+						cancel()
+					}
+				}
+				select {
+				case <-solver.canceled:
+				case <-time.After(time.Second):
+					cancel()
+					t.Fatal("dispatcher did not cancel its active solver")
+				}
+				var result error
+				select {
+				case result = <-done:
+					returned = true
+					t.Error("diagnostic returned before solver cleanup finished")
+				case <-time.After(20 * time.Millisecond):
+				}
+				finishCleanup()
+				if !returned {
+					select {
+					case result = <-done:
+						returned = true
+					case <-time.After(2 * time.Second):
+						cancel()
+						t.Fatal("diagnostic did not close its dispatcher promptly")
+					}
+				}
+				var want error
+				if path != "menu" {
+					switch outcome {
+					case "error":
+						want = errFake
+					case "cancel":
+						want = context.Canceled
+					}
+				}
+				if !errors.Is(result, want) {
+					t.Errorf("%s error = %v, want %v", path, result, want)
+				}
+				if outcome == "cancel" {
+					select {
+					case response := <-received:
+						if response != "error:cancelled" {
+							t.Errorf("captcha response = %q, want error:cancelled", response)
+						}
+					default:
+						t.Error("core waiter did not receive captcha refusal")
+					}
+				} else if got := receiveCaptcha(t); got != "error:cancelled" {
+					t.Errorf("dispatcher close response = %q, want error:cancelled", got)
+				}
+				if path == "menu" {
+					if outcome == "cancel" && !strings.Contains(stderr.String(), "Проверка прервана.") {
+						t.Errorf("menu did not report cancellation:\n%s", stderr.String())
+					}
+					if (outcome == "error") != strings.Contains(stderr.String(), errFake.Error()) {
+						t.Errorf("menu error output mismatch:\n%s", stderr.String())
+					}
+					if ctx.Err() != nil || m.signals.cancel != nil {
+						t.Error("menu check canceled its parent or did not reset the signal handler")
+					}
+				}
+				solver.assertRequest(t)
+				assertCaptchaResultsEmpty(t)
+			})
+		}
+	}
+}
+
+func waitForDiagnosticSolver(solver *diagnosticSolver) error {
+	select {
+	case <-solver.started:
+		return nil
+	case <-time.After(time.Second):
+		return errors.New("dispatcher did not start solver")
+	}
+}
+
+func receiveCaptchaResult() (string, error) {
+	select {
+	case response := <-core.CaptchaResultChan:
+		return response, nil
+	case <-time.After(time.Second):
+		return "", errors.New("dispatcher did not answer captcha promptly")
+	}
+}
+
+func receiveCaptcha(t *testing.T) string {
+	t.Helper()
+	response, err := receiveCaptchaResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response
+}

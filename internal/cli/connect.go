@@ -435,7 +435,7 @@ func captchaSolver(e *env, out *printer, ks *killSwitchGuard, dial captcha.DialF
 		}
 		return killSwitchCaptcha{Solver: s, guard: ks}
 	}
-	manual := captcha.ManualOptions{In: e.stdin, Out: out.aside(e.stderr), Open: e.openURL}
+	manual := captcha.ManualOptions{ReadLine: e.input().readLine, Out: out.aside(e.stderr), Open: e.openURL}
 	console := func() captcha.Solver { return wrap(captcha.NewManual(manual)) }
 
 	// По SSH окно откроется не там, где сидит пользователь, а то и вовсе

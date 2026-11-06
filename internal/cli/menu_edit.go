@@ -109,7 +109,12 @@ func (m *menu) checkHashes(ctx context.Context, p *config.Profile, hashes []stri
 
 	var mu sync.Mutex
 	dead := map[string]bool{}
-	sink := core.SinkFunc(func(ev core.Event) {
+	out := newPrinter(w, false)
+	// Share the printer lock with captcha messages while keeping menu formatting.
+	w = out.aside(w)
+	dispatch := newDiagnosticCaptcha(ctx, m.e, out, nil)
+	defer dispatch.close()
+	sink := dispatch.sink(func(ev core.Event) {
 		hc, ok := ev.(core.EventHashCheck)
 		if !ok || hc.Status == core.HashCheckRunning {
 			return
@@ -129,9 +134,9 @@ func (m *menu) checkHashes(ctx context.Context, p *config.Profile, hashes []stri
 	err := check(ctx, cfg, sink)
 	switch {
 	case err != nil:
-		fmt.Fprintf(m.e.stderr, "Проверить ссылки не удалось: %v\n", err)
+		fmt.Fprintf(out.aside(m.e.stderr), "Проверить ссылки не удалось: %v\n", err)
 	case ctx.Err() != nil:
-		fmt.Fprintln(m.e.stderr, "Проверка прервана.")
+		fmt.Fprintln(out.aside(m.e.stderr), "Проверка прервана.")
 	}
 
 	mu.Lock()

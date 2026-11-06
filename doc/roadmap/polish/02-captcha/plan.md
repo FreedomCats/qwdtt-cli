@@ -1,6 +1,7 @@
 ---
 kind: stage
-status: todo
+status: in-progress
+base: 2aed1a1
 ---
 
 # Captcha leftovers

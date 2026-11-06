@@ -10,7 +10,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -19,6 +18,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/FreedomCats/qwdtt-cli/internal/captcha"
 	"github.com/FreedomCats/qwdtt-cli/internal/core"
@@ -62,17 +62,21 @@ type env struct {
 	// captchaBrowser собирает решатель капчи с браузером под управлением
 	// (Linux). Пусто — без него; так в тестах, где браузеров не запускают.
 	captchaBrowser func(opts captcha.BrowserOptions) (captcha.Solver, error)
-	// hashCheck подменяет core.RunHashCheck — проверку хешей в меню
-	// (menu_edit.go). Пусто — настоящая проверка; подменяют тесты, где сети нет.
+	// hashCheck replaces core.RunHashCheck in diagnostics and the menu; nil uses core.
 	hashCheck func(ctx context.Context, cfg core.Config, sink core.Sink) error
+	// Diagnostic seams let tests exercise captcha dispatch without network or browser access.
+	captchaSolver  captcha.Solver
+	captchaControl func() *core.Control
+	runPing        func(context.Context, core.Config, core.Sink) error
 	// connectRun подменяет подъём туннеля по готовому плану — для меню
 	// (menu.go). Пусто — plan.run; подменяют тесты, где сети нет.
 	connectRun func(ctx context.Context, plan *connectPlan) error
 	// elevate подменяет перезапуск с правами администратора (elevate.go):
 	// detached — команда ушла в своё окно. Пусто — настоящий перезапуск.
 	elevate func(args []string) (detached bool, err error)
-	// lines — буферизованный stdin. Заводится при первом чтении строки.
-	lines *bufio.Reader
+	// lines shares stdin buffering and pending reads between prompts and captcha.
+	lines     *lineInput
+	inputOnce sync.Once
 
 	// tty подменяет проверку «stdin и stdout — терминал», от которой зависит,
 	// откроется ли меню (menu.go). Пусто — проверяются настоящие потоки.

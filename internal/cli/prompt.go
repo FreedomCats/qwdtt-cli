@@ -3,7 +3,7 @@
 package cli
 
 import (
-	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -31,20 +31,22 @@ var errNoInput = errors.New("ввод пуст")
 // в список процессов конвейер не попадает.
 func (e *env) askSecret(prompt string) (string, error) {
 	if e.secrets != nil {
-		return e.secrets(prompt)
+		return e.input().secret(func() (string, error) { return e.secrets(prompt) })
+	}
+
+	if fd, ok := e.terminalFD(); ok {
+		return e.input().secret(func() (string, error) {
+			fmt.Fprint(e.stderr, prompt)
+			raw, err := term.ReadPassword(fd)
+			fmt.Fprintln(e.stderr)
+			if err != nil {
+				return "", fmt.Errorf("скрытый ввод: %w", err)
+			}
+			return strings.TrimSpace(string(raw)), nil
+		})
 	}
 
 	fmt.Fprint(e.stderr, prompt)
-
-	if fd, ok := e.terminalFD(); ok {
-		raw, err := term.ReadPassword(fd)
-		fmt.Fprintln(e.stderr)
-		if err != nil {
-			return "", fmt.Errorf("скрытый ввод: %w", err)
-		}
-		return strings.TrimSpace(string(raw)), nil
-	}
-
 	line, err := e.readLine()
 	if err != nil {
 		return "", err
@@ -117,17 +119,9 @@ func (e *env) confirm(question string) (bool, error) {
 	}
 }
 
-// readLine читает одну строку со stdin.
-//
-// Буферизованный читатель хранится в env: у команды бывает несколько вопросов
-// подряд, а новый bufio.Reader на каждый вопрос уносил бы с собой всё, что
-// успел прочитать сверх строки.
+// readLine reads one prompt response using the same input owner as manual captcha.
 func (e *env) readLine() (string, error) {
-	if e.lines == nil {
-		e.lines = bufio.NewReader(e.stdin)
-	}
-
-	line, err := e.lines.ReadString('\n')
+	line, err := e.input().readLine(context.Background())
 	if errors.Is(err, io.EOF) && strings.TrimSpace(line) == "" {
 		return "", errNoInput
 	}

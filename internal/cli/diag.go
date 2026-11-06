@@ -15,8 +15,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"sync/atomic"
 
+	"github.com/FreedomCats/qwdtt-cli/internal/captcha"
 	"github.com/FreedomCats/qwdtt-cli/internal/config"
 	"github.com/FreedomCats/qwdtt-cli/internal/core"
 )
@@ -127,7 +129,17 @@ func (plan *diagPlan) ping(ctx context.Context, e *env, verbose bool) error {
 		}
 		cfg.DialControl = guard.Control
 	}
-	return core.RunPing(ctx, cfg, core.SinkFunc(out.event))
+	var dial captcha.DialFunc
+	if cfg.DialControl != nil {
+		dial = (&net.Dialer{Control: cfg.DialControl}).DialContext
+	}
+	dispatch := newDiagnosticCaptcha(ctx, e, out, dial)
+	defer dispatch.close()
+	run := e.runPing
+	if run == nil {
+		run = core.RunPing
+	}
+	return run(ctx, cfg, dispatch.sink(out.event))
 }
 
 // --- hashes ---
@@ -222,18 +234,28 @@ func (plan *diagPlan) hashes(ctx context.Context, e *env, verbose bool) error {
 		}
 		cfg.DialControl = guard.Control
 	}
+	var dial captcha.DialFunc
+	if cfg.DialControl != nil {
+		dial = (&net.Dialer{Control: cfg.DialControl}).DialContext
+	}
+	dispatch := newDiagnosticCaptcha(ctx, e, out, dial)
+	defer dispatch.close()
 
 	// Счётчик годных ведётся здесь, а не в принтере: принтер печатает, а
 	// решение о коде возврата — дело команды. Atomic — на всякий случай:
 	// Sink по контракту зовут из любых горутин.
 	var good atomic.Int32
-	sink := core.SinkFunc(func(ev core.Event) {
+	sink := dispatch.sink(func(ev core.Event) {
 		out.event(ev)
 		if hc, ok := ev.(core.EventHashCheck); ok && hc.Status == core.HashCheckOK {
 			good.Add(1)
 		}
 	})
-	if err := core.RunHashCheck(ctx, cfg, sink); err != nil {
+	run := e.hashCheck
+	if run == nil {
+		run = core.RunHashCheck
+	}
+	if err := run(ctx, cfg, sink); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {

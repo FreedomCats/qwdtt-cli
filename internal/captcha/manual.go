@@ -38,6 +38,10 @@ type ManualOptions struct {
 	// In — откуда читается ответ. nil — os.Stdin.
 	In io.Reader
 
+	// ReadLine optionally shares the caller's input buffering and cancellation.
+	// When set, it replaces In and must return promptly when ctx is canceled.
+	ReadLine func(ctx context.Context) (string, error)
+
 	// Out — куда уходят приглашение и инструкция. nil — os.Stderr.
 	//
 	// Именно stderr: stdout у CLI занят тем, что является результатом команды,
@@ -119,16 +123,18 @@ func (m *Manual) prompt(req Request) {
 	fmt.Fprint(out, "  4. Вставьте эту длинную строку сюда: ")
 }
 
-// readLine читает ответ, не теряя способности вернуться по отмене.
-//
-// Чтение уходит в горутину потому, что прервать чтение со stdin по ctx
-// стандартными средствами нельзя: Read на терминале висит до перевода строки,
-// и закрывать os.Stdin, чтобы его расшевелить, — значит ломать stdin всей
-// программе. Горутина после отмены остаётся висеть на Read до тех пор, пока
-// пользователь не нажмёт Enter или процесс не кончится; буфер канала не даёт
-// ей заблокироваться навсегда. Это осознанная цена, и платится она один раз:
-// ядро больше капчу не попросит, раз мы уже уходим.
+// readLine uses shared input when supplied. The standalone default reads in a
+// goroutine so cancellation can return without closing stdin; callers that reuse
+// stdin after cancellation must supply ReadLine to retain the unfinished read.
 func (m *Manual) readLine(ctx context.Context) (string, error) {
+	if m.opts.ReadLine != nil {
+		line, err := m.opts.ReadLine(ctx)
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			fmt.Fprintln(m.opts.Out)
+			return "", err
+		}
+		return manualLine(line, err)
+	}
 	type result struct {
 		line string
 		err  error
@@ -145,15 +151,19 @@ func (m *Manual) readLine(ctx context.Context) (string, error) {
 		fmt.Fprintln(m.opts.Out)
 		return "", ctx.Err()
 	case got := <-done:
-		line := strings.TrimSpace(got.line)
-		if got.err != nil && !errors.Is(got.err, io.EOF) {
-			return "", fmt.Errorf("чтение ответа: %w", got.err)
-		}
-		if line == "" {
-			return "", ErrCancelled
-		}
-		return line, nil
+		return manualLine(got.line, got.err)
 	}
+}
+
+func manualLine(line string, err error) (string, error) {
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("чтение ответа: %w", err)
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return "", ErrCancelled
+	}
+	return line, nil
 }
 
 // parseAnswer разбирает то, что вставил пользователь.

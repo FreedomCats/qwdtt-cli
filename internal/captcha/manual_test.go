@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -220,6 +221,46 @@ func TestManualReturnsOnCancel(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Solve не вернулся после отмены")
+	}
+}
+
+func TestManualSharedReadLine(t *testing.T) {
+	const token = "made-up-captcha-token"
+	for _, tc := range []struct {
+		name string
+		line string
+		err  error
+		want error
+	}{
+		{name: "token", line: token + "\n"},
+		{name: "token at EOF", line: token, err: io.EOF},
+		{name: "empty EOF", err: io.EOF, want: ErrCancelled},
+		{name: "canceled", err: context.Canceled, want: context.Canceled},
+		{name: "deadline", err: context.DeadlineExceeded, want: context.DeadlineExceeded},
+		{name: "read failure", err: os.ErrClosed, want: os.ErrClosed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			called := false
+			m := NewManual(ManualOptions{
+				In: strings.NewReader("must-not-read-this\n"), Out: io.Discard,
+				ReadLine: func(got context.Context) (string, error) {
+					called = true
+					if got != ctx {
+						t.Error("Manual did not pass the request context to shared input")
+					}
+					return tc.line, tc.err
+				},
+			})
+			got, err := m.Solve(ctx, manualRequest())
+			if !called || !errors.Is(err, tc.want) {
+				t.Fatalf("shared input called = %v; Solve = %q, %v", called, got, err)
+			}
+			if tc.want == nil && got != token {
+				t.Errorf("Solve token = %q, want %q", got, token)
+			}
+		})
 	}
 }
 
