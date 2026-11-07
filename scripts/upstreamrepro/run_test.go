@@ -43,6 +43,67 @@ var fixtureDiagnostics = map[string]string{
 	"TestReproCaptchaWVLog":           "    repro_test.go:1120: wv diagnostic still claims Android settings\n",
 }
 
+type matrixSpec struct {
+	name              string
+	patches           []string
+	tests             []string
+	patched, injected bool
+}
+
+// This association table is intentionally independent of cases and testRuns.
+var expectedCasePatches = map[string]struct {
+	patch    patchID
+	injected bool
+}{
+	"TestReproClosedCallIsDead":               {closedCallPatch, false},
+	"TestReproGroupPassesBatonOnCredsFailure": {batonPatch, false},
+	"TestReproConfigDespiteQuota":             {configQuotaPatch, false},
+	"TestReproStopDuringConfigRequest":        {stopPatch, false},
+	"TestReproStopRightAfterSessionStart":     {stopPatch, true},
+	"TestReproDroppedUp":                      {droppedPatch, false},
+	"TestReproDroppedDown":                    {droppedPatch, false},
+	"TestReproDroppedStatsOutput":             {droppedPatch, false},
+	"TestReproCaptchaManualTimeout":           {captchaTimeouts, false},
+	"TestReproCaptchaSelectedTimeout":         {captchaTimeouts, false},
+	"TestReproCaptchaAutoTimeout":             {captchaTimeouts, false},
+	"TestReproCaptchaWVLog":                   {captchaWVLog, false},
+}
+
+var expectedMatrix = []matrixSpec{
+	{name: "baseline", tests: []string{
+		"TestReproClosedCallIsDead", "TestReproGroupPassesBatonOnCredsFailure", "TestReproConfigDespiteQuota",
+		"TestReproStopDuringConfigRequest", "TestReproStopRightAfterSessionStart", "TestReproDroppedUp",
+		"TestReproDroppedDown", "TestReproDroppedStatsOutput", "TestReproCaptchaManualTimeout",
+		"TestReproCaptchaSelectedTimeout", "TestReproCaptchaAutoTimeout", "TestReproCaptchaWVLog",
+	}},
+	{name: "baseline-injected", injected: true, tests: []string{"TestReproStopRightAfterSessionStart"}},
+	{name: "patched", patched: true, patches: []string{
+		"1-closed-call.patch", "2-baton.patch", "3-config-quota.patch", "4-dropped-packets.patch",
+		"5-stop.patch", "6-captcha-timeouts.patch", "7-captcha-wv-log.patch",
+	}, tests: []string{
+		"TestReproClosedCallIsDead", "TestReproGroupPassesBatonOnCredsFailure", "TestReproConfigDespiteQuota",
+		"TestReproStopDuringConfigRequest", "TestReproStopRightAfterSessionStart", "TestReproDroppedUp",
+		"TestReproDroppedDown", "TestReproDroppedStatsOutput", "TestReproCaptchaManualTimeout",
+		"TestReproCaptchaSelectedTimeout", "TestReproCaptchaAutoTimeout", "TestReproCaptchaWVLog",
+	}},
+	{name: "patched-injected", patched: true, injected: true, patches: []string{
+		"1-closed-call.patch", "2-baton.patch", "3-config-quota.patch", "4-dropped-packets.patch",
+		"5-stop.patch", "6-captcha-timeouts.patch", "7-captcha-wv-log.patch",
+	}, tests: []string{"TestReproStopRightAfterSessionStart"}},
+	{name: "patched-closed-call", patched: true, patches: []string{"1-closed-call.patch"}, tests: []string{"TestReproClosedCallIsDead"}},
+	{name: "patched-baton", patched: true, patches: []string{"2-baton.patch"}, tests: []string{"TestReproGroupPassesBatonOnCredsFailure"}},
+	{name: "patched-config-quota", patched: true, patches: []string{"3-config-quota.patch"}, tests: []string{"TestReproConfigDespiteQuota"}},
+	{name: "patched-counters", patched: true, patches: []string{"4-dropped-packets.patch"}, tests: []string{
+		"TestReproDroppedUp", "TestReproDroppedDown", "TestReproDroppedStatsOutput",
+	}},
+	{name: "patched-stop", patched: true, patches: []string{"5-stop.patch"}, tests: []string{"TestReproStopDuringConfigRequest"}},
+	{name: "patched-stop-injected", patched: true, injected: true, patches: []string{"5-stop.patch"}, tests: []string{"TestReproStopRightAfterSessionStart"}},
+	{name: "patched-captcha-timeouts", patched: true, patches: []string{"6-captcha-timeouts.patch"}, tests: []string{
+		"TestReproCaptchaManualTimeout", "TestReproCaptchaSelectedTimeout", "TestReproCaptchaAutoTimeout",
+	}},
+	{name: "patched-captcha-wv-log", patched: true, patches: []string{"7-captcha-wv-log.patch"}, tests: []string{"TestReproCaptchaWVLog"}},
+}
+
 func fixtureEvents(run testRun) []testEvent {
 	const pkg = "example.invalid/upstream"
 	events := []testEvent{{Action: "start", Package: pkg}}
@@ -77,14 +138,71 @@ func jsonResult(events []testEvent) processResult {
 	return processResult{stdout: data.Bytes(), exitCode: code}
 }
 
+func recomputeResult(events []testEvent) processResult {
+	updated := slices.Clone(events)
+	packageAction := "pass"
+	for _, event := range updated {
+		if event.Test != "" && event.Action == "fail" {
+			packageAction = "fail"
+		}
+	}
+	for i := range updated {
+		if updated[i].Test == "" && updated[i].Package != "" && (updated[i].Action == "pass" || updated[i].Action == "fail") {
+			updated[i].Action = packageAction
+		}
+	}
+	return jsonResult(updated)
+}
+
 func TestExpectationMatrix(t *testing.T) {
 	runs := testRuns()
-	timeoutNames := []string{"TestReproCaptchaManualTimeout", "TestReproCaptchaSelectedTimeout", "TestReproCaptchaAutoTimeout"}
-	logNames := []string{"TestReproCaptchaWVLog"}
-	for _, name := range []string{"baseline", "patched", "patched-counters", "patched-captcha-timeouts", "patched-captcha-wv-log"} {
-		fixtureRun(t, name)
-	}
+	byName := make(map[string]testRun, len(runs))
 	for _, run := range runs {
+		if _, exists := byName[run.name]; exists {
+			t.Fatalf("duplicate input name: %s", run.name)
+		}
+		byName[run.name] = run
+	}
+	if len(byName) != len(expectedMatrix) {
+		t.Fatalf("unexpected input inventory: %v", sortedRunNames(byName))
+	}
+	for _, spec := range expectedMatrix {
+		run, exists := byName[spec.name]
+		if !exists {
+			t.Fatalf("missing input: %s", spec.name)
+		}
+		if run.patched != spec.patched || run.injected != spec.injected || !slices.Equal(run.patches, spec.patches) {
+			t.Fatalf("wrong input configuration for %s: patches=%v patched=%t injected=%t", spec.name, run.patches, run.patched, run.injected)
+		}
+		if len(run.want) == 0 {
+			t.Fatalf("empty selection for %s", spec.name)
+		}
+		gotTests := make([]string, 0, len(run.want))
+		seen := make(map[string]bool, len(run.want))
+		for _, want := range run.want {
+			if want.name == "" || seen[want.name] {
+				t.Fatalf("empty or duplicate test association in %s: %q", spec.name, want.name)
+			}
+			seen[want.name] = true
+			gotTests = append(gotTests, want.name)
+			if want.action != expectedAction(spec.patched, spec.injected, want.name) {
+				t.Fatalf("wrong expected action for %s/%s: %q", spec.name, want.name, want.action)
+			}
+			if !spec.injected && want.name == "TestReproStopRightAfterSessionStart" &&
+				(spec.name == "baseline" || spec.name == "patched") &&
+				(len(want.evidence) != 1 || want.evidence[0].String() != diagnostic(`нужна вставленная задержка: см\. run\.sh`).String()) {
+				t.Fatalf("ordinary deadline skip reason changed for %s", spec.name)
+			}
+		}
+		if !slices.Equal(gotTests, spec.tests) {
+			t.Fatalf("wrong test membership for %s: got %v, want %v", spec.name, gotTests, spec.tests)
+		}
+	}
+	if err := assertCasePatchInventory(runs); err != nil {
+		t.Fatal(err)
+	}
+	for _, spec := range expectedMatrix {
+		run := byName[spec.name]
 		t.Run(run.name, func(t *testing.T) {
 			if err := validateResult(jsonResult(fixtureEvents(run)), run.want); err != nil {
 				t.Fatal(err)
@@ -105,62 +223,138 @@ func TestExpectationMatrix(t *testing.T) {
 					}
 				}
 			}
-			switch run.name {
-			case "patched-counters":
-				if !reflect.DeepEqual(run.patches, []string{"4-dropped-packets.patch"}) || len(run.want) != 3 {
-					t.Fatalf("counter-only input is not isolated: %+v", run)
-				}
-				for _, c := range cases {
-					if pattern.MatchString(c.baseline.name) != c.counters {
-						t.Fatalf("wrong counter-only selection: %s", run.pattern())
-					}
-				}
-			case "patched-captcha-timeouts", "patched-captcha-wv-log":
-				wantPatches, wantNames := []string{"6-captcha-timeouts.patch"}, timeoutNames
-				if run.name == "patched-captcha-wv-log" {
-					wantPatches, wantNames = []string{"7-captcha-wv-log.patch"}, logNames
-				}
-				var gotNames []string
-				for _, w := range run.want {
-					gotNames = append(gotNames, w.name)
-					if w.action != "pass" {
-						t.Fatalf("captcha-only input must pass: %+v", w)
-					}
-				}
-				if !run.patched || run.injected || !slices.Equal(run.patches, wantPatches) || !slices.Equal(gotNames, wantNames) {
-					t.Fatalf("captcha-only input is not isolated: %+v", run)
-				}
-				for _, c := range cases {
-					if pattern.MatchString(c.baseline.name) != slices.Contains(wantNames, c.baseline.name) {
-						t.Fatalf("wrong captcha-only selection: %s", run.pattern())
-					}
-				}
-			default:
-				if run.patched != reflect.DeepEqual(run.patches, patches) || (!run.patched && len(run.patches) != 0) {
-					t.Fatalf("wrong ordinary/injected patch list: %+v", run)
-				}
-				if run.patched && (!slices.Contains(run.patches, "6-captcha-timeouts.patch") || !slices.Contains(run.patches, "7-captcha-wv-log.patch")) {
-					t.Fatal("complete patched input lacks captcha patches")
-				}
-				for _, name := range append(slices.Clone(timeoutNames), logNames...) {
-					i := slices.IndexFunc(run.want, func(w expectation) bool { return w.name == name })
-					if run.injected {
-						if i >= 0 {
-							t.Fatal("captcha must not enter the injected deadline run")
-						}
-						continue
-					}
-					action := "fail"
-					if run.patched || name == "TestReproCaptchaAutoTimeout" {
-						action = "pass"
-					}
-					if i < 0 || run.want[i].action != action {
-						t.Fatalf("wrong ordinary captcha expectation for %s: %+v", name, run.want)
-					}
-				}
-			}
 		})
 	}
+}
+
+func sortedRunNames(runs map[string]testRun) []string {
+	names := make([]string, 0, len(runs))
+	for name := range runs {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+func expectedAction(patched, injected bool, testName string) string {
+	if patched {
+		if !injected && testName == "TestReproStopRightAfterSessionStart" {
+			return "skip"
+		}
+		return "pass"
+	}
+	if injected {
+		return "fail"
+	}
+	if testName == "TestReproStopRightAfterSessionStart" {
+		return "skip"
+	}
+	if testName == "TestReproCaptchaAutoTimeout" {
+		return "pass"
+	}
+	return "fail"
+}
+
+func assertCasePatchInventory(runs []testRun) error {
+	seen := make(map[string]bool, len(cases))
+	for _, c := range cases {
+		name := c.baseline.name
+		association, ok := expectedCasePatches[name]
+		if !ok || association.patch != c.patch || association.injected != c.injected {
+			return fmt.Errorf("unexpected patch association for %s: patch=%q injected=%t", name, c.patch, c.injected)
+		}
+		if seen[name] {
+			return fmt.Errorf("duplicate case association: %s", name)
+		}
+		seen[name] = true
+		if !slices.Contains(patches, string(c.patch)) {
+			return fmt.Errorf("case %s references an undeclared patch %q", name, c.patch)
+		}
+	}
+	if len(seen) != len(expectedCasePatches) {
+		return fmt.Errorf("case inventory differs: got %v", sortedCaseNames(seen))
+	}
+	declared := make(map[string]bool, len(patches))
+	for _, name := range patches {
+		if declared[name] {
+			return fmt.Errorf("duplicate declared patch: %s", name)
+		}
+		declared[name] = true
+		associated := false
+		for _, association := range expectedCasePatches {
+			if string(association.patch) == name {
+				associated = true
+				break
+			}
+		}
+		if !associated {
+			return fmt.Errorf("declared patch lacks expected test coverage: %s", name)
+		}
+	}
+	for _, association := range expectedCasePatches {
+		if !declared[string(association.patch)] {
+			return fmt.Errorf("expected association references undeclared patch: %s", association.patch)
+		}
+	}
+	for _, spec := range expectedMatrix {
+		want := make([]string, 0, len(expectedCasePatches))
+		for name, association := range expectedCasePatches {
+			include := true
+			if spec.patched && len(spec.patches) == 1 {
+				include = string(association.patch) == spec.patches[0] && association.injected == spec.injected
+			} else if spec.injected {
+				include = association.injected
+			}
+			if include {
+				want = append(want, name)
+			}
+		}
+		got := slices.Clone(spec.tests)
+		slices.Sort(want)
+		slices.Sort(got)
+		if !slices.Equal(got, want) {
+			return fmt.Errorf("matrix selection %s differs from independent patch associations: got %v, want %v", spec.name, got, want)
+		}
+	}
+	for _, c := range cases {
+		if c.injected && c.patch != stopPatch {
+			return fmt.Errorf("unexpected injected case: %s", c.baseline.name)
+		}
+		var individual *matrixSpec
+		for i := range expectedMatrix {
+			spec := &expectedMatrix[i]
+			if spec.patched && spec.injected == c.injected && slices.Equal(spec.patches, []string{string(c.patch)}) {
+				individual = spec
+				break
+			}
+		}
+		if individual == nil || !slices.Contains(individual.tests, c.baseline.name) {
+			return fmt.Errorf("case %s missing from independent single-patch matrix", c.baseline.name)
+		}
+		run := findRun(runs, individual.name)
+		if run == nil || !slices.ContainsFunc(run.want, func(w expectation) bool { return w.name == c.baseline.name && w.action == "pass" }) {
+			return fmt.Errorf("case %s missing from individual input %s", c.baseline.name, individual.name)
+		}
+	}
+	return nil
+}
+
+func findRun(runs []testRun, name string) *testRun {
+	for i := range runs {
+		if runs[i].name == name {
+			return &runs[i]
+		}
+	}
+	return nil
+}
+
+func sortedCaseNames(cases map[string]bool) []string {
+	names := make([]string, 0, len(cases))
+	for name := range cases {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
 }
 
 func fixtureRun(t *testing.T, name string) testRun {
@@ -180,12 +374,19 @@ func TestCounterResultValidation(t *testing.T) {
 	})
 	for _, run := range []testRun{baseline, patched} {
 		for _, w := range run.want {
-			for _, mode := range []string{"wrong assertion", "missing", "skip", "setup", "build", "timeout"} {
+			for _, mode := range []string{"wrong assertion", "missing assertion", "unexpected pass", "missing", "skip", "setup", "build", "timeout"} {
+				if (mode == "missing assertion" || mode == "unexpected pass") && w.action != "fail" {
+					continue
+				}
 				t.Run(run.name+"/"+w.name+"/"+mode, func(t *testing.T) {
 					events := fixtureEvents(run)
 					switch mode {
 					case "missing":
 						events = slices.DeleteFunc(events, func(e testEvent) bool { return e.Test == w.name })
+					case "missing assertion":
+						events = mutateTestOutput(events, w.name, func(string) string { return "" })
+					case "unexpected pass":
+						events = mutateTestAction(events, w.name, "pass")
 					case "skip", "wrong assertion", "setup":
 						for i := range events {
 							if events[i].Test != w.name {
@@ -207,14 +408,18 @@ func TestCounterResultValidation(t *testing.T) {
 								Output: "    repro_test.go:600: downlink server setup: handshake failed\n"})
 						}
 					}
-					result := jsonResult(events)
+					result := recomputeResult(events)
 					if mode == "timeout" {
 						result.err = context.DeadlineExceeded
 					} else if mode == "build" {
 						result.stdout = []byte("FAIL example.invalid/upstream [build failed]\n")
 					}
-					if err := validateResult(result, run.want); err == nil {
+					err := validateResult(result, run.want)
+					if err == nil {
 						t.Fatal("invalid counter evidence accepted")
+					}
+					if mode == "unexpected pass" && !strings.Contains(err.Error(), w.name+` result "pass", want "fail"`) {
+						t.Fatalf("unexpected counter pass was rejected for the wrong reason: %v", err)
 					}
 				})
 			}
@@ -280,13 +485,7 @@ func TestCaptchaResultValidation(t *testing.T) {
 								Output: "    repro_test.go:1050: " + setup + "\n"})
 						}
 					}
-					// Make process/package status agree with the mutated tests, so the
-					// intended test/assertion checks, not a stale exit code, reject it.
-					events[len(events)-1].Action = "pass"
-					if slices.ContainsFunc(events[:len(events)-1], func(e testEvent) bool { return e.Action == "fail" }) {
-						events[len(events)-1].Action = "fail"
-					}
-					result := jsonResult(events)
+					result := recomputeResult(events)
 					if mode == "process timeout" {
 						result.err = context.DeadlineExceeded
 					} else if mode == "build" {
@@ -302,30 +501,30 @@ func TestCaptchaResultValidation(t *testing.T) {
 }
 
 func TestRejectResults(t *testing.T) {
-	runs := testRuns()
+	baseline, patched := fixtureRun(t, "baseline"), fixtureRun(t, "patched")
 	tests := []struct {
 		name   string
 		run    testRun
 		change func(*processResult)
 	}{
-		{"missing JSON", runs[0], func(r *processResult) { r.stdout = nil }},
-		{"malformed JSON", runs[0], func(r *processResult) { r.stdout = append(r.stdout, []byte("not JSON\n")...) }},
-		{"truncated JSON", runs[0], func(r *processResult) { r.stdout = []byte(`{"Action":`) }},
-		{"null JSON", runs[0], func(r *processResult) { r.stdout = []byte("null\n") }},
-		{"build failure", runs[0], func(r *processResult) {
+		{"missing JSON", baseline, func(r *processResult) { r.stdout = nil }},
+		{"malformed JSON", baseline, func(r *processResult) { r.stdout = append(r.stdout, []byte("not JSON\n")...) }},
+		{"truncated JSON", baseline, func(r *processResult) { r.stdout = []byte(`{"Action":`) }},
+		{"null JSON", baseline, func(r *processResult) { r.stdout = []byte("null\n") }},
+		{"build failure", baseline, func(r *processResult) {
 			r.stdout = []byte("# example.invalid/upstream\n./source.go:1: undefined: missing\n")
 			r.stderr = []byte("FAIL example.invalid/upstream [build failed]\n")
 		}},
-		{"start failure", runs[0], func(r *processResult) { r.err = exec.ErrNotFound; r.exitCode = -1 }},
-		{"signal", runs[0], func(r *processResult) { r.err = errors.New("signal: terminated"); r.exitCode = -1 }},
-		{"timeout", runs[0], func(r *processResult) { r.err = context.DeadlineExceeded }},
-		{"canceled", runs[0], func(r *processResult) { r.err = context.Canceled }},
-		{"wrong process status", runs[0], func(r *processResult) { r.exitCode = 2 }},
-		{"baseline success", runs[0], func(r *processResult) { *r = jsonResult(fixtureEvents(runs[2])) }},
-		{"patched process failure", runs[2], func(r *processResult) { r.exitCode = 1 }},
-		{"panic on stderr", runs[0], func(r *processResult) { r.stderr = []byte("panic: fixture\n") }},
-		{"bind failure on stderr", runs[0], func(r *processResult) { r.stderr = []byte("listen udp4 127.0.0.1:0: bind: operation not permitted\n") }},
-		{"setup failure on stderr", runs[0], func(r *processResult) { r.stderr = []byte("FAIL example.invalid/upstream [setup failed]\n") }},
+		{"start failure", baseline, func(r *processResult) { r.err = exec.ErrNotFound; r.exitCode = -1 }},
+		{"signal", baseline, func(r *processResult) { r.err = errors.New("signal: terminated"); r.exitCode = -1 }},
+		{"timeout", baseline, func(r *processResult) { r.err = context.DeadlineExceeded }},
+		{"canceled", baseline, func(r *processResult) { r.err = context.Canceled }},
+		{"wrong process status", baseline, func(r *processResult) { r.exitCode = 2 }},
+		{"baseline success", baseline, func(r *processResult) { *r = jsonResult(fixtureEvents(patched)) }},
+		{"patched process failure", patched, func(r *processResult) { r.exitCode = 1 }},
+		{"panic on stderr", baseline, func(r *processResult) { r.stderr = []byte("panic: fixture\n") }},
+		{"bind failure on stderr", baseline, func(r *processResult) { r.stderr = []byte("listen udp4 127.0.0.1:0: bind: operation not permitted\n") }},
+		{"setup failure on stderr", baseline, func(r *processResult) { r.stderr = []byte("FAIL example.invalid/upstream [setup failed]\n") }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -336,67 +535,278 @@ func TestRejectResults(t *testing.T) {
 			}
 		})
 	}
+	t.Run("ordinary handshake logs", func(t *testing.T) {
+		events := fixtureEvents(baseline)
+		events = slices.Insert(events, 1, testEvent{Action: "output", Package: "example.invalid/upstream",
+			Output: "INFO DTLS handshake: completed; setup: ready\n"})
+		if err := validateResult(recomputeResult(events), baseline.want); err != nil {
+			t.Fatalf("ordinary upstream log was rejected: %v", err)
+		}
+	})
 
 	eventTests := []struct {
 		name   string
 		run    testRun
 		change func([]testEvent) []testEvent
 	}{
-		{"missing test", runs[0], func(events []testEvent) []testEvent {
-			return slices.DeleteFunc(events, func(e testEvent) bool { return e.Test == runs[0].want[0].name })
+		{"missing test", baseline, func(events []testEvent) []testEvent {
+			return slices.DeleteFunc(events, func(e testEvent) bool { return e.Test == baseline.want[0].name })
 		}},
-		{"missing test completion", runs[0], func(events []testEvent) []testEvent { return slices.Delete(events, 3, 4) }},
-		{"missing package start", runs[0], func(events []testEvent) []testEvent { return events[1:] }},
-		{"missing package result", runs[0], func(events []testEvent) []testEvent { return events[:len(events)-1] }},
-		{"missing assertion", runs[0], func(events []testEvent) []testEvent { events[2].Output = ""; return events }},
-		{"wrong baseline assertion", runs[0], func(events []testEvent) []testEvent {
-			events[2].Output = "    repro_test.go:115: listen udp4 127.0.0.1:0: bind: operation not permitted\n"
-			return events
+		{"missing test completion", baseline, func(events []testEvent) []testEvent { return slices.Delete(events, 3, 4) }},
+		{"missing package start", baseline, func(events []testEvent) []testEvent { return events[1:] }},
+		{"missing package result", baseline, func(events []testEvent) []testEvent { return events[:len(events)-1] }},
+		{"missing assertion", baseline, func(events []testEvent) []testEvent {
+			return mutateTestOutput(events, baseline.want[0].name, func(string) string { return "" })
 		}},
-		{"loopback setup failure after assertion", runs[0], func(events []testEvent) []testEvent {
-			events[2].Output += "    repro_test.go:115: listen udp4 127.0.0.1:0: bind: operation not permitted\n"
-			return events
+		{"wrong baseline assertion", baseline, func(events []testEvent) []testEvent {
+			return mutateTestOutput(events, baseline.want[0].name, func(string) string {
+				return "    repro_test.go:115: listen udp4 127.0.0.1:0: bind: operation not permitted\n"
+			})
 		}},
-		{"quota stand never rejected", runs[0], func(events []testEvent) []testEvent {
+		{"loopback setup failure after assertion", baseline, func(events []testEvent) []testEvent {
+			return mutateTestOutput(events, baseline.want[0].name, func(output string) string {
+				return output + "    repro_test.go:115: listen udp4 127.0.0.1:0: bind: operation not permitted\n"
+			})
+		}},
+		{"handshake setup failure after quota assertion", baseline, func(events []testEvent) []testEvent {
+			return mutateTestOutput(events, "TestReproConfigDespiteQuota", func(output string) string {
+				return output + "    repro_test.go:330: quota stand handshake: certificate rejected\n"
+			})
+		}},
+		{"quota stand never rejected", baseline, func(events []testEvent) []testEvent {
 			for i := range events {
 				events[i].Output = strings.ReplaceAll(events[i].Output, "486 отдано 1 раз", "486 отдано 0 раз")
 			}
 			return events
 		}},
-		{"panic", runs[0], func(events []testEvent) []testEvent { events[2].Output += "panic: fixture\n"; return events }},
-		{"test timeout", runs[0], func(events []testEvent) []testEvent {
-			events[2].Output += "panic: test timed out after 10m0s\n"
-			return events
+		{"panic", baseline, func(events []testEvent) []testEvent {
+			return mutateTestOutput(events, baseline.want[0].name, func(output string) string { return output + "panic: fixture\n" })
 		}},
-		{"unattributed bind failure", runs[0], func(events []testEvent) []testEvent {
+		{"test timeout", baseline, func(events []testEvent) []testEvent {
+			return mutateTestOutput(events, baseline.want[0].name, func(output string) string { return output + "panic: test timed out after 10m0s\n" })
+		}},
+		{"unattributed bind failure", baseline, func(events []testEvent) []testEvent {
 			return slices.Insert(events, 1, testEvent{Action: "output", Package: events[0].Package, Output: "listen udp4 127.0.0.1:0: socket: operation not permitted\n"})
 		}},
-		{"split panic", runs[0], func(events []testEvent) []testEvent {
-			events[2].Output += "pa"
-			return slices.Insert(events, 3, testEvent{Action: "output", Package: events[2].Package, Test: events[2].Test, Output: "nic: fixture\n"})
+		{"split panic", baseline, func(events []testEvent) []testEvent {
+			name := baseline.want[0].name
+			events = mutateTestOutput(events, name, func(output string) string { return output + "pa" })
+			i := slices.IndexFunc(events, func(e testEvent) bool { return e.Test == name && e.Action == "output" })
+			return slices.Insert(events, i+1, testEvent{Action: "output", Package: events[0].Package, Test: name, Output: "nic: fixture\n"})
 		}},
-		{"extra package failure", runs[0], func(events []testEvent) []testEvent {
+		{"extra package failure", baseline, func(events []testEvent) []testEvent {
 			return append(events, testEvent{Action: "fail", Package: "example.invalid/other"})
 		}},
-		{"unexpected test", runs[0], func(events []testEvent) []testEvent { events[1].Test = "TestUnrelated"; return events }},
-		{"duplicate test", runs[0], func(events []testEvent) []testEvent { return slices.Insert(events, 4, events[1:4]...) }},
-		{"unexpected skip", runs[0], func(events []testEvent) []testEvent { events[3].Action = "skip"; return events }},
-		{"unexpected baseline pass", runs[0], func(events []testEvent) []testEvent { events[3].Action = "pass"; return events }},
-		{"patched failure", runs[2], func(events []testEvent) []testEvent { events[2].Action = "fail"; return events }},
-		{"package skip", runs[0], func(events []testEvent) []testEvent { events[len(events)-1].Action = "skip"; return events }},
-		{"mismatched package result", runs[0], func(events []testEvent) []testEvent { events[len(events)-1].Action = "pass"; return events }},
-		{"build JSON", runs[0], func(events []testEvent) []testEvent {
+		{"unexpected test", baseline, func(events []testEvent) []testEvent { events[1].Test = "TestUnrelated"; return events }},
+		{"duplicate test", baseline, func(events []testEvent) []testEvent { return slices.Insert(events, 4, events[1:4]...) }},
+		{"unexpected skip", baseline, func(events []testEvent) []testEvent { events[3].Action = "skip"; return events }},
+		{"unexpected baseline pass", baseline, func(events []testEvent) []testEvent { events[3].Action = "pass"; return events }},
+		{"injected baseline skipped", fixtureRun(t, "baseline-injected"), func(events []testEvent) []testEvent {
+			return mutateTestAction(events, "TestReproStopRightAfterSessionStart", "skip")
+		}},
+		{"injected baseline unexpectedly passes", fixtureRun(t, "baseline-injected"), func(events []testEvent) []testEvent {
+			return mutateTestAction(events, "TestReproStopRightAfterSessionStart", "pass")
+		}},
+		{"missing expected deadline skip", baseline, func(events []testEvent) []testEvent {
+			return slices.DeleteFunc(events, func(e testEvent) bool { return e.Test == "TestReproStopRightAfterSessionStart" })
+		}},
+		{"wrong deadline skip reason", baseline, func(events []testEvent) []testEvent {
+			return mutateTestOutput(events, "TestReproStopRightAfterSessionStart", func(string) string { return "    repro_test.go:359: another skip reason\n" })
+		}},
+		{"missing deadline skip reason", baseline, func(events []testEvent) []testEvent {
+			return mutateTestOutput(events, "TestReproStopRightAfterSessionStart", func(string) string { return "" })
+		}},
+		{"baseline deadline unexpectedly passes", baseline, func(events []testEvent) []testEvent {
+			return mutateTestAction(events, "TestReproStopRightAfterSessionStart", "pass")
+		}},
+		{"baseline deadline unexpectedly fails", baseline, func(events []testEvent) []testEvent {
+			return mutateTestAction(events, "TestReproStopRightAfterSessionStart", "fail")
+		}},
+		{"patched deadline skip missing", fixtureRun(t, "patched"), func(events []testEvent) []testEvent {
+			return slices.DeleteFunc(events, func(e testEvent) bool { return e.Test == "TestReproStopRightAfterSessionStart" })
+		}},
+		{"patched deadline skip wrong reason", fixtureRun(t, "patched"), func(events []testEvent) []testEvent {
+			return mutateTestOutput(events, "TestReproStopRightAfterSessionStart", func(string) string { return "    repro_test.go:359: another skip reason\n" })
+		}},
+		{"patched deadline skip missing reason", fixtureRun(t, "patched"), func(events []testEvent) []testEvent {
+			return mutateTestOutput(events, "TestReproStopRightAfterSessionStart", func(string) string { return "" })
+		}},
+		{"patched deadline unexpectedly passes", fixtureRun(t, "patched"), func(events []testEvent) []testEvent {
+			return mutateTestAction(events, "TestReproStopRightAfterSessionStart", "pass")
+		}},
+		{"injected deadline unexpectedly skips", fixtureRun(t, "baseline-injected"), func(events []testEvent) []testEvent {
+			return mutateTestAction(events, "TestReproStopRightAfterSessionStart", "skip")
+		}},
+		{"patched injected deadline unexpectedly skips", fixtureRun(t, "patched-injected"), func(events []testEvent) []testEvent {
+			return mutateTestAction(events, "TestReproStopRightAfterSessionStart", "skip")
+		}},
+		{"patched full deadline unexpectedly fails", fixtureRun(t, "patched"), func(events []testEvent) []testEvent {
+			return mutateTestAction(events, "TestReproStopRightAfterSessionStart", "fail")
+		}},
+		{"unexpected skip on passing control", baseline, func(events []testEvent) []testEvent {
+			return mutateTestAction(events, "TestReproCaptchaAutoTimeout", "skip")
+		}},
+		{"patched failure", patched, func(events []testEvent) []testEvent {
+			return mutateTestAction(events, "TestReproClosedCallIsDead", "fail")
+		}},
+		{"patched injected failure", fixtureRun(t, "patched-injected"), func(events []testEvent) []testEvent {
+			return mutateTestAction(events, "TestReproStopRightAfterSessionStart", "fail")
+		}},
+		{"package skip", baseline, func(events []testEvent) []testEvent { events[len(events)-1].Action = "skip"; return events }},
+		{"mismatched package result", baseline, func(events []testEvent) []testEvent { events[len(events)-1].Action = "pass"; return events }},
+		{"build JSON", baseline, func(events []testEvent) []testEvent {
 			return []testEvent{{Action: "build-output", Package: "example.invalid/upstream", Output: "undefined: missing"}, {Action: "build-fail", Package: "example.invalid/upstream"}}
 		}},
 	}
 	for _, tc := range eventTests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := jsonResult(tc.change(fixtureEvents(tc.run)))
-			if err := validateResult(result, tc.run.want); err == nil {
+			events := tc.change(fixtureEvents(tc.run))
+			var result processResult
+			if tc.name == "mismatched package result" {
+				result = jsonResult(events)
+			} else {
+				result = recomputeResult(events)
+			}
+			err := validateResult(result, tc.run.want)
+			if err == nil {
 				t.Fatal("invalid event stream accepted")
+			}
+			if tc.name == "handshake setup failure after quota assertion" &&
+				!strings.Contains(err.Error(), "build/setup or loopback bind failure") {
+				t.Fatalf("handshake setup diagnostic was rejected for the wrong reason: %v", err)
 			}
 		})
 	}
+	for _, run := range testRuns() {
+		for _, mode := range []string{"extra test", "build failure", "panic", "process timeout"} {
+			t.Run(run.name+"/"+mode, func(t *testing.T) {
+				events := fixtureEvents(run)
+				if mode == "extra test" {
+					events = slices.Insert(events, len(events)-1,
+						testEvent{Action: "run", Package: events[0].Package, Test: "TestReproUnselected"},
+						testEvent{Action: "pass", Package: events[0].Package, Test: "TestReproUnselected"})
+				}
+				result := recomputeResult(events)
+				switch mode {
+				case "build failure":
+					result.stderr = []byte("FAIL example.invalid/upstream [build failed]\n")
+				case "panic":
+					result.stderr = []byte("panic: fixture\n")
+				case "process timeout":
+					result.err = context.DeadlineExceeded
+				}
+				if err := validateResult(result, run.want); err == nil {
+					t.Fatal("invalid input evidence accepted")
+				}
+			})
+		}
+		for _, w := range run.want {
+			for _, mode := range []string{"missing test", "unexpected skip"} {
+				if mode == "unexpected skip" && w.action == "skip" {
+					continue
+				}
+				t.Run(run.name+"/"+w.name+"/"+mode, func(t *testing.T) {
+					events := fixtureEvents(run)
+					if mode == "missing test" {
+						events = slices.DeleteFunc(events, func(e testEvent) bool { return e.Test == w.name })
+					} else {
+						events = mutateTestAction(events, w.name, "skip")
+					}
+					if err := validateResult(recomputeResult(events), run.want); err == nil {
+						t.Fatal("invalid selected test evidence accepted")
+					}
+				})
+			}
+		}
+	}
+
+	retained := []struct {
+		name, baselineInput, patchedInput string
+	}{
+		{"closed call", "baseline", "patched"},
+		{"baton", "baseline", "patched"},
+		{"config quota", "baseline", "patched"},
+		{"stop during config", "baseline", "patched"},
+		{"stop after session start", "baseline-injected", "patched-injected"},
+	}
+	retainedTestNames := []string{
+		"TestReproClosedCallIsDead",
+		"TestReproGroupPassesBatonOnCredsFailure",
+		"TestReproConfigDespiteQuota",
+		"TestReproStopDuringConfigRequest",
+		"TestReproStopRightAfterSessionStart",
+	}
+	for i, tc := range retained {
+		baselineRun, patchedRun := fixtureRun(t, tc.baselineInput), fixtureRun(t, tc.patchedInput)
+		name := retainedTestNames[i]
+		caseIndex := slices.IndexFunc(cases, func(c reproCase) bool { return c.baseline.name == name })
+		if caseIndex < 0 {
+			t.Fatalf("missing retained case: %s", name)
+		}
+		for evidenceIndex, evidence := range cases[caseIndex].baseline.evidence {
+			for _, mode := range []string{"wrong assertion", "missing assertion"} {
+				t.Run(fmt.Sprintf("%s/assertion-%d/%s", tc.name, evidenceIndex+1, mode), func(t *testing.T) {
+					events := fixtureEvents(baselineRun)
+					replacement := "    repro_test.go:999: unrelated diagnostic\n"
+					if mode == "missing assertion" {
+						replacement = ""
+					}
+					events = mutateTestOutput(events, name, func(output string) string {
+						return evidence.ReplaceAllString(output, replacement)
+					})
+					if err := validateResult(recomputeResult(events), baselineRun.want); err == nil {
+						t.Fatal("invalid retained baseline assertion accepted")
+					}
+				})
+			}
+		}
+		for _, mode := range []string{"unexpected baseline pass", "missing baseline test"} {
+			t.Run(tc.name+"/"+mode, func(t *testing.T) {
+				events := fixtureEvents(baselineRun)
+				if mode == "unexpected baseline pass" {
+					events = mutateTestAction(events, name, "pass")
+				} else {
+					events = slices.DeleteFunc(events, func(e testEvent) bool { return e.Test == name })
+				}
+				if err := validateResult(recomputeResult(events), baselineRun.want); err == nil {
+					t.Fatal("invalid retained baseline evidence accepted")
+				}
+			})
+		}
+		for _, mode := range []string{"patched failure", "missing patched test"} {
+			t.Run(tc.name+"/"+mode, func(t *testing.T) {
+				events := fixtureEvents(patchedRun)
+				if mode == "patched failure" {
+					events = mutateTestAction(events, name, "fail")
+				} else {
+					events = slices.DeleteFunc(events, func(e testEvent) bool { return e.Test == name })
+				}
+				if err := validateResult(recomputeResult(events), patchedRun.want); err == nil {
+					t.Fatal("invalid retained patched evidence accepted")
+				}
+			})
+		}
+	}
+}
+
+func mutateTestOutput(events []testEvent, name string, change func(string) string) []testEvent {
+	for i := range events {
+		if events[i].Test == name && events[i].Action == "output" {
+			events[i].Output = change(events[i].Output)
+			return events
+		}
+	}
+	return events
+}
+
+func mutateTestAction(events []testEvent, name, action string) []testEvent {
+	for i := range events {
+		if events[i].Test == name && (events[i].Action == "pass" || events[i].Action == "fail" || events[i].Action == "skip") {
+			events[i].Action = action
+			return events
+		}
+	}
+	return events
 }
 
 func writeFixture(t *testing.T, name, data string) {

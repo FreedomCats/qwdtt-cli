@@ -63,9 +63,18 @@ func TestReproClosedCallIsDead(t *testing.T) {
 // Группа, не получившая креды, передаёт эстафету следующей. Без правки
 // signalReady не закрывается, и следующая группа ждёт вечно.
 func TestReproGroupPassesBatonOnCredsFailure(t *testing.T) {
-	// Отменённый контекст: креды не получить, и сеть не нужна.
+	// The serializer checks cancellation only while throttling. Keep that wait
+	// active even if the goroutine is delayed, so no VK fetch or DNS lookup starts.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+	vkRequestMu.Lock()
+	savedLastFetch := globalLastVkFetchTime
+	globalLastVkFetchTime = time.Now().Add(time.Hour)
+	defer func() {
+		vkRequestMu.Lock()
+		globalLastVkFetchTime = savedLastFetch
+		vkRequestMu.Unlock()
+	}()
 
 	ready := make(chan struct{})
 	var paused int32
@@ -75,6 +84,7 @@ func TestReproGroupPassesBatonOnCredsFailure(t *testing.T) {
 		WorkerGroup(ctx, 1, 0, &TurnParams{Hashes: []string{"a1b2c3d4e5f6"}}, nil, nil, "9000",
 			true, nil, []int{1}, &paused, "device", "password", NewStats(), nil, ready)
 	}()
+	vkRequestMu.Unlock()
 	select {
 	case <-done:
 	case <-time.After(30 * time.Second):
@@ -165,9 +175,9 @@ func (s *turnStand) quota(_, _ string, src net.Addr) bool {
 	return false
 }
 
-// startServerStand поднимает заглушку сервера: DTLS, на GETCONF — standConfig
-// (или молчание, если answer == false). Возвращает адрес и счётчик GETCONF.
-func startServerStand(t *testing.T, answer bool) (*net.UDPAddr, *atomic.Int32) {
+// startServerStand runs a DTLS server stand that answers GETCONF with standConfig
+// (or remains silent when answer is false). It returns the address, GETCONF counter and stop.
+func startServerStand(t *testing.T, answer bool) (*net.UDPAddr, *atomic.Int32, func()) {
 	t.Helper()
 	cert, err := selfsign.GenerateSelfSigned()
 	if err != nil {
@@ -183,23 +193,28 @@ func startServerStand(t *testing.T, answer bool) (*net.UDPAddr, *atomic.Int32) {
 		t.Fatal(err)
 	}
 	var getconf atomic.Int32
-	var wg sync.WaitGroup
+	var handlers sync.WaitGroup
 	var mu sync.Mutex
 	var conns []net.Conn
+	acceptDone := make(chan struct{})
 	// Listener pion не закрывает принятые соединения — закрываем сами.
-	t.Cleanup(func() {
-		ln.Close()
-		mu.Lock()
-		for _, c := range conns {
-			c.Close()
-		}
-		mu.Unlock()
-		wg.Wait()
-	})
+	var stopOnce sync.Once
+	stop := func() {
+		stopOnce.Do(func() {
+			ln.Close()
+			<-acceptDone
+			mu.Lock()
+			for _, c := range conns {
+				c.Close()
+			}
+			mu.Unlock()
+			handlers.Wait()
+		})
+	}
+	t.Cleanup(stop)
 
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
+		defer close(acceptDone)
 		for {
 			c, err := ln.Accept()
 			if err != nil {
@@ -208,9 +223,9 @@ func startServerStand(t *testing.T, answer bool) (*net.UDPAddr, *atomic.Int32) {
 			mu.Lock()
 			conns = append(conns, c)
 			mu.Unlock()
-			wg.Add(1)
+			handlers.Add(1)
 			go func() {
-				defer wg.Done()
+				defer handlers.Done()
 				defer c.Close()
 				buf := make([]byte, 4096)
 				for {
@@ -232,7 +247,7 @@ func startServerStand(t *testing.T, answer bool) (*net.UDPAddr, *atomic.Int32) {
 			}()
 		}
 	}()
-	return ln.Addr().(*net.UDPAddr), &getconf
+	return ln.Addr().(*net.UDPAddr), &getconf, stop
 }
 
 // standGroup — группа воркеров, запущенная на стенде.
@@ -318,8 +333,9 @@ func (g *standGroup) stop(t *testing.T, limit time.Duration) {
 // туннель ждёт его повтора, 30–60 с.
 func TestReproConfigDespiteQuota(t *testing.T) {
 	stand := startTURNStand(t, true, 1500*time.Millisecond)
-	peer, getconf := startServerStand(t, true)
-	g := runStandGroup(t, stand, peer, 4)
+	peer, getconf, stopServer := startServerStand(t, true)
+	defer stopServer()
+	g := runStandGroup(t, stand, peer, 2)
 
 	select {
 	case conf := <-g.configCh:
@@ -333,7 +349,11 @@ func TestReproConfigDespiteQuota(t *testing.T) {
 	if stand.quotaHit.Load() == 0 {
 		t.Fatal("486 не отдано ни разу — стенд не проверил квоту")
 	}
+	if getconf.Load() == 0 {
+		t.Fatal("config stand received no GETCONF request")
+	}
 	g.stop(t, 10*time.Second)
+	stopServer()
 }
 
 // ─── 5а. Остановка во время запроса конфига ───
@@ -342,7 +362,7 @@ func TestReproConfigDespiteQuota(t *testing.T) {
 // ответа. Без правки воркер ждёт до 45 с (дедлайн RequestConfig).
 func TestReproStopDuringConfigRequest(t *testing.T) {
 	stand := startTURNStand(t, false, 0)
-	peer, getconf := startServerStand(t, false)
+	peer, getconf, _ := startServerStand(t, false)
 	g := runStandGroup(t, stand, peer, 1)
 
 	deadline := time.Now().Add(15 * time.Second)
@@ -367,7 +387,7 @@ func TestReproStopRightAfterSessionStart(t *testing.T) {
 		t.Skip("нужна вставленная задержка: см. run.sh")
 	}
 	stand := startTURNStand(t, false, 0)
-	peer, _ := startServerStand(t, true)
+	peer, _, _ := startServerStand(t, true)
 	g := runStandGroup(t, stand, peer, 1)
 
 	select {

@@ -21,11 +21,22 @@ import (
 
 const pinnedCommit = "fae121efc3ef57b633516601d3c0d6b1be1fde7c"
 
-const droppedPatch = "4-dropped-packets.patch"
-const captchaTimeoutsPatch = "6-captcha-timeouts.patch"
-const captchaWVLogPatch = "7-captcha-wv-log.patch"
+type patchID string
 
-var patches = []string{"1-closed-call.patch", "2-baton.patch", "3-config-quota.patch", droppedPatch, "5-stop.patch", captchaTimeoutsPatch, captchaWVLogPatch}
+const (
+	closedCallPatch  patchID = "1-closed-call.patch"
+	batonPatch       patchID = "2-baton.patch"
+	configQuotaPatch patchID = "3-config-quota.patch"
+	droppedPatch     patchID = "4-dropped-packets.patch"
+	stopPatch        patchID = "5-stop.patch"
+	captchaTimeouts  patchID = "6-captcha-timeouts.patch"
+	captchaWVLog     patchID = "7-captcha-wv-log.patch"
+)
+
+var patches = []string{
+	string(closedCallPatch), string(batonPatch), string(configQuotaPatch), string(droppedPatch),
+	string(stopPatch), string(captchaTimeouts), string(captchaWVLog),
+}
 
 type expectation struct {
 	name, action string
@@ -35,10 +46,8 @@ type expectation struct {
 
 type reproCase struct {
 	baseline, patched expectation
+	patch             patchID
 	injected          bool
-	counters          bool
-	captchaTimeouts   bool
-	captchaWVLog      bool
 }
 
 func diagnostic(text string) *regexp.Regexp {
@@ -53,68 +62,73 @@ var cases = []reproCase{
 			diagnostic(`путь vkcalls: статус "error" \([^\n]*\), ожидался dead`),
 			diagnostic(`обёрнута в %w: статус "error" \([^\n]*\), ожидался dead`),
 		}},
+		patch: closedCallPatch,
 	},
 	{
 		baseline: expectation{name: "TestReproGroupPassesBatonOnCredsFailure", action: "fail", evidence: []*regexp.Regexp{
 			diagnostic(`эстафета не передана: следующая группа ждала бы вечно`),
 		}},
+		patch: batonPatch,
 	},
 	{
 		baseline: expectation{name: "TestReproConfigDespiteQuota", action: "fail", evidence: []*regexp.Regexp{
 			diagnostic(`конфиг не пришёл за 15 с: 486 отдано [1-9][0-9]* раз, GETCONF 0, сеансов [1-9][0-9]*`),
 		}},
+		patch: configQuotaPatch,
 	},
 	{
 		baseline: expectation{name: "TestReproStopDuringConfigRequest", action: "fail", evidence: []*regexp.Regexp{
 			diagnostic(`WorkerGroup не вернулась за 5s после отмены`),
 		}, allowed: []*regexp.Regexp{diagnostic(`вернулась через [0-9][0-9.hmsµ]*`)}},
+		patch: stopPatch,
 	},
 	{
 		baseline: expectation{name: "TestReproStopRightAfterSessionStart", action: "fail", evidence: []*regexp.Regexp{
 			diagnostic(`WorkerGroup не вернулась за 5s после отмены`),
 			diagnostic(`и через [0-9][0-9.hmsµ]* не вернулась — дальше не ждём`),
 		}, allowed: []*regexp.Regexp{diagnostic(`WorkerGroup так и не вернулась`)}},
+		patch:    stopPatch,
 		injected: true,
 	},
 	{
 		baseline: expectation{name: "TestReproDroppedUp", action: "fail", evidence: []*regexp.Regexp{
 			diagnostic(`missing drop counter: Stats\.DroppedUp`),
 		}},
-		counters: true,
+		patch: droppedPatch,
 	},
 	{
 		baseline: expectation{name: "TestReproDroppedDown", action: "fail", evidence: []*regexp.Regexp{
 			diagnostic(`missing drop counter: Stats\.DroppedDown`),
 		}},
-		counters: true,
+		patch: droppedPatch,
 	},
 	{
 		baseline: expectation{name: "TestReproDroppedStatsOutput", action: "fail", evidence: []*regexp.Regexp{
 			diagnostic(`statistics output omits drop counters: want DroppedUp=7 and DroppedDown=11`),
 		}, allowed: []*regexp.Regexp{diagnostic(`statistics output: \[СТАТИСТИКА\] Активных: 3 \| Трафик: 7\.00 МБ \| ↓5\.00 МБ / ↑2\.00 МБ`)}},
-		counters: true,
+		patch: droppedPatch,
 	},
 	{
 		baseline: expectation{name: "TestReproCaptchaManualTimeout", action: "fail", evidence: []*regexp.Regexp{
 			diagnostic(`manual captcha timeout: got 1m0s, want 3m0s`),
 		}},
-		captchaTimeouts: true,
+		patch: captchaTimeouts,
 	},
 	{
 		baseline: expectation{name: "TestReproCaptchaSelectedTimeout", action: "fail", evidence: []*regexp.Regexp{
 			diagnostic(`selected captcha timeout: got 2m0s, want 3m0s`),
 		}},
-		captchaTimeouts: true,
+		patch: captchaTimeouts,
 	},
 	{
-		baseline:        expectation{name: "TestReproCaptchaAutoTimeout", action: "pass"},
-		captchaTimeouts: true,
+		baseline: expectation{name: "TestReproCaptchaAutoTimeout", action: "pass"},
+		patch:    captchaTimeouts,
 	},
 	{
 		baseline: expectation{name: "TestReproCaptchaWVLog", action: "fail", evidence: []*regexp.Regexp{
 			diagnostic(`wv diagnostic still claims Android settings`),
 		}},
-		captchaWVLog: true,
+		patch: captchaWVLog,
 	},
 }
 
@@ -158,25 +172,27 @@ func testRuns() []testRun {
 			runs = append(runs, r)
 		}
 	}
-	counters := testRun{name: "patched-counters", patched: true, patches: []string{droppedPatch}}
-	for _, c := range cases {
-		if c.counters {
-			counters.want = append(counters.want, expectation{name: c.baseline.name, action: "pass"})
-		}
-	}
-	runs = append(runs, counters)
-	timeouts := testRun{name: "patched-captcha-timeouts", patched: true, patches: []string{captchaTimeoutsPatch}}
-	wvLog := testRun{name: "patched-captcha-wv-log", patched: true, patches: []string{captchaWVLogPatch}}
-	for _, c := range cases {
-		if c.captchaTimeouts {
-			timeouts.want = append(timeouts.want, expectation{name: c.baseline.name, action: "pass"})
-		}
-		if c.captchaWVLog {
-			wvLog.want = append(wvLog.want, expectation{name: c.baseline.name, action: "pass"})
-		}
-	}
-	runs = append(runs, timeouts, wvLog)
+	runs = append(runs,
+		singlePatchRun("patched-closed-call", closedCallPatch, false),
+		singlePatchRun("patched-baton", batonPatch, false),
+		singlePatchRun("patched-config-quota", configQuotaPatch, false),
+		singlePatchRun("patched-counters", droppedPatch, false),
+		singlePatchRun("patched-stop", stopPatch, false),
+		singlePatchRun("patched-stop-injected", stopPatch, true),
+		singlePatchRun("patched-captcha-timeouts", captchaTimeouts, false),
+		singlePatchRun("patched-captcha-wv-log", captchaWVLog, false),
+	)
 	return runs
+}
+
+func singlePatchRun(name string, patch patchID, injected bool) testRun {
+	run := testRun{name: name, patched: true, injected: injected, patches: []string{string(patch)}}
+	for _, c := range cases {
+		if c.patch == patch && c.injected == injected {
+			run.want = append(run.want, expectation{name: c.baseline.name, action: "pass"})
+		}
+	}
+	return run
 }
 
 func (r testRun) pattern() string {
@@ -581,7 +597,7 @@ type observedTest struct {
 }
 
 var fatalOutput = regexp.MustCompile(`(?m)(^|\n)\s*(panic:|fatal error:|runtime:|SIGSEGV|SIGBUS|SIGABRT|WARNING: DATA RACE|testing: warning: no tests to run)`)
-var setupFailure = regexp.MustCompile(`(?mi)\[build failed\]|\[setup failed\]|(?:bind|socket): [^\n]+`)
+var setupFailure = regexp.MustCompile(`(?mi)\[build failed\]|\[setup failed\]|(?:bind|socket): [^\n]+|^\s+repro_test\.go:[0-9]+: [^\n]*(?:handshake|setup): [^\n]+$`)
 var assertionLine = regexp.MustCompile(`(?m)^\s+repro_test\.go:[0-9]+: [^\n]*`)
 
 func validateResult(result processResult, want []expectation) error {

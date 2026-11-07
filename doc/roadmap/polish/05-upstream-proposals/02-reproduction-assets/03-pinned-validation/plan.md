@@ -1,6 +1,6 @@
 ---
 kind: task
-status: in-progress
+status: done
 detailed: true
 depends: [01-drop-counters, 02-captcha-evidence]
 base: 9b238f9
@@ -254,3 +254,61 @@ download fallback. A missing prerequisite is a named unvalidated matrix cell, no
 compatibility evidence. Native Windows runtime, non-Unix cancellation and subsequent green
 CI remain unconfirmed; source validation here does not close those platform gaps. No push,
 tag, release, manual CI trigger, upstream submission or upgrade to `develop` is included.
+
+## Outcome
+
+Completed and independently reviewed the explicit matrix for the seven existing patches
+against pinned upstream commit `fae121efc3ef57b633516601d3c0d6b1be1fde7c`. Each patch applies
+and compiles alone with the complete tagged reproduction file; the ordered full patch set
+also applies and passes its combined checks. Patch identities drive the case associations,
+and each input declares its exact patch list and test selection.
+
+The runner contains the ordinary `baseline` and `patched` selections, `baseline-injected` and
+`patched-injected`, and the isolated inputs `patched-closed-call`, `patched-baton`,
+`patched-config-quota`, `patched-counters`, `patched-stop`, `patched-stop-injected`,
+`patched-captcha-timeouts` and `patched-captcha-wv-log`. The complete tagged file is compiled
+for every input. Fixtures independently verify case/patch inventory, exact ordered patch and
+test membership, unique names, anchored selections, patch application state, injection and
+result validation. Rejection fixtures cover wrong or missing assertions, unexpected baseline
+success, patched failure, missing or extra tests, wrong/missing skip reasons, setup/build
+failures, panics and process timeouts, including the retained, counter and captcha cases.
+Source preservation, offline subprocess settings, cleanup, delay-anchor validation, strict
+directory ownership and the Windows alias regression remain covered.
+
+The real normal wrapper completed all 12 inputs and 38 selected tests: 25 passed, 11 failed
+with the required baseline assertions, and two skipped with the original ordinary deadline
+reason. The baseline closed-call reproduction emitted all three original status diagnostics;
+the baton and quota/config cases reached their named assertions; the stop-during-config case
+reached `GETCONF` and exposed the cancellation delay. The baseline counter checks reported
+the missing `Stats.DroppedUp` and `Stats.DroppedDown` fields and the missing statistics
+output; the captcha checks reported the original manual and selected durations, the `wv`
+diagnostic claim, and the passing 10-second auto control. The injected baseline emitted both
+cancellation assertions with its existing cleanup diagnostic. Every isolated patch input,
+the complete patched input and both injected patched inputs passed their selected checks;
+only the ordinary deadline test retained its intentional skip.
+
+The quota/config reproduction uses two workers: the baseline observes error 486, a positive
+session count and `GETCONF 0`; with patch 3 alone, another worker establishes DTLS and delivers
+the configuration. This confirms the upstream per-worker selection rule, not the local
+all-group wrapper in `internal/core/run.go` or an upstream `main.go` change. The separate
+stop-during-config reproduction reaches `GETCONF` before checking cancellation. Counter
+evidence is observed in upstream `Stats.RunLoop` standard-log output, including
+`Dropped: ↑7 / ↓11`; local `EventStats` delivery remains a separate integration detail.
+Captcha checks establish configured durations, call-site/deadline contracts and immediate
+synthetic responses; they do not wait out human deadlines or execute the native solver chain.
+
+The cancelled baton reproduction now reaches the upstream cancellable credential-throttle
+path before any credential fetch. A traced loopback-only run recorded no non-loopback
+destinations or DNS/HTTP attempts. The final prepared-source manifest, including HEAD, index,
+configuration, tracked and untracked contents and modes, matched before and after execution;
+runner-owned temporary files were removed. The checked project export matched all runner and
+reproduction asset files in the working tree.
+
+With Go 1.26.2 and offline/cache-only settings, the focused runner fixtures, full runner tests,
+race tests, runner vet, project build, formatting, wrapper syntax and repository whitespace
+checks passed. The ordinary outbound project test suite was not run. Native Windows execution,
+a subsequent green CI run, browser/live checks, VK access, native captcha solving and elapsed
+human-deadline checks remain unperformed. No review findings were left open or rejected, no
+separate incidental old-code problem was reported, and no confirmed problem remains partially
+fixed because of implementation cost. Proposal prose and the reproduction README remain with
+the documentation sibling; no runtime fix, dependency or additional patch was introduced.
