@@ -22,8 +22,10 @@ import (
 const pinnedCommit = "fae121efc3ef57b633516601d3c0d6b1be1fde7c"
 
 const droppedPatch = "4-dropped-packets.patch"
+const captchaTimeoutsPatch = "6-captcha-timeouts.patch"
+const captchaWVLogPatch = "7-captcha-wv-log.patch"
 
-var patches = []string{"1-closed-call.patch", "2-baton.patch", "3-config-quota.patch", droppedPatch, "5-stop.patch"}
+var patches = []string{"1-closed-call.patch", "2-baton.patch", "3-config-quota.patch", droppedPatch, "5-stop.patch", captchaTimeoutsPatch, captchaWVLogPatch}
 
 type expectation struct {
 	name, action string
@@ -35,6 +37,8 @@ type reproCase struct {
 	baseline, patched expectation
 	injected          bool
 	counters          bool
+	captchaTimeouts   bool
+	captchaWVLog      bool
 }
 
 func diagnostic(text string) *regexp.Regexp {
@@ -90,6 +94,28 @@ var cases = []reproCase{
 		}, allowed: []*regexp.Regexp{diagnostic(`statistics output: \[СТАТИСТИКА\] Активных: 3 \| Трафик: 7\.00 МБ \| ↓5\.00 МБ / ↑2\.00 МБ`)}},
 		counters: true,
 	},
+	{
+		baseline: expectation{name: "TestReproCaptchaManualTimeout", action: "fail", evidence: []*regexp.Regexp{
+			diagnostic(`manual captcha timeout: got 1m0s, want 3m0s`),
+		}},
+		captchaTimeouts: true,
+	},
+	{
+		baseline: expectation{name: "TestReproCaptchaSelectedTimeout", action: "fail", evidence: []*regexp.Regexp{
+			diagnostic(`selected captcha timeout: got 2m0s, want 3m0s`),
+		}},
+		captchaTimeouts: true,
+	},
+	{
+		baseline:        expectation{name: "TestReproCaptchaAutoTimeout", action: "pass"},
+		captchaTimeouts: true,
+	},
+	{
+		baseline: expectation{name: "TestReproCaptchaWVLog", action: "fail", evidence: []*regexp.Regexp{
+			diagnostic(`wv diagnostic still claims Android settings`),
+		}},
+		captchaWVLog: true,
+	},
 }
 
 type testRun struct {
@@ -139,6 +165,17 @@ func testRuns() []testRun {
 		}
 	}
 	runs = append(runs, counters)
+	timeouts := testRun{name: "patched-captcha-timeouts", patched: true, patches: []string{captchaTimeoutsPatch}}
+	wvLog := testRun{name: "patched-captcha-wv-log", patched: true, patches: []string{captchaWVLogPatch}}
+	for _, c := range cases {
+		if c.captchaTimeouts {
+			timeouts.want = append(timeouts.want, expectation{name: c.baseline.name, action: "pass"})
+		}
+		if c.captchaWVLog {
+			wvLog.want = append(wvLog.want, expectation{name: c.baseline.name, action: "pass"})
+		}
+	}
+	runs = append(runs, timeouts, wvLog)
 	return runs
 }
 

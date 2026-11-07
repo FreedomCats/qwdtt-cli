@@ -1,6 +1,6 @@
 ---
 kind: task
-status: in-progress
+status: done
 detailed: true
 base: ac4afac
 ---
@@ -196,3 +196,76 @@ runs to `03-pinned-validation`; native Windows runtime/green CI remains unconfir
 accepted fixture repair. No user credential, service, browser, live access or new user
 decision is needed. Publish only sanitized technical results, without execution dates,
 source/cache paths or environment identifiers; all new/changed text is English.
+
+## Outcome
+
+Implemented and accepted after independent review without correction requests.
+
+Added two independently applicable upstream-native patches against the full pinned commit
+`fae121efc3ef57b633516601d3c0d6b1be1fde7c`:
+
+- `doc/upstream-repro/6-captcha-timeouts.patch` changes only the compiled manual and selected
+  constants from 60 and 120 seconds to 180 seconds. The auto constant stays at 10 seconds.
+- `doc/upstream-repro/7-captcha-wv-log.patch` changes only the `wv` branch's standard
+  `log.Printf` diagnostic to `wv mode: requesting captcha window (attempt %d)`, preserving
+  the stream/captcha tags and attempt arguments. Its whitespace-safe representation repeats
+  unchanged source; the applied source diff changes one diagnostic line.
+
+The four new top-level reproductions are `TestReproCaptchaManualTimeout`,
+`TestReproCaptchaSelectedTimeout`, `TestReproCaptchaAutoTimeout`, and `TestReproCaptchaWVLog`.
+They compile in the unpatched upstream `package main` and with either individual patch.
+Before the final duration or message assertion, bounded AST contracts check all five actual
+request call sites, the direct selected return in `wv`, and the request helper's timeout,
+nonpositive fallback and consumed context deadline. Real manual/auto helper calls and real
+selected-mode calls return immediate synthetic tokens after their exact stdout marker.
+
+The request helper isolates the response channel, mode, stdout and standard logger. Selected
+calls use a private test directory for both profile files and a nil HTTP client. Capture,
+responder and invocation waits are bounded; teardown joins the helpers before restoring
+globals and closes only the test-owned response channel when needed to release the upstream
+background-context waiter. Request count, token, profile writes and absence of native/auto
+chain logs are checked before any expected baseline assertion. No captcha runtime seam or
+source injection was added, and the eight earlier reproductions and assertions are retained.
+
+The runner includes the exact baseline failures and the always-passing auto control. Its
+`patched-captcha-timeouts` input applies only patch 6 and selects manual/selected/auto;
+`patched-captcha-wv-log` applies only patch 7 and selects the diagnostic. The complete patched
+inputs include both patches. Matrix and result-validation fixtures retain anchored selection,
+exact patch lists, complete tagged-file copying, source preservation, offline setup, cleanup,
+legacy deadline injection and strict ownership/Windows alias checks. Counter-only validation
+now finds its input by name, so the additional inputs cannot silently replace its coverage.
+
+Implementation and independent review repeated the real focused runs through the accepted
+`runInputs` private export, module preparation, complete tagged-file compilation, anchored
+selection and JSON validator:
+
+| Input | Selected patches | Observed result |
+|---|---|---|
+| `baseline-captcha` | None | Manual: `manual captcha timeout: got 1m0s, want 3m0s`; selected: `selected captcha timeout: got 2m0s, want 3m0s`; diagnostic: `wv diagnostic still claims Android settings`; auto passes |
+| `patched-captcha-timeouts` | `6-captcha-timeouts.patch` | Manual, selected and auto pass while the old diagnostic remains |
+| `patched-captcha-wv-log` | `7-captcha-wv-log.patch` | Diagnostic passes while the selected constant remains 120 seconds |
+
+Each patch also independently passed check and application alone on a separate disposable
+full-pin export; comparison of the applied trees confirmed the intended source-only changes.
+These checks establish configured durations, their call-site/deadline wiring and immediate
+response handling. They do not observe elapsed
+human-window expiry or execute the manual native-solver chain.
+
+The final result passed focused captcha/counter/matrix/ownership/cleanup fixtures,
+`go test -count=1 ./scripts/upstreamrepro`, its race variant, runner vet, `go build ./...`,
+formatting, Bash syntax and whitespace checks with Go 1.26.2 and offline settings, with
+independent verification. The Windows-only alias regression skipped on the host. The reviewer
+also ran the real timeout-only tests under the race detector. Private failure experiments
+covered wrong or missing markers, scanner capture, profile writes and source parsing. Each
+confirmed a bounded failure followed by restored globals and a successful request, without
+race diagnostics; a sentinel verified that the saved channel was neither drained nor closed.
+These intentional failures are separate from the upstream evidence.
+
+No review findings needed correction or were rejected, no separate incidental old-code issue
+was reported, and no confirmed problem remains partially fixed because of implementation cost.
+
+The complete real retained, individual-patch and combined matrix remains with
+`03-pinned-validation`. Native Windows execution and green CI, ordinary outbound project
+tests, browser/live captcha, native solver and real deadline-expiry checks were not performed.
+No local runtime, vendoring, dependency, API, captcha flow or response-channel redesign is
+included. Proposal prose and the reproduction README remain for the documentation sibling.

@@ -1,0 +1,9 @@
+diff --git a/go_client/creds.go b/go_client/creds.go
+--- a/go_client/creds.go
++++ b/go_client/creds.go
+@@ -218,3 +218,3 @@
+-	captchaManualWebViewTimeout   = 60 * time.Second
+-	captchaSelectedWebViewTimeout = 120 * time.Second
++	captchaManualWebViewTimeout   = 180 * time.Second
++	captchaSelectedWebViewTimeout = 180 * time.Second
+ )

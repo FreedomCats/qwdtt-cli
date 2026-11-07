@@ -1,0 +1,191 @@
+diff --git a/go_client/creds.go b/go_client/creds.go
+--- a/go_client/creds.go
++++ b/go_client/creds.go
+@@ -618,95 +618,95 @@
+
+-	switch getCaptchaMode() {
+-	case "wv":
+-		log.Printf("[STREAM %d] [КАПЧА] WBV: режим из настроек Android (attempt %d)", streamID, attempt)
+-		return requestWebViewCaptcha(streamID, captchaErr, "selected", captchaSelectedWebViewTimeout)
+-	case "rjs":
+-		log.Printf("[STREAM %d] [КАПЧА] RJS: Go v2 выбран в настройках (attempt %d)", streamID, attempt)
+-		token, solveErr := solveVkCaptchaV2Attempts(ctx, captchaErr, client, profile, savedProfile, 2)
+-		if solveErr == nil {
+-			return token, nil
+-		}
+-		if ctx.Err() != nil {
+-			return "", solveErr
+-		}
+-		if isCaptchaSessionDead(solveErr) {
+-			log.Printf("[STREAM %d] [КАПЧА] RJS: сессия капчи мёртва, запрашиваем новую у VK", streamID)
+-			return "", markCaptchaSessionExpired(streamID)
+-		}
+-		if isCaptchaSessionExhausted(solveErr) {
+-			log.Printf("[STREAM %d] [КАПЧА] RJS: rate limit, fallback на WBV Auto", streamID)
+-			return requestWebViewCaptcha(streamID, captchaErr, "auto", captchaAutoWebViewTimeout)
+-		}
+-		log.Printf("[STREAM %d] [КАПЧА] RJS: ошибка, fallback на WBV Auto: %v", streamID, solveErr)
+-		return requestWebViewCaptcha(streamID, captchaErr, "auto", captchaAutoWebViewTimeout)
+-	}
++	switch getCaptchaMode() {
++	case "wv":
++		log.Printf("[STREAM %d] [КАПЧА] wv mode: requesting captcha window (attempt %d)", streamID, attempt)
++		return requestWebViewCaptcha(streamID, captchaErr, "selected", captchaSelectedWebViewTimeout)
++	case "rjs":
++		log.Printf("[STREAM %d] [КАПЧА] RJS: Go v2 выбран в настройках (attempt %d)", streamID, attempt)
++		token, solveErr := solveVkCaptchaV2Attempts(ctx, captchaErr, client, profile, savedProfile, 2)
++		if solveErr == nil {
++			return token, nil
++		}
++		if ctx.Err() != nil {
++			return "", solveErr
++		}
++		if isCaptchaSessionDead(solveErr) {
++			log.Printf("[STREAM %d] [КАПЧА] RJS: сессия капчи мёртва, запрашиваем новую у VK", streamID)
++			return "", markCaptchaSessionExpired(streamID)
++		}
++		if isCaptchaSessionExhausted(solveErr) {
++			log.Printf("[STREAM %d] [КАПЧА] RJS: rate limit, fallback на WBV Auto", streamID)
++			return requestWebViewCaptcha(streamID, captchaErr, "auto", captchaAutoWebViewTimeout)
++		}
++		log.Printf("[STREAM %d] [КАПЧА] RJS: ошибка, fallback на WBV Auto: %v", streamID, solveErr)
++		return requestWebViewCaptcha(streamID, captchaErr, "auto", captchaAutoWebViewTimeout)
++	}
+
+-	log.Printf("[STREAM %d] [КАПЧА] AUTO: старт цепочки (captcha attempt %d)", streamID, attempt)
+-
+-	token, solveErr := solveVkCaptchaV2Attempts(ctx, captchaErr, client, profile, savedProfile, 2)
+-	if solveErr == nil {
+-		log.Printf("[STREAM %d] [КАПЧА] AUTO: Go v2 решил капчу", streamID)
+-		return token, nil
+-	}
+-	if ctx.Err() != nil {
+-		return "", solveErr
+-	}
+-	lastErr := solveErr
+-	if isCaptchaSessionDead(solveErr) {
+-		log.Printf("[STREAM %d] [КАПЧА] AUTO: сессия капчи мёртва, запрашиваем новую у VK", streamID)
+-		return "", markCaptchaSessionExpired(streamID)
+-	}
+-	if errors.Is(solveErr, errCaptchaV2RateLimit) || strings.Contains(strings.ToLower(solveErr.Error()), "rate limit") {
+-		log.Printf("[STREAM %d] [КАПЧА] AUTO: rate limit на Go v2, пробуем WBV", streamID)
+-	}
+-	log.Printf("[STREAM %d] [КАПЧА] AUTO: Go v2 не решил за 2 попытки: %v", streamID, solveErr)
+-
+-	for wbvAttempt := 1; wbvAttempt <= 2; wbvAttempt++ {
+-		log.Printf("[STREAM %d] [КАПЧА] AUTO: WBV Auto попытка %d/2 (timeout %s)", streamID, wbvAttempt, captchaAutoWebViewTimeout)
+-		token, solveErr = requestWebViewCaptcha(streamID, captchaErr, "auto", captchaAutoWebViewTimeout)
+-		if solveErr == nil {
+-			log.Printf("[STREAM %d] [КАПЧА] AUTO: WBV Auto решил капчу", streamID)
+-			return token, nil
+-		}
+-		if ctx.Err() != nil {
+-			return "", solveErr
+-		}
+-		lastErr = solveErr
+-		if isWebViewCaptchaTimeout(solveErr) {
+-			log.Printf("[STREAM %d] [КАПЧА] AUTO: WBV Auto timeout %d/2", streamID, wbvAttempt)
+-		} else {
+-			log.Printf("[STREAM %d] [КАПЧА] AUTO: WBV Auto ошибка %d/2: %v", streamID, wbvAttempt, solveErr)
+-		}
+-
+-		timer := time.NewTimer(time.Duration(250+rand.Intn(250)) * time.Millisecond)
+-		select {
+-		case <-ctx.Done():
+-			timer.Stop()
+-			return "", ctx.Err()
+-		case <-timer.C:
+-		}
+-	}
+-
+-	log.Printf("[STREAM %d] [КАПЧА] AUTO: финальная Go v2 попытка после WBV", streamID)
+-	token, solveErr = solveVkCaptchaV2Attempts(ctx, captchaErr, client, profile, savedProfile, 1)
+-	if solveErr == nil {
+-		log.Printf("[STREAM %d] [КАПЧА] AUTO: финальная Go v2 решила капчу", streamID)
+-		return token, nil
+-	}
+-	if ctx.Err() != nil {
+-		return "", solveErr
+-	}
+-	lastErr = solveErr
+-	log.Printf("[STREAM %d] [КАПЧА] AUTO: финальная Go v2 ошибка: %v", streamID, solveErr)
+-
+-	log.Printf("[STREAM %d] [КАПЧА] AUTO: автоцепочка не прошла, открыт ручной WebView", streamID)
+-	token, solveErr = requestWebViewCaptcha(streamID, captchaErr, "manual", captchaManualWebViewTimeout)
+-	if solveErr == nil {
+-		log.Printf("[STREAM %d] [КАПЧА] AUTO: ручной WebView решил капчу", streamID)
+-		return token, nil
+-	}
+-	if lastErr != nil {
+-		return "", fmt.Errorf("automatic captcha chain failed: %w; manual fallback failed: %v", lastErr, solveErr)
+-	}
+-	return "", solveErr
++	log.Printf("[STREAM %d] [КАПЧА] AUTO: старт цепочки (captcha attempt %d)", streamID, attempt)
++
++	token, solveErr := solveVkCaptchaV2Attempts(ctx, captchaErr, client, profile, savedProfile, 2)
++	if solveErr == nil {
++		log.Printf("[STREAM %d] [КАПЧА] AUTO: Go v2 решил капчу", streamID)
++		return token, nil
++	}
++	if ctx.Err() != nil {
++		return "", solveErr
++	}
++	lastErr := solveErr
++	if isCaptchaSessionDead(solveErr) {
++		log.Printf("[STREAM %d] [КАПЧА] AUTO: сессия капчи мёртва, запрашиваем новую у VK", streamID)
++		return "", markCaptchaSessionExpired(streamID)
++	}
++	if errors.Is(solveErr, errCaptchaV2RateLimit) || strings.Contains(strings.ToLower(solveErr.Error()), "rate limit") {
++		log.Printf("[STREAM %d] [КАПЧА] AUTO: rate limit на Go v2, пробуем WBV", streamID)
++	}
++	log.Printf("[STREAM %d] [КАПЧА] AUTO: Go v2 не решил за 2 попытки: %v", streamID, solveErr)
++
++	for wbvAttempt := 1; wbvAttempt <= 2; wbvAttempt++ {
++		log.Printf("[STREAM %d] [КАПЧА] AUTO: WBV Auto попытка %d/2 (timeout %s)", streamID, wbvAttempt, captchaAutoWebViewTimeout)
++		token, solveErr = requestWebViewCaptcha(streamID, captchaErr, "auto", captchaAutoWebViewTimeout)
++		if solveErr == nil {
++			log.Printf("[STREAM %d] [КАПЧА] AUTO: WBV Auto решил капчу", streamID)
++			return token, nil
++		}
++		if ctx.Err() != nil {
++			return "", solveErr
++		}
++		lastErr = solveErr
++		if isWebViewCaptchaTimeout(solveErr) {
++			log.Printf("[STREAM %d] [КАПЧА] AUTO: WBV Auto timeout %d/2", streamID, wbvAttempt)
++		} else {
++			log.Printf("[STREAM %d] [КАПЧА] AUTO: WBV Auto ошибка %d/2: %v", streamID, wbvAttempt, solveErr)
++		}
++
++		timer := time.NewTimer(time.Duration(250+rand.Intn(250)) * time.Millisecond)
++		select {
++		case <-ctx.Done():
++			timer.Stop()
++			return "", ctx.Err()
++		case <-timer.C:
++		}
++	}
++
++	log.Printf("[STREAM %d] [КАПЧА] AUTO: финальная Go v2 попытка после WBV", streamID)
++	token, solveErr = solveVkCaptchaV2Attempts(ctx, captchaErr, client, profile, savedProfile, 1)
++	if solveErr == nil {
++		log.Printf("[STREAM %d] [КАПЧА] AUTO: финальная Go v2 решила капчу", streamID)
++		return token, nil
++	}
++	if ctx.Err() != nil {
++		return "", solveErr
++	}
++	lastErr = solveErr
++	log.Printf("[STREAM %d] [КАПЧА] AUTO: финальная Go v2 ошибка: %v", streamID, solveErr)
++
++	log.Printf("[STREAM %d] [КАПЧА] AUTO: автоцепочка не прошла, открыт ручной WebView", streamID)
++	token, solveErr = requestWebViewCaptcha(streamID, captchaErr, "manual", captchaManualWebViewTimeout)
++	if solveErr == nil {
++		log.Printf("[STREAM %d] [КАПЧА] AUTO: ручной WebView решил капчу", streamID)
++		return token, nil
++	}
++	if lastErr != nil {
++		return "", fmt.Errorf("automatic captcha chain failed: %w; manual fallback failed: %v", lastErr, solveErr)
++	}
++	return "", solveErr
+ }

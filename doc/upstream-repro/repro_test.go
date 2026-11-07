@@ -16,13 +16,18 @@ package main
 // пропускается.
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -852,5 +857,384 @@ func TestReproDroppedStatsOutput(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("normal statistics ticker did not produce output")
+	}
+}
+
+func reproCaptchaName(expr ast.Expr, name string) bool {
+	if left, right, ok := strings.Cut(name, "."); ok {
+		selector, ok := expr.(*ast.SelectorExpr)
+		return ok && reproCaptchaName(selector.X, left) && selector.Sel.Name == right
+	}
+	ident, ok := expr.(*ast.Ident)
+	return ok && ident.Name == name
+}
+
+func reproCaptchaCall(expr ast.Expr, name string, args int) bool {
+	call, ok := expr.(*ast.CallExpr)
+	return ok && reproCaptchaName(call.Fun, name) && len(call.Args) == args && !call.Ellipsis.IsValid()
+}
+
+// This is a contract of two pinned functions, not a general call-graph analysis.
+// Check actual expression nodes before any profile-owned change of directory.
+func reproCaptchaContract(t *testing.T) {
+	t.Helper()
+	name, err := filepath.Abs("creds.go")
+	if err != nil {
+		t.Fatalf("captcha source path setup: %v", err)
+	}
+	source, err := parser.ParseFile(token.NewFileSet(), name, nil, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("captcha source parse: %v", err)
+	}
+	require := func(ok bool, description string) {
+		t.Helper()
+		if !ok {
+			t.Fatalf("captcha call-site contract: %s", description)
+		}
+	}
+	functions := make(map[string]*ast.FuncDecl)
+	for _, decl := range source.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || (fn.Name.Name != "solveCaptchaBySelectedMode" && fn.Name.Name != "requestWebViewCaptcha") {
+			continue
+		}
+		require(functions[fn.Name.Name] == nil && fn.Recv == nil && fn.Body != nil, "duplicate or changed captcha function")
+		functions[fn.Name.Name] = fn
+	}
+	solver, helper := functions["solveCaptchaBySelectedMode"], functions["requestWebViewCaptcha"]
+	require(solver != nil && helper != nil, "missing captcha function")
+	require(len(solver.Body.List) == 22, "changed selected-mode statement layout")
+	modeSwitch, ok := solver.Body.List[1].(*ast.SwitchStmt)
+	require(ok && modeSwitch.Init == nil && reproCaptchaCall(modeSwitch.Tag, "getCaptchaMode", 0), "missing mode switch")
+	branches := make(map[string]*ast.CaseClause)
+	for _, stmt := range modeSwitch.Body.List {
+		branch, ok := stmt.(*ast.CaseClause)
+		require(ok && len(branch.List) == 1, "changed mode case")
+		mode, ok := branch.List[0].(*ast.BasicLit)
+		require(ok && mode.Kind == token.STRING && (mode.Value == `"wv"` || mode.Value == `"rjs"`), "unexpected mode case")
+		require(branches[mode.Value] == nil, "duplicate mode case")
+		branches[mode.Value] = branch
+	}
+	wv, rjs := branches[`"wv"`], branches[`"rjs"`]
+	require(wv != nil && len(wv.Body) == 2 && rjs != nil && len(rjs.Body) == 8, "missing or changed wv/rjs branch")
+	wvLog, ok := wv.Body[0].(*ast.ExprStmt)
+	require(ok && reproCaptchaCall(wvLog.X, "log.Printf", 3), "wv must log then return its selected request directly")
+	wantCalls := make(map[*ast.CallExpr]bool)
+	request := func(stmt ast.Stmt, mode, timeout string, direct bool) {
+		t.Helper()
+		var expr ast.Expr
+		if direct {
+			ret, ok := stmt.(*ast.ReturnStmt)
+			require(ok && len(ret.Results) == 1, mode+" request is not a direct return")
+			expr = ret.Results[0]
+		} else {
+			assign, ok := stmt.(*ast.AssignStmt)
+			require(ok && assign.Tok == token.ASSIGN && len(assign.Lhs) == 2 && len(assign.Rhs) == 1 &&
+				reproCaptchaName(assign.Lhs[0], "token") && reproCaptchaName(assign.Lhs[1], "solveErr"), mode+" request result is disconnected")
+			expr = assign.Rhs[0]
+		}
+		require(reproCaptchaCall(expr, "requestWebViewCaptcha", 4), mode+" request must have exactly four arguments")
+		call := expr.(*ast.CallExpr)
+		literal, ok := call.Args[2].(*ast.BasicLit)
+		require(reproCaptchaName(call.Args[0], "streamID") && reproCaptchaName(call.Args[1], "captchaErr") &&
+			ok && literal.Kind == token.STRING && literal.Value == `"`+mode+`"` && reproCaptchaName(call.Args[3], timeout), mode+" request has mismatched mode/timeout arguments")
+		wantCalls[call] = true
+	}
+	request(wv.Body[1], "selected", "captchaSelectedWebViewTimeout", true)
+	fallback, ok := rjs.Body[5].(*ast.IfStmt)
+	require(ok && len(fallback.Body.List) == 2, "missing rjs exhaustion fallback")
+	request(fallback.Body.List[1], "auto", "captchaAutoWebViewTimeout", true)
+	request(rjs.Body[7], "auto", "captchaAutoWebViewTimeout", true)
+	autoLoop, ok := solver.Body.List[10].(*ast.ForStmt)
+	require(ok && len(autoLoop.Body.List) == 8, "missing auto request loop")
+	request(autoLoop.Body.List[1], "auto", "captchaAutoWebViewTimeout", false)
+	request(solver.Body.List[18], "manual", "captchaManualWebViewTimeout", false)
+	count := 0
+	ast.Inspect(solver.Body, func(node ast.Node) bool {
+		if call, ok := node.(*ast.CallExpr); ok && reproCaptchaName(call.Fun, "requestWebViewCaptcha") {
+			require(wantCalls[call], "extra or disconnected captcha request")
+			count++
+		}
+		return true
+	})
+	require(count == 5, "missing or duplicate captcha request")
+
+	require(len(helper.Type.Params.List) == 4 && len(helper.Body.List) == 9, "changed request-helper layout")
+	for i, name := range []string{"streamID", "captchaErr", "mode", "timeout"} {
+		param := helper.Type.Params.List[i]
+		require(len(param.Names) == 1 && param.Names[0].Name == name, "changed request-helper parameters")
+	}
+	require(reproCaptchaName(helper.Type.Params.List[3].Type, "time.Duration"), "timeout parameter is not time.Duration")
+	nonpositive, ok := helper.Body.List[3].(*ast.IfStmt)
+	require(ok && nonpositive.Init == nil && nonpositive.Else == nil && len(nonpositive.Body.List) == 1, "missing nonpositive timeout fallback")
+	cond, ok := nonpositive.Cond.(*ast.BinaryExpr)
+	require(ok && cond.Op == token.LEQ && reproCaptchaName(cond.X, "timeout"), "changed nonpositive timeout condition")
+	zero, ok := cond.Y.(*ast.BasicLit)
+	require(ok && zero.Kind == token.INT && zero.Value == "0", "timeout fallback does not compare with zero")
+	assign, ok := nonpositive.Body.List[0].(*ast.AssignStmt)
+	require(ok && assign.Tok == token.ASSIGN && len(assign.Lhs) == 1 && len(assign.Rhs) == 1 &&
+		reproCaptchaName(assign.Lhs[0], "timeout") && reproCaptchaName(assign.Rhs[0], "captchaAutoWebViewTimeout"), "timeout fallback is not the auto constant")
+	deadline, ok := helper.Body.List[6].(*ast.AssignStmt)
+	require(ok && deadline.Tok == token.DEFINE && len(deadline.Lhs) == 2 && len(deadline.Rhs) == 1 &&
+		reproCaptchaName(deadline.Lhs[0], "waitCtx") && reproCaptchaName(deadline.Lhs[1], "cancel") &&
+		reproCaptchaCall(deadline.Rhs[0], "context.WithTimeout", 2), "missing request deadline")
+	args := deadline.Rhs[0].(*ast.CallExpr).Args
+	require(reproCaptchaCall(args[0], "context.Background", 0) && reproCaptchaName(args[1], "timeout"), "request deadline is disconnected from timeout")
+	deferred, ok := helper.Body.List[7].(*ast.DeferStmt)
+	require(ok && reproCaptchaCall(deferred.Call, "cancel", 0), "request deadline cancellation is not deferred")
+	wait, ok := helper.Body.List[8].(*ast.SelectStmt)
+	require(ok && len(wait.Body.List) == 2, "missing response/deadline waiter")
+	response, ok := wait.Body.List[0].(*ast.CommClause)
+	require(ok, "missing response case")
+	receive, ok := response.Comm.(*ast.AssignStmt)
+	require(ok && receive.Tok == token.DEFINE && len(receive.Lhs) == 1 && len(receive.Rhs) == 1 &&
+		reproCaptchaName(receive.Lhs[0], "result"), "changed captcha response receive")
+	channel, ok := receive.Rhs[0].(*ast.UnaryExpr)
+	require(ok && channel.Op == token.ARROW && reproCaptchaName(channel.X, "CaptchaResultChan"), "waiter is disconnected from response channel")
+	expiry, ok := wait.Body.List[1].(*ast.CommClause)
+	require(ok, "missing deadline case")
+	expr, ok := expiry.Comm.(*ast.ExprStmt)
+	require(ok, "changed deadline receive")
+	done, ok := expr.X.(*ast.UnaryExpr)
+	require(ok && done.Op == token.ARROW && reproCaptchaCall(done.X, "waitCtx.Done", 0), "waiter does not consume its deadline")
+	uses := make(map[string]int)
+	ast.Inspect(helper.Body, func(node ast.Node) bool {
+		if ident, ok := node.(*ast.Ident); ok {
+			uses[ident.Name]++
+		}
+		return true
+	})
+	require(uses["timeout"] == 3 && uses["waitCtx"] == 2, "extra timeout/deadline use or reassignment")
+}
+
+type reproCaptchaLog struct {
+	mu   sync.Mutex
+	text bytes.Buffer
+}
+
+func (c *reproCaptchaLog) Write(data []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.text.Write(data)
+}
+
+func (c *reproCaptchaLog) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.text.String()
+}
+
+const reproCaptchaOldWVLog = "[STREAM 7] [КАПЧА] WBV: режим из настроек Android (attempt 3)"
+const reproCaptchaWVLog = "[STREAM 7] [КАПЧА] wv mode: requesting captcha window (attempt 3)"
+
+// Only the selected branch runs the mode solver. Manual/auto exercise the real
+// request helper, without entering the native solver chain or waiting out expiry.
+func reproCaptchaRequest(t *testing.T, mode string, timeout time.Duration, selected bool) string {
+	t.Helper()
+	reproCaptchaContract(t)
+	if selected {
+		t.Chdir(t.TempDir())
+	}
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("captcha stdout pipe setup: %v", err)
+	}
+	const uri, session, answer = "https://example.invalid/captcha", "repro-session", "repro-token"
+	marker := "CAPTCHA_SOLVE|" + mode + "|" + uri + "|" + session
+	responses := make(chan string, 1)
+	savedChannel, savedMode, savedStdout := CaptchaResultChan, getCaptchaMode(), os.Stdout
+	savedWriter, savedFlags, savedPrefix := log.Writer(), log.Flags(), log.Prefix()
+	capture := &reproCaptchaLog{}
+	CaptchaResultChan, os.Stdout = responses, writer
+	setCaptchaMode("wv")
+	log.SetOutput(capture)
+	log.SetFlags(0)
+	log.SetPrefix("")
+	markers := make(chan struct{}, 1)
+	readerDone, responderDone, invokeDone := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	readerReady, responderReady := make(chan struct{}), make(chan struct{})
+	stopResponder := make(chan struct{})
+	var lines []string
+	var readErr, solveErr error
+	var result string
+	var sent int
+	go func() {
+		defer close(readerDone)
+		close(readerReady)
+		scanner := bufio.NewScanner(reader)
+		for scanner.Scan() {
+			line := scanner.Text()
+			lines = append(lines, line)
+			if line == marker {
+				select {
+				case markers <- struct{}{}:
+				default:
+				}
+			}
+		}
+		readErr = scanner.Err()
+	}()
+	go func() {
+		defer close(responderDone)
+		close(responderReady)
+		for {
+			select {
+			case <-stopResponder:
+				return
+			case <-markers:
+				select {
+				case responses <- "  " + answer + "  ":
+					sent++
+				case <-stopResponder:
+					return
+				}
+			}
+		}
+	}()
+	cleaned := false
+	cleanup := func() {
+		if cleaned {
+			return
+		}
+		cleaned = true
+		join := func(done <-chan struct{}, description string) {
+			select {
+			case <-done:
+			case <-time.After(3 * time.Second):
+				// Do not restore globals underneath an unjoined upstream invocation.
+				panic("captcha teardown: " + description + " did not stop")
+			}
+		}
+		close(stopResponder)
+		join(responderDone, "responder")
+		select {
+		case <-invokeDone:
+		default:
+			// The upstream waiter uses Background, not the selected-mode context.
+			// Stop all senders before closing only this test's response channel.
+			close(responses)
+		}
+		if err := writer.Close(); err != nil {
+			t.Errorf("captcha stdout writer close: %v", err)
+		}
+		join(invokeDone, "invocation after response-channel/pipe close")
+		readerClosed := false
+		select {
+		case <-readerDone:
+		case <-time.After(3 * time.Second):
+			t.Error("captcha stdout reader teardown timed out")
+			if err := reader.Close(); err != nil {
+				t.Errorf("captcha stdout reader unblock: %v", err)
+			}
+			readerClosed = true
+			join(readerDone, "stdout reader after pipe close")
+		}
+		if !readerClosed {
+			if err := reader.Close(); err != nil {
+				t.Errorf("captcha stdout reader close: %v", err)
+			}
+		}
+		CaptchaResultChan, os.Stdout = savedChannel, savedStdout
+		setCaptchaMode(savedMode)
+		log.SetOutput(savedWriter)
+		log.SetFlags(savedFlags)
+		log.SetPrefix(savedPrefix)
+	}
+	defer cleanup()
+	go func() {
+		defer close(invokeDone)
+		<-readerReady
+		<-responderReady
+		captchaErr := &VkCaptchaError{RedirectURI: uri, SessionToken: session}
+		if selected {
+			result, solveErr = solveCaptchaBySelectedMode(context.Background(), 7, 3, captchaErr, nil, Profile{}, nil)
+		} else {
+			result, solveErr = requestWebViewCaptcha(7, captchaErr, mode, timeout)
+		}
+	}()
+	select {
+	case <-invokeDone:
+	case <-readerDone:
+		cleanup()
+		t.Fatalf("captcha stdout capture ended before invocation: %v", readErr)
+	case <-time.After(3 * time.Second):
+		t.Fatal("captcha request/response smoke check timed out")
+	}
+	cleanup()
+	if t.Failed() {
+		t.FailNow()
+	}
+	if readErr != nil {
+		t.Fatalf("captcha stdout capture: %v", readErr)
+	}
+	if len(lines) != 1 || lines[0] != marker || sent != 1 {
+		t.Fatalf("captcha stdout handshake: got %d lines and %d responses, want exactly one matching %s marker", len(lines), sent, mode)
+	}
+	if solveErr != nil || result != answer {
+		t.Fatalf("captcha response: token %q, error %v, want immediate synthetic token", result, solveErr)
+	}
+	logs := capture.String()
+	if !strings.Contains(logs, "[STREAM 7] [КАПЧА] WBV: "+mode+" solve succeeded\n") {
+		t.Fatal("captcha response diagnostic is missing")
+	}
+	if selected {
+		if strings.Contains(logs, "AUTO") || strings.Contains(logs, "Go v2") {
+			t.Fatal("wv entered the native/auto solver chain")
+		}
+		if strings.Contains(logs, "profile rotate failed") {
+			t.Fatal("captcha profile-write setup: rotation failed")
+		}
+		profile, err := LoadProfileFromDisk()
+		if err != nil {
+			t.Fatalf("captcha profile-write setup: %v", err)
+		}
+		fp, err := os.ReadFile(captchaBrowserFpFile)
+		if err != nil || profile.BrowserFp == "" || string(fp) != profile.BrowserFp || profile.UserAgent == "" || profile.DeviceJSON == "" {
+			t.Fatalf("captcha profile-write setup: incomplete or mismatched isolated profile, read error %v", err)
+		}
+		attempts := 0
+		for _, line := range strings.Split(logs, "\n") {
+			if strings.Contains(line, "attempt") {
+				attempts++
+				if line != reproCaptchaOldWVLog && line != reproCaptchaWVLog {
+					t.Fatal("wv diagnostic lost its stream/captcha tags, mode or attempt")
+				}
+			}
+		}
+		if attempts != 1 {
+			t.Fatalf("wv request diagnostic count: got %d, want 1", attempts)
+		}
+	}
+	return logs
+}
+
+func TestReproCaptchaManualTimeout(t *testing.T) {
+	reproCaptchaRequest(t, "manual", captchaManualWebViewTimeout, false)
+	if got, want := captchaManualWebViewTimeout, 180*time.Second; got != want {
+		t.Fatalf("manual captcha timeout: got %s, want %s", got, want)
+	}
+}
+
+func TestReproCaptchaSelectedTimeout(t *testing.T) {
+	reproCaptchaRequest(t, "selected", captchaSelectedWebViewTimeout, true)
+	if got, want := captchaSelectedWebViewTimeout, 180*time.Second; got != want {
+		t.Fatalf("selected captcha timeout: got %s, want %s", got, want)
+	}
+}
+
+func TestReproCaptchaAutoTimeout(t *testing.T) {
+	reproCaptchaRequest(t, "auto", captchaAutoWebViewTimeout, false)
+	if got, want := captchaAutoWebViewTimeout, 10*time.Second; got != want {
+		t.Fatalf("auto captcha timeout: got %s, want %s", got, want)
+	}
+}
+
+func TestReproCaptchaWVLog(t *testing.T) {
+	logs := reproCaptchaRequest(t, "selected", captchaSelectedWebViewTimeout, true)
+	if strings.Contains(logs, reproCaptchaOldWVLog+"\n") {
+		t.Fatal("wv diagnostic still claims Android settings")
+	}
+	if !strings.Contains(logs, reproCaptchaWVLog+"\n") || strings.Contains(logs, "Android") {
+		t.Fatal("wv diagnostic must describe its mode, captcha window and attempt without an Android claim")
 	}
 }

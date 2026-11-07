@@ -38,6 +38,9 @@ var fixtureDiagnostics = map[string]string{
 	"TestReproDroppedDown": "    repro_test.go:600: missing drop counter: Stats.DroppedDown\n",
 	"TestReproDroppedStatsOutput": "    repro_test.go:700: statistics output: [СТАТИСТИКА] Активных: 3 | Трафик: 7.00 МБ | ↓5.00 МБ / ↑2.00 МБ\n" +
 		"    repro_test.go:701: statistics output omits drop counters: want DroppedUp=7 and DroppedDown=11\n",
+	"TestReproCaptchaManualTimeout":   "    repro_test.go:1100: manual captcha timeout: got 1m0s, want 3m0s\n",
+	"TestReproCaptchaSelectedTimeout": "    repro_test.go:1110: selected captcha timeout: got 2m0s, want 3m0s\n",
+	"TestReproCaptchaWVLog":           "    repro_test.go:1120: wv diagnostic still claims Android settings\n",
 }
 
 func fixtureEvents(run testRun) []testEvent {
@@ -75,7 +78,13 @@ func jsonResult(events []testEvent) processResult {
 }
 
 func TestExpectationMatrix(t *testing.T) {
-	for _, run := range testRuns() {
+	runs := testRuns()
+	timeoutNames := []string{"TestReproCaptchaManualTimeout", "TestReproCaptchaSelectedTimeout", "TestReproCaptchaAutoTimeout"}
+	logNames := []string{"TestReproCaptchaWVLog"}
+	for _, name := range []string{"baseline", "patched", "patched-counters", "patched-captcha-timeouts", "patched-captcha-wv-log"} {
+		fixtureRun(t, name)
+	}
+	for _, run := range runs {
 		t.Run(run.name, func(t *testing.T) {
 			if err := validateResult(jsonResult(fixtureEvents(run)), run.want); err != nil {
 				t.Fatal(err)
@@ -96,7 +105,8 @@ func TestExpectationMatrix(t *testing.T) {
 					}
 				}
 			}
-			if run.name == "patched-counters" {
+			switch run.name {
+			case "patched-counters":
 				if !reflect.DeepEqual(run.patches, []string{"4-dropped-packets.patch"}) || len(run.want) != 3 {
 					t.Fatalf("counter-only input is not isolated: %+v", run)
 				}
@@ -105,16 +115,66 @@ func TestExpectationMatrix(t *testing.T) {
 						t.Fatalf("wrong counter-only selection: %s", run.pattern())
 					}
 				}
-			} else if run.patched != reflect.DeepEqual(run.patches, patches) || (!run.patched && len(run.patches) != 0) {
-				t.Fatalf("wrong ordinary/injected patch list: %+v", run)
+			case "patched-captcha-timeouts", "patched-captcha-wv-log":
+				wantPatches, wantNames := []string{"6-captcha-timeouts.patch"}, timeoutNames
+				if run.name == "patched-captcha-wv-log" {
+					wantPatches, wantNames = []string{"7-captcha-wv-log.patch"}, logNames
+				}
+				var gotNames []string
+				for _, w := range run.want {
+					gotNames = append(gotNames, w.name)
+					if w.action != "pass" {
+						t.Fatalf("captcha-only input must pass: %+v", w)
+					}
+				}
+				if !run.patched || run.injected || !slices.Equal(run.patches, wantPatches) || !slices.Equal(gotNames, wantNames) {
+					t.Fatalf("captcha-only input is not isolated: %+v", run)
+				}
+				for _, c := range cases {
+					if pattern.MatchString(c.baseline.name) != slices.Contains(wantNames, c.baseline.name) {
+						t.Fatalf("wrong captcha-only selection: %s", run.pattern())
+					}
+				}
+			default:
+				if run.patched != reflect.DeepEqual(run.patches, patches) || (!run.patched && len(run.patches) != 0) {
+					t.Fatalf("wrong ordinary/injected patch list: %+v", run)
+				}
+				if run.patched && (!slices.Contains(run.patches, "6-captcha-timeouts.patch") || !slices.Contains(run.patches, "7-captcha-wv-log.patch")) {
+					t.Fatal("complete patched input lacks captcha patches")
+				}
+				for _, name := range append(slices.Clone(timeoutNames), logNames...) {
+					i := slices.IndexFunc(run.want, func(w expectation) bool { return w.name == name })
+					if run.injected {
+						if i >= 0 {
+							t.Fatal("captcha must not enter the injected deadline run")
+						}
+						continue
+					}
+					action := "fail"
+					if run.patched || name == "TestReproCaptchaAutoTimeout" {
+						action = "pass"
+					}
+					if i < 0 || run.want[i].action != action {
+						t.Fatalf("wrong ordinary captcha expectation for %s: %+v", name, run.want)
+					}
+				}
 			}
 		})
 	}
 }
 
-func TestCounterResultValidation(t *testing.T) {
+func fixtureRun(t *testing.T, name string) testRun {
+	t.Helper()
 	runs := testRuns()
-	baseline, patched := runs[0], runs[len(runs)-1]
+	i := slices.IndexFunc(runs, func(run testRun) bool { return run.name == name })
+	if i < 0 {
+		t.Fatalf("missing test input: %s", name)
+	}
+	return runs[i]
+}
+
+func TestCounterResultValidation(t *testing.T) {
+	baseline, patched := fixtureRun(t, "baseline"), fixtureRun(t, "patched-counters")
 	baseline.want = slices.DeleteFunc(slices.Clone(baseline.want), func(w expectation) bool {
 		return !regexp.MustCompile(patched.pattern()).MatchString(w.name)
 	})
@@ -155,6 +215,85 @@ func TestCounterResultValidation(t *testing.T) {
 					}
 					if err := validateResult(result, run.want); err == nil {
 						t.Fatal("invalid counter evidence accepted")
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestCaptchaResultValidation(t *testing.T) {
+	baseline := fixtureRun(t, "baseline")
+	baseline.want = slices.DeleteFunc(slices.Clone(baseline.want), func(w expectation) bool {
+		return !strings.HasPrefix(w.name, "TestReproCaptcha")
+	})
+	for _, run := range []testRun{baseline, fixtureRun(t, "patched-captcha-timeouts"), fixtureRun(t, "patched-captcha-wv-log")} {
+		for _, w := range run.want {
+			for _, mode := range []string{
+				"wrong assertion", "missing assertion", "unexpected pass", "failure", "missing test", "skip", "build", "process timeout",
+				"capture setup", "call-site setup", "profile setup", "pipe setup", "parse setup", "teardown", "setup plus assertion",
+			} {
+				if (mode == "unexpected pass" || mode == "wrong assertion" || mode == "missing assertion" || mode == "setup plus assertion") && w.action != "fail" {
+					continue
+				}
+				if mode == "failure" && w.action != "pass" {
+					continue
+				}
+				t.Run(run.name+"/"+w.name+"/"+mode, func(t *testing.T) {
+					events := fixtureEvents(run)
+					if mode == "missing test" {
+						events = slices.DeleteFunc(events, func(e testEvent) bool { return e.Test == w.name })
+					} else {
+						for i := range events {
+							e := &events[i]
+							if e.Test != w.name {
+								continue
+							}
+							if e.Action == "output" {
+								switch mode {
+								case "wrong assertion":
+									e.Output = "    repro_test.go:1100: selected captcha timeout: got 1m0s, want 3m0s\n"
+								case "missing assertion":
+									e.Output = ""
+								}
+							}
+							if e.Action == "pass" || e.Action == "fail" {
+								switch mode {
+								case "unexpected pass":
+									e.Action = "pass"
+								case "skip":
+									e.Action = "skip"
+								default:
+									e.Action = "fail"
+								}
+							}
+						}
+						setup := map[string]string{
+							"capture setup": "captcha stdout capture: read failed", "call-site setup": "captcha call-site contract: missing captcha request",
+							"profile setup": "captcha profile-write setup: rotation failed", "pipe setup": "captcha stdout pipe setup: pipe failed",
+							"parse setup": "captcha source parse: invalid source", "teardown": "captcha stdout reader teardown timed out",
+							"setup plus assertion": "captcha response: wrong synthetic token",
+						}[mode]
+						if setup != "" {
+							terminal := slices.IndexFunc(events, func(e testEvent) bool { return e.Test == w.name && e.Action == "fail" })
+							events = slices.Insert(events, terminal, testEvent{Action: "output", Package: events[0].Package, Test: w.name,
+								Output: "    repro_test.go:1050: " + setup + "\n"})
+						}
+					}
+					// Make process/package status agree with the mutated tests, so the
+					// intended test/assertion checks, not a stale exit code, reject it.
+					events[len(events)-1].Action = "pass"
+					if slices.ContainsFunc(events[:len(events)-1], func(e testEvent) bool { return e.Action == "fail" }) {
+						events[len(events)-1].Action = "fail"
+					}
+					result := jsonResult(events)
+					if mode == "process timeout" {
+						result.err = context.DeadlineExceeded
+					} else if mode == "build" {
+						result.stdout = []byte("FAIL example.invalid/upstream [build failed]\n")
+					}
+					if err := validateResult(result, run.want); err == nil {
+						t.Fatal("invalid captcha evidence accepted")
 					}
 				})
 			}
