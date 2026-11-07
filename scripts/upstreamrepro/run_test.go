@@ -334,13 +334,34 @@ func checkOffline(t *testing.T, env []string) {
 	}
 }
 
+func commandDirectoryOwned(parent, cwd string) bool {
+	for _, dir := range []string{parent, cwd} {
+		if !filepath.IsAbs(dir) {
+			return false
+		}
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			return false
+		}
+	}
+	parent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return false
+	}
+	cwd, err = filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(parent, cwd)
+	return err == nil && rel != "." && filepath.IsLocal(rel)
+}
+
 func (f fixture) executor(t *testing.T, intercept func(context.Context, command) (processResult, bool)) executor {
 	t.Helper()
 	cache := t.TempDir()
 	return func(ctx context.Context, c command) processResult {
 		checkOffline(t, c.env)
-		if !strings.HasPrefix(c.dir, f.tempParent+string(filepath.Separator)) {
-			t.Fatalf("command cwd is not owned: %s", c.dir)
+		if !commandDirectoryOwned(f.tempParent, c.dir) {
+			t.Fatalf("command cwd is not owned: cwd=%q, parent=%q", c.dir, f.tempParent)
 		}
 		if intercept != nil {
 			if result, handled := intercept(ctx, c); handled {
@@ -412,6 +433,103 @@ func boolInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+func TestCommandDirectoryOwnership(t *testing.T) {
+	base := t.TempDir()
+	parent := filepath.Join(base, "owned temporary inputs")
+	work := filepath.Join(parent, "work")
+	module := filepath.Join(work, "go_client")
+	spaced := filepath.Join(parent, "work with spaces", "module with spaces")
+	sibling, outside := parent+"-sibling", filepath.Join(base, "outside")
+	source, project := filepath.Join(base, "source with spaces"), filepath.Join(base, "project")
+	for _, dir := range []string{module, spaced, sibling, outside, source, project} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	file := filepath.Join(work, "file")
+	writeFixture(t, file, "fixture\n")
+	t.Chdir(base)
+	sep := string(filepath.Separator)
+	tests := []struct {
+		name, parent, cwd string
+		want              bool
+	}{
+		{"work", parent, work, true},
+		{"module", parent, module, true},
+		{"spaces", parent, spaced, true},
+		{"parent itself", parent, parent, false},
+		{"similarly prefixed sibling", parent, sibling, false},
+		{"outside", parent, outside, false},
+		{"source", parent, source, false},
+		{"project", parent, project, false},
+		{"escape via dot dot", parent, parent + sep + ".." + sep + "source with spaces", false},
+		{"escape from work", parent, work + sep + ".." + sep + ".." + sep + "outside", false},
+		{"missing parent", filepath.Join(base, "missing"), work, false},
+		{"missing cwd", parent, filepath.Join(parent, "missing"), false},
+		{"empty parent", "", work, false},
+		{"empty cwd", parent, "", false},
+		{"relative parent", filepath.Base(parent), work, false},
+		{"relative cwd", parent, filepath.Join(filepath.Base(parent), "work"), false},
+		{"both relative", filepath.Base(parent), filepath.Join(filepath.Base(parent), "work"), false},
+		{"parent file", file, module, false},
+		{"cwd file", parent, file, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := commandDirectoryOwned(tc.parent, tc.cwd); got != tc.want {
+				t.Fatalf("commandDirectoryOwned(%q, %q) = %v, want %v", tc.parent, tc.cwd, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestWindowsTempParentAlias(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path normalization")
+	}
+	f := newFixture(t)
+	parent := filepath.Join(f.tempParent, "MiXeD Parent")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f.tempParent = filepath.Join(f.tempParent, "mIxEd pARENT")
+	info, err := os.Stat(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliasInfo, err := os.Stat(f.tempParent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(info, aliasInfo) {
+		t.Fatalf("temporary parent alias is not the same directory: %q, %q", parent, f.tempParent)
+	}
+	testCount := 0
+	f.exec = f.executor(t, func(ctx context.Context, c command) (processResult, bool) {
+		resolved, err := filepath.EvalSymlinks(c.dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.dir != resolved {
+			t.Fatalf("command cwd is not resolved: %q, want %q", c.dir, resolved)
+		}
+		if strings.HasPrefix(c.dir, f.tempParent+string(filepath.Separator)) {
+			t.Fatalf("raw prefix did not expose the alias: cwd=%q, parent=%q", c.dir, f.tempParent)
+		}
+		if c.name == "go" && c.args[0] == "test" {
+			testCount++
+		}
+		return processResult{}, false
+	})
+	if err := f.run(context.Background()); err != nil {
+		t.Fatalf("temporary parent alias: %v\n%s", err, f.log)
+	}
+	if testCount != len(testRuns()) {
+		t.Fatalf("missing selected runs: %d", testCount)
+	}
+	f.checkPreserved(t)
 }
 
 func TestDirtySourceAndCleanup(t *testing.T) {

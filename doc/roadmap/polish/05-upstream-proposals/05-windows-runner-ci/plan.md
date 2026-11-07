@@ -1,6 +1,6 @@
 ---
 kind: task
-status: in-progress
+status: done
 detailed: true
 depends: [01-repro-runner]
 base: c32868b
@@ -170,3 +170,53 @@ No credentials, user service, native Windows access or new user decision is need
 prepare this repair. Native Windows execution is a separately reported validation gap
 until an already authorized runtime or subsequent CI result is available; this task does
 not authorize obtaining that runtime, triggering CI or changing workflow coverage.
+
+## Outcome
+
+Implemented the bounded fixture repair in `scripts/upstreamrepro/run_test.go` and accepted
+it after independent review without correction requests.
+
+- The test-only `commandDirectoryOwned` predicate requires existing absolute directories,
+  resolves both paths with `filepath.EvalSymlinks`, and uses `filepath.Rel` and
+  `filepath.IsLocal` to require a strict descendant. Resolution errors, the parent itself,
+  siblings and escaping paths fail closed. Every command is checked before interception,
+  and the failure diagnostic includes both cwd and parent.
+- `TestCommandDirectoryOwnership` covers nineteen positive and negative cases, including
+  spaces, source/project directories, `..`, missing paths, relative inputs and files.
+  `TestWindowsTempParentAlias` creates a controlled case alias, proves directory identity
+  with `os.Stat` and `os.SameFile`, demonstrates rejection by the old prefix assertion,
+  and exercises the success path through the real fixture check and `checkPreserved`.
+- All eleven `TestDirtySourceAndCleanup` modes and their existing preservation, cleanup,
+  offline, cancellation and result checks remain intact. Production code, artifacts,
+  dependencies and workflows are unchanged. The existing Windows workflow selects the
+  new regression automatically.
+
+Implementation and independent review used a disposable export of committed base
+`c32868b`, without the suspended counter work. The focused ownership/alias/cleanup tests,
+complete runner package tests, race tests, runner vet, project build, formatting and repair
+whitespace checks passed offline with the installed Go 1.26.2 toolchain. Windows/amd64
+runner vet, project cross-build and runner test-binary compilation also passed with cgo
+disabled. The Windows-only alias test skipped on the host; native Windows execution and
+a subsequent green CI result remain unverified. The exact spelling difference on the
+original failing worker remains unknown.
+
+Before integration, all five suspended counter files and their index entries, including
+the complete raw index, matched the preserved snapshots. The repair was applied to each
+saved test-file layer independently. Reversing it recovered the exact original bytes and
+mode; applying each original counter delta to the repaired base produced the same merged
+file. The other four files retained their corresponding saved bytes and modes. Both
+combined preview layers have identical runner sources; their focused tests, complete
+runner package tests, race tests, vet and formatting checks passed offline. These are
+compatibility checks, not acceptance of the pending counter patch or its staged task status.
+Independent integration review confirmed both layer-preservation proofs and repeated the
+combined runner checks without findings. Host and Windows project builds also passed on
+the combined preview. The separate CI commit contains only the base repair and this task's
+status and outcome. Final real-index reconciliation and post-commit validation are recorded
+in the private journal; the suspended counter task remains subject to its own acceptance.
+
+No review findings were rejected, no separate incidental old-code problem was reported,
+and no confirmed problem was left partially fixed because of implementation cost. The
+ordinary outbound project test suite, real upstream reproductions, live or browser checks
+and a manual CI rerun were not run. Counter acceptance still requires independent review
+of its final patch representation, staging its final intended files and corrected task
+outcome, and a separate privacy and whitespace audit before its own commit.
