@@ -34,6 +34,10 @@ var fixtureDiagnostics = map[string]string{
 	"TestReproStopDuringConfigRequest":        "    repro_test.go:347: WorkerGroup не вернулась за 5s после отмены\n    repro_test.go:347: вернулась через 45.001s\n",
 	"TestReproStopRightAfterSessionStart": "    repro_test.go:373: WorkerGroup не вернулась за 5s после отмены\n" +
 		"    repro_test.go:373: и через 1m5s не вернулась — дальше не ждём\n    repro_test.go:267: WorkerGroup так и не вернулась\n",
+	"TestReproDroppedUp":   "    repro_test.go:500: missing drop counter: Stats.DroppedUp\n",
+	"TestReproDroppedDown": "    repro_test.go:600: missing drop counter: Stats.DroppedDown\n",
+	"TestReproDroppedStatsOutput": "    repro_test.go:700: statistics output: [СТАТИСТИКА] Активных: 3 | Трафик: 7.00 МБ | ↓5.00 МБ / ↑2.00 МБ\n" +
+		"    repro_test.go:701: statistics output omits drop counters: want DroppedUp=7 and DroppedDown=11\n",
 }
 
 func fixtureEvents(run testRun) []testEvent {
@@ -92,7 +96,69 @@ func TestExpectationMatrix(t *testing.T) {
 					}
 				}
 			}
+			if run.name == "patched-counters" {
+				if !reflect.DeepEqual(run.patches, []string{"4-dropped-packets.patch"}) || len(run.want) != 3 {
+					t.Fatalf("counter-only input is not isolated: %+v", run)
+				}
+				for _, c := range cases {
+					if pattern.MatchString(c.baseline.name) != c.counters {
+						t.Fatalf("wrong counter-only selection: %s", run.pattern())
+					}
+				}
+			} else if run.patched != reflect.DeepEqual(run.patches, patches) || (!run.patched && len(run.patches) != 0) {
+				t.Fatalf("wrong ordinary/injected patch list: %+v", run)
+			}
 		})
+	}
+}
+
+func TestCounterResultValidation(t *testing.T) {
+	runs := testRuns()
+	baseline, patched := runs[0], runs[len(runs)-1]
+	baseline.want = slices.DeleteFunc(slices.Clone(baseline.want), func(w expectation) bool {
+		return !regexp.MustCompile(patched.pattern()).MatchString(w.name)
+	})
+	for _, run := range []testRun{baseline, patched} {
+		for _, w := range run.want {
+			for _, mode := range []string{"wrong assertion", "missing", "skip", "setup", "build", "timeout"} {
+				t.Run(run.name+"/"+w.name+"/"+mode, func(t *testing.T) {
+					events := fixtureEvents(run)
+					switch mode {
+					case "missing":
+						events = slices.DeleteFunc(events, func(e testEvent) bool { return e.Test == w.name })
+					case "skip", "wrong assertion", "setup":
+						for i := range events {
+							if events[i].Test != w.name {
+								continue
+							}
+							if mode == "skip" && (events[i].Action == "pass" || events[i].Action == "fail") {
+								events[i].Action = "skip"
+							}
+							if mode == "wrong assertion" && events[i].Action == "output" {
+								events[i].Output = "    repro_test.go:500: wrong drop counter type: Stats.DroppedUp is uint64, want atomic.Uint64\n"
+							}
+							if (mode == "wrong assertion" || mode == "setup") && events[i].Action == "pass" {
+								events[i].Action = "fail"
+							}
+						}
+						if mode == "setup" {
+							terminal := slices.IndexFunc(events, func(e testEvent) bool { return e.Test == w.name && e.Action == "fail" })
+							events = slices.Insert(events, terminal, testEvent{Action: "output", Package: events[0].Package, Test: w.name,
+								Output: "    repro_test.go:600: downlink server setup: handshake failed\n"})
+						}
+					}
+					result := jsonResult(events)
+					if mode == "timeout" {
+						result.err = context.DeadlineExceeded
+					} else if mode == "build" {
+						result.stdout = []byte("FAIL example.invalid/upstream [build failed]\n")
+					}
+					if err := validateResult(result, run.want); err == nil {
+						t.Fatal("invalid counter evidence accepted")
+					}
+				})
+			}
+		}
 	}
 }
 
@@ -228,7 +294,12 @@ func newFixture(t *testing.T) fixture {
 	root, source := filepath.Join(base, "project"), filepath.Join(base, "source with spaces")
 	writeFixture(t, filepath.Join(source, "go_client", "go.mod"), "module example.invalid/upstream\n\ngo 1.26.2\n")
 	writeFixture(t, filepath.Join(source, "go_client", "session.go"), fixtureSession)
-	writeFixture(t, filepath.Join(root, "doc", "upstream-repro", "repro_test.go"), "// Synthetic reproduction fixture.\npackage main\n")
+	var repro strings.Builder
+	repro.WriteString("// Synthetic reproduction fixture.\npackage main\n")
+	for _, c := range cases {
+		fmt.Fprintf(&repro, "func %s() {}\n", c.baseline.name)
+	}
+	writeFixture(t, filepath.Join(root, "doc", "upstream-repro", "repro_test.go"), repro.String())
 	for i, patch := range patches {
 		name := fmt.Sprintf("fix%d.go", i)
 		writeFixture(t, filepath.Join(source, "go_client", name), "package main\n// before\n")
@@ -408,14 +479,21 @@ func (f fixture) executor(t *testing.T, intercept func(context.Context, command)
 			if _, err := os.Stat(filepath.Join(c.dir, "head-only.txt")); !os.IsNotExist(err) {
 				t.Fatal("export used source HEAD instead of pin")
 			}
-			for i := range patches {
+			for i, patch := range patches {
 				data, err := os.ReadFile(filepath.Join(c.dir, fmt.Sprintf("fix%d.go", i)))
-				if err != nil || bytes.Contains(data, []byte("// after")) != run.patched {
-					t.Fatalf("wrong patch state for %s: %s, %v", run.name, data, err)
+				if err != nil || bytes.Contains(data, []byte("// after")) != slices.Contains(run.patches, patch) {
+					t.Fatalf("wrong patch state for %s, %s: %s, %v", run.name, patch, data, err)
 				}
 			}
-			if _, err := os.Stat(filepath.Join(c.dir, "repro_test.go")); err != nil {
-				t.Fatal("reproduction test was not copied")
+			copied, err := os.ReadFile(filepath.Join(c.dir, "repro_test.go"))
+			original, originalErr := os.ReadFile(filepath.Join(f.root, "doc", "upstream-repro", "repro_test.go"))
+			if err != nil || originalErr != nil || !bytes.Equal(copied, original) {
+				t.Fatalf("full reproduction file was not copied: %v, %v", err, originalErr)
+			}
+			for _, c := range cases {
+				if !bytes.Contains(copied, []byte("func "+c.baseline.name+"()")) {
+					t.Fatalf("copied reproduction lacks %s", c.baseline.name)
+				}
 			}
 			wantArgs := []string{"test", "-json", "-tags=upstream_repro", "-count=1", "-timeout=10m", "-shuffle=off", "-parallel=1", "-run", run.pattern(), "."}
 			if !reflect.DeepEqual(c.args, wantArgs) {

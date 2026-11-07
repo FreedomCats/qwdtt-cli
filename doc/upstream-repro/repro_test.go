@@ -16,11 +16,14 @@ package main
 // пропускается.
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log"
 	"net"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -371,4 +374,483 @@ func TestReproStopRightAfterSessionStart(t *testing.T) {
 	// SetReadDeadline. Остановка — посреди этого сна.
 	time.Sleep(100 * time.Millisecond)
 	g.stop(t, 5*time.Second)
+}
+
+// Optional lookup keeps the entire tagged file buildable on the unpatched pin.
+func reproDropCounter(t *testing.T, stats *Stats, name string, required bool) *atomic.Uint64 {
+	t.Helper()
+	field := reflect.ValueOf(stats).Elem().FieldByName(name)
+	if !field.IsValid() {
+		if required {
+			t.Fatalf("missing drop counter: Stats.%s", name)
+		}
+		return nil
+	}
+	if !field.CanAddr() || !field.Addr().CanInterface() {
+		t.Fatalf("drop counter is not addressable: Stats.%s", name)
+	}
+	counter, ok := field.Addr().Interface().(*atomic.Uint64)
+	if !ok {
+		t.Fatalf("wrong drop counter type: Stats.%s is %s, want atomic.Uint64", name, field.Type())
+	}
+	return counter
+}
+
+func reproWait(t *testing.T, description string, ready func() bool) {
+	t.Helper()
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for !ready() {
+		select {
+		case <-timer.C:
+			t.Fatalf("timed out waiting for %s", description)
+		case <-tick.C:
+		}
+	}
+}
+
+// A new ReadFrom call acknowledges completion of the preceding dispatch, even
+// when that packet had no receiver. No socket flood or timing inference is used.
+type reproPacketConn struct {
+	packets chan []byte
+	reads   chan struct{}
+	closed  chan struct{}
+	once    sync.Once
+}
+
+func (c *reproPacketConn) ReadFrom(b []byte) (int, net.Addr, error) {
+	select {
+	case c.reads <- struct{}{}:
+	case <-c.closed:
+		return 0, nil, net.ErrClosed
+	}
+	select {
+	case packet := <-c.packets:
+		return copy(b, packet), c.LocalAddr(), nil
+	case <-c.closed:
+		return 0, nil, net.ErrClosed
+	}
+}
+
+func (c *reproPacketConn) WriteTo([]byte, net.Addr) (int, error) {
+	return 0, fmt.Errorf("unexpected dispatcher write")
+}
+func (c *reproPacketConn) Close() error {
+	c.once.Do(func() { close(c.closed) })
+	return nil
+}
+func (c *reproPacketConn) LocalAddr() net.Addr {
+	return &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9000}
+}
+func (c *reproPacketConn) SetDeadline(time.Time) error      { return nil }
+func (c *reproPacketConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *reproPacketConn) SetWriteDeadline(time.Time) error { return nil }
+
+func TestReproDroppedUp(t *testing.T) {
+	stats := NewStats()
+	up := reproDropCounter(t, stats, "DroppedUp", false)
+	down := reproDropCounter(t, stats, "DroppedDown", false)
+	assertUp := func(want uint64) {
+		t.Helper()
+		if up != nil && up.Load() != want {
+			t.Fatalf("DroppedUp = %d at read barrier, want %d", up.Load(), want)
+		}
+	}
+	conn := &reproPacketConn{packets: make(chan []byte), reads: make(chan struct{}), closed: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	d := NewDispatcher(ctx, conn, stats)
+	t.Cleanup(func() {
+		cancel()
+		conn.Close() // Cancellation alone cannot unblock ReadFrom.
+		done := make(chan struct{})
+		go func() { d.Shutdown(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("dispatcher did not shut down")
+		}
+	})
+	waitRead := func() {
+		t.Helper()
+		select {
+		case <-conn.reads:
+		case <-time.After(5 * time.Second):
+			t.Fatal("dispatcher did not reach the read barrier")
+		}
+	}
+	waitRead()
+	send := func(packet []byte) {
+		t.Helper()
+		select {
+		case conn.packets <- packet:
+		case <-time.After(5 * time.Second):
+			t.Fatal("dispatcher did not accept the controlled packet")
+		}
+		waitRead()
+	}
+	large, priority := bytes.Repeat([]byte{0x42}, prioThreshold+100), []byte("priority")
+	send(large) // No workers is not queue saturation.
+	assertUp(0)
+	slot := func(id int) *WorkerSlot {
+		return &WorkerSlot{ID: id, SendCh: make(chan []byte, 1), PrioCh: make(chan []byte, 1)}
+	}
+	a, b := slot(1), slot(2)
+	d.Register(a)
+	receive := func(ch chan []byte, want []byte) {
+		t.Helper()
+		select {
+		case got := <-ch:
+			if !bytes.Equal(got, want) {
+				t.Errorf("delivered packet = %x, want %x", got, want)
+			}
+			putPktBuf(got)
+		default:
+			t.Fatal("packet was not delivered before the read barrier")
+		}
+	}
+	send(large)
+	receive(a.SendCh, large)
+	assertUp(0)
+	send(priority)
+	receive(a.PrioCh, priority)
+	assertUp(0)
+	a.PrioCh <- []byte("full")
+	send(priority) // Priority queues full, ordinary queue free.
+	receive(a.SendCh, priority)
+	assertUp(0)
+	a.SendCh <- []byte("full")
+	d.Register(b)
+	// Reset scheduling only while readLoop is at its barrier, so these packets
+	// must try the full worker before falling back to the other worker.
+	preferA := func() {
+		d.mu.Lock()
+		d.rrIndex, d.rrCount, d.lastPktTime, d.chunkStartTs = 0, 0, 0, 0
+		d.mu.Unlock()
+	}
+	preferA()
+	send(large)
+	receive(b.SendCh, large)
+	assertUp(0)
+	preferA()
+	send(priority)
+	receive(b.PrioCh, priority)
+	assertUp(0)
+	b.PrioCh <- []byte("full")
+	preferA()
+	send(priority) // Both priority queues full; ordinary fallback still works.
+	receive(b.SendCh, priority)
+	assertUp(0)
+	b.SendCh <- []byte("full")
+	const largeBatch, priorityBatch = 3, 2
+	for i := 0; i < largeBatch; i++ {
+		send(large)
+		assertUp(uint64(i + 1))
+	}
+	for i := 0; i < priorityBatch; i++ {
+		send(priority)
+		assertUp(uint64(largeBatch + i + 1))
+	}
+	d.Unregister(a)
+	d.Unregister(b)
+	send(priority)
+	if up == nil {
+		reproDropCounter(t, stats, "DroppedUp", true)
+	} else if got := up.Load(); got != largeBatch+priorityBatch {
+		t.Errorf("DroppedUp = %d, want %d saturated packets only", got, largeBatch+priorityBatch)
+	}
+	if down == nil {
+		reproDropCounter(t, stats, "DroppedDown", true)
+	} else if got := down.Load(); got != 0 {
+		t.Errorf("DroppedDown = %d during uplink, want 0", got)
+	}
+}
+
+// This separate single-session helper leaves the legacy stands unchanged. It
+// completes the handshake/config exchange and acknowledges a real writer packet
+// before handing the connection to the test for controlled downlink writes.
+type reproDownlinkServer struct {
+	peer    *net.UDPAddr
+	ln      net.Listener
+	ready   chan net.Conn
+	done    chan struct{}
+	err     chan error
+	mu      sync.Mutex
+	conn    net.Conn
+	stopped bool
+	once    sync.Once
+}
+
+func (s *reproDownlinkServer) stop() {
+	s.once.Do(func() {
+		s.mu.Lock()
+		s.stopped = true
+		conn := s.conn
+		s.mu.Unlock()
+		_ = s.ln.Close()
+		if conn != nil {
+			_ = conn.Close()
+		}
+	})
+}
+
+func startReproDownlinkServer(t *testing.T) *reproDownlinkServer {
+	t.Helper()
+	cert, err := selfsign.GenerateSelfSigned()
+	if err != nil {
+		t.Fatalf("downlink certificate setup: %v", err)
+	}
+	ln, err := dtls.Listen("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)}, &dtls.Config{
+		Certificates:          []tls.Certificate{cert},
+		ExtendedMasterSecret:  dtls.RequireExtendedMasterSecret,
+		CipherSuites:          []dtls.CipherSuiteID{dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
+		ConnectionIDGenerator: dtls.RandomCIDGenerator(8),
+	})
+	if err != nil {
+		t.Fatalf("downlink listener setup: %v", err)
+	}
+	s := &reproDownlinkServer{peer: ln.Addr().(*net.UDPAddr), ln: ln, ready: make(chan net.Conn, 1), done: make(chan struct{}), err: make(chan error, 1)}
+	t.Cleanup(func() {
+		s.stop()
+		select {
+		case <-s.done:
+		case <-time.After(5 * time.Second):
+			t.Error("downlink server did not stop")
+		}
+	})
+	go func() {
+		defer close(s.done)
+		serve := func() error {
+			c, err := ln.Accept()
+			if err != nil {
+				return err
+			}
+			s.mu.Lock()
+			if s.stopped {
+				s.mu.Unlock()
+				c.Close()
+				return net.ErrClosed
+			}
+			s.conn = c
+			s.mu.Unlock()
+			hctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err = c.(*dtls.Conn).HandshakeContext(hctx)
+			cancel()
+			if err != nil {
+				return fmt.Errorf("handshake: %w", err)
+			}
+			if err := c.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+				return err
+			}
+			buf := make([]byte, 4096)
+			n, err := c.Read(buf)
+			if err != nil {
+				return fmt.Errorf("config request: %w", err)
+			}
+			if string(buf[:n]) != "GETCONF:9000|device|password" {
+				return fmt.Errorf("unexpected config request: %q", buf[:n])
+			}
+			if _, err := c.Write([]byte(standConfig)); err != nil {
+				return fmt.Errorf("config response: %w", err)
+			}
+			n, err = c.Read(buf)
+			if err != nil {
+				return fmt.Errorf("writer readiness: %w", err)
+			}
+			if string(buf[:n]) != "writer-ready" {
+				return fmt.Errorf("unexpected writer readiness: %q", buf[:n])
+			}
+			if err := c.SetDeadline(time.Time{}); err != nil {
+				return fmt.Errorf("clear server deadline: %w", err)
+			}
+			s.ready <- c
+			return nil
+		}
+		if err := serve(); err != nil {
+			s.err <- err
+		}
+	}()
+	return s
+}
+
+func TestReproDroppedDown(t *testing.T) {
+	stand := startTURNStand(t, false, 0)
+	server := startReproDownlinkServer(t)
+	stats := NewStats()
+	ctx, cancel := context.WithCancel(context.Background())
+	// No dispatcher loops: only this test can free the prefilled return queue.
+	d := &Dispatcher{ReturnCh: make(chan []byte, 1), ctx: ctx, cancel: cancel, stats: stats}
+	d.ReturnCh <- []byte("full")
+	configCh := make(chan string, 1)
+	done := make(chan struct{})
+	var delivered bool
+	var sessionErr error
+	go func() {
+		defer close(done)
+		delivered, sessionErr = RunSession(ctx, &TurnParams{}, server.peer, d, "9000", true, configCh, 1,
+			&Credentials{User: standUser, Pass: standPass, TurnURLs: []string{stand.addr}}, "device", "password", stats, nil)
+	}()
+	t.Cleanup(func() {
+		// Close the peer before cancellation: the transport close unblocks Read
+		// independently of the baseline's separate read-deadline cancellation bug.
+		server.stop()
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("downlink session did not stop after peer close")
+		}
+	})
+	select {
+	case conf := <-configCh:
+		if conf != standConfig {
+			t.Fatalf("downlink config = %q, want synthetic config", conf)
+		}
+	case err := <-server.err:
+		t.Fatalf("downlink server setup: %v", err)
+	case <-done:
+		t.Fatalf("downlink session ended during setup: %v", sessionErr)
+	case <-time.After(8 * time.Second):
+		t.Fatal("downlink config setup timed out")
+	}
+	var worker *WorkerSlot
+	reproWait(t, "downlink worker registration", func() bool {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if len(d.workers) == 1 {
+			worker = d.workers[0]
+		}
+		return worker != nil
+	})
+	worker.PrioCh <- []byte("writer-ready")
+	var conn net.Conn
+	select {
+	case conn = <-server.ready:
+	case err := <-server.err:
+		t.Fatalf("downlink server readiness: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("downlink writer readiness timed out")
+	}
+	write := func(packet []byte) {
+		t.Helper()
+		if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			t.Fatalf("downlink write deadline: %v", err)
+		}
+		if n, err := conn.Write(packet); err != nil || n != len(packet) {
+			t.Fatalf("downlink transport write = %d, %v", n, err)
+		}
+	}
+	receive := func(want []byte) {
+		t.Helper()
+		select {
+		case packet := <-d.ReturnCh:
+			if !bytes.Equal(packet, want) {
+				t.Errorf("downlink delivery = %q, want %q", packet, want)
+			}
+			putPktBuf(packet)
+		case <-done:
+			t.Fatalf("downlink session ended before delivery: %v", sessionErr)
+		case <-time.After(5 * time.Second):
+			t.Fatal("downlink delivery timed out")
+		}
+	}
+	<-d.ReturnCh
+	write([]byte("reader-ready"))
+	receive([]byte("reader-ready"))
+	d.ReturnCh <- []byte("full")
+	// A missing field is asserted only after transport/config and both proxy
+	// directions have actually worked; setup errors cannot reproduce this bug.
+	down := reproDropCounter(t, stats, "DroppedDown", true)
+	up := reproDropCounter(t, stats, "DroppedUp", true)
+	if down.Load() != 0 || up.Load() != 0 {
+		t.Fatal("drop counters changed during successful session setup")
+	}
+	write([]byte{keepaliveByte}) // A filtered pong is not a rejected payload.
+	const batch = 4
+	for i := 0; i < batch; i++ {
+		write([]byte(fmt.Sprintf("dropped-%d", i)))
+		want := uint64(i + 1)
+		reproWait(t, "saturated downlink packet processing", func() bool { return down.Load() >= want })
+		if got := down.Load(); got != want {
+			t.Fatalf("DroppedDown = %d, want exactly %d", got, want)
+		}
+	}
+	<-d.ReturnCh
+	write([]byte("delivered-after-full"))
+	receive([]byte("delivered-after-full"))
+	if got := down.Load(); got != batch {
+		t.Errorf("DroppedDown = %d after successful delivery, want %d", got, batch)
+	}
+	if got := up.Load(); got != 0 {
+		t.Errorf("DroppedUp = %d during downlink, want 0", got)
+	}
+	conn.Close()
+	select {
+	case <-done:
+		if !delivered {
+			t.Errorf("downlink session lost config delivery: %v", sessionErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("downlink session did not finish after controlled peer close")
+	}
+}
+
+type reproStatsCapture struct {
+	mu   sync.Mutex
+	line chan string
+}
+
+func (c *reproStatsCapture) Write(packet []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if strings.Contains(string(packet), "[СТАТИСТИКА]") {
+		select {
+		case c.line <- strings.TrimSpace(string(packet)):
+		default:
+		}
+	}
+	return len(packet), nil
+}
+
+func TestReproDroppedStatsOutput(t *testing.T) {
+	stats := NewStats()
+	stats.ActiveConnections.Store(3)
+	stats.TotalBytesUp.Store(2 * 1024 * 1024)
+	stats.TotalBytesDown.Store(5 * 1024 * 1024)
+	for name, value := range map[string]uint64{"DroppedUp": 7, "DroppedDown": 11} {
+		if counter := reproDropCounter(t, stats, name, false); counter != nil {
+			counter.Store(value)
+		}
+	}
+	capture := &reproStatsCapture{line: make(chan string, 1)}
+	writer, flags, prefix := log.Writer(), log.Flags(), log.Prefix()
+	log.SetOutput(capture)
+	log.SetFlags(0)
+	log.SetPrefix("")
+	shutdown, done := make(chan struct{}), make(chan struct{})
+	t.Cleanup(func() {
+		close(shutdown)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("statistics loop did not stop")
+		}
+		log.SetOutput(writer)
+		log.SetFlags(flags)
+		log.SetPrefix(prefix)
+	})
+	go func() { defer close(done); stats.RunLoop(shutdown) }()
+	select {
+	case line := <-capture.line:
+		t.Logf("statistics output: %s", line)
+		if !strings.Contains(line, "[СТАТИСТИКА] Активных: 3 | Трафик: 7.00 МБ | ↓5.00 МБ / ↑2.00 МБ") {
+			t.Error("statistics output lost active-worker or traffic data")
+		}
+		if !strings.Contains(line, " | Dropped: ↑7 / ↓11") {
+			t.Error("statistics output omits drop counters: want DroppedUp=7 and DroppedDown=11")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("normal statistics ticker did not produce output")
+	}
 }

@@ -21,7 +21,9 @@ import (
 
 const pinnedCommit = "fae121efc3ef57b633516601d3c0d6b1be1fde7c"
 
-var patches = []string{"1-closed-call.patch", "2-baton.patch", "3-config-quota.patch", "5-stop.patch"}
+const droppedPatch = "4-dropped-packets.patch"
+
+var patches = []string{"1-closed-call.patch", "2-baton.patch", "3-config-quota.patch", droppedPatch, "5-stop.patch"}
 
 type expectation struct {
 	name, action string
@@ -32,6 +34,7 @@ type expectation struct {
 type reproCase struct {
 	baseline, patched expectation
 	injected          bool
+	counters          bool
 }
 
 func diagnostic(text string) *regexp.Regexp {
@@ -69,11 +72,30 @@ var cases = []reproCase{
 		}, allowed: []*regexp.Regexp{diagnostic(`WorkerGroup так и не вернулась`)}},
 		injected: true,
 	},
+	{
+		baseline: expectation{name: "TestReproDroppedUp", action: "fail", evidence: []*regexp.Regexp{
+			diagnostic(`missing drop counter: Stats\.DroppedUp`),
+		}},
+		counters: true,
+	},
+	{
+		baseline: expectation{name: "TestReproDroppedDown", action: "fail", evidence: []*regexp.Regexp{
+			diagnostic(`missing drop counter: Stats\.DroppedDown`),
+		}},
+		counters: true,
+	},
+	{
+		baseline: expectation{name: "TestReproDroppedStatsOutput", action: "fail", evidence: []*regexp.Regexp{
+			diagnostic(`statistics output omits drop counters: want DroppedUp=7 and DroppedDown=11`),
+		}, allowed: []*regexp.Regexp{diagnostic(`statistics output: \[СТАТИСТИКА\] Активных: 3 \| Трафик: 7\.00 МБ \| ↓5\.00 МБ / ↑2\.00 МБ`)}},
+		counters: true,
+	},
 }
 
 type testRun struct {
 	name              string
 	patched, injected bool
+	patches           []string
 	want              []expectation
 }
 
@@ -84,6 +106,7 @@ func testRuns() []testRun {
 			r := testRun{patched: patched, injected: injected, name: "baseline"}
 			if patched {
 				r.name = "patched"
+				r.patches = slices.Clone(patches)
 			}
 			if injected {
 				r.name += "-injected"
@@ -109,6 +132,13 @@ func testRuns() []testRun {
 			runs = append(runs, r)
 		}
 	}
+	counters := testRun{name: "patched-counters", patched: true, patches: []string{droppedPatch}}
+	for _, c := range cases {
+		if c.counters {
+			counters.want = append(counters.want, expectation{name: c.baseline.name, action: "pass"})
+		}
+	}
+	runs = append(runs, counters)
 	return runs
 }
 
@@ -225,6 +255,12 @@ func gitCommand(dir string, args ...string) command {
 }
 
 func (r runner) run(ctx context.Context) (err error) {
+	return r.runInputs(ctx, testRuns())
+}
+
+// Focused evidence can select existing inputs without duplicating preparation or
+// relaxing the per-test result validator. The prepared-source entry point uses all inputs.
+func (r runner) runInputs(ctx context.Context, runs []testRun) (err error) {
 	if r.source == "" {
 		return errors.New("a prepared local source is required; usage: upstreamrepro <prepared-local-source>")
 	}
@@ -325,7 +361,7 @@ func (r runner) run(ctx context.Context) (err error) {
 	if err := processError(archive); err != nil {
 		return fmt.Errorf("export pinned commit %s: %w; supply its objects in the prepared local repository and an installed Git (implicit fetching is disabled)", r.pin, err)
 	}
-	for _, test := range testRuns() {
+	for _, test := range runs {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -336,18 +372,16 @@ func (r runner) run(ctx context.Context) (err error) {
 		if err := extractArchive(ctx, archive.stdout, input); err != nil {
 			return fmt.Errorf("%s archive: %w", test.name, err)
 		}
-		if test.patched {
-			for _, name := range patches {
-				patch := filepath.Join(assets, name)
-				for _, flags := range [][]string{{"--check"}, {}} {
-					args := append([]string{"apply"}, flags...)
-					args = append(args, "--", patch)
-					setupCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-					result := r.command(setupCtx, gitCommand(input, args...), true)
-					cancel()
-					if err := processError(result); err != nil {
-						return fmt.Errorf("%s patch %s: %w", test.name, name, err)
-					}
+		for _, name := range test.patches {
+			patch := filepath.Join(assets, name)
+			for _, flags := range [][]string{{"--check"}, {}} {
+				args := append([]string{"apply"}, flags...)
+				args = append(args, "--", patch)
+				setupCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+				result := r.command(setupCtx, gitCommand(input, args...), true)
+				cancel()
+				if err := processError(result); err != nil {
+					return fmt.Errorf("%s patch %s: %w", test.name, name, err)
 				}
 			}
 		}

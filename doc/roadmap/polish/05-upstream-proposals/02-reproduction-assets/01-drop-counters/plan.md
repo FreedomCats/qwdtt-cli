@@ -1,6 +1,6 @@
 ---
 kind: task
-status: in-progress
+status: done
 detailed: true
 base: eb7dfdb
 ---
@@ -149,3 +149,60 @@ No user service, credential, browser, VK access or live run is needed. Missing p
 source/cache/toolchain is a validation gap, never authorization to obtain it. Pass the
 asset names and sanitized evidence to the documentation sibling through the coordinator;
 do not publish work dates, source/cache paths or environment identifiers.
+
+## Outcome
+
+Implemented and accepted after independent review of the final whitespace-safe patch
+representation and the complete intended result. Both the programmer and the independent
+reviewer repeated focused real evidence against the full pinned commit
+`fae121efc3ef57b633516601d3c0d6b1be1fde7c`; the final representation passed patch check and
+application alone on a disposable pinned export.
+
+Prepared the upstream packet-drop counter evidence. The new
+`4-dropped-packets.patch` applies to the pinned upstream source and changes only
+`go_client/{stats.go,dispatcher.go,session.go}`. It adds atomic `DroppedUp` and
+`DroppedDown` fields, increments them only at the existing uplink and downlink saturation
+branches, and reports atomic loads in the existing statistics log while preserving traffic,
+active-worker, cadence, queue, fallback, cancellation, and raw-TUN behaviour.
+
+`repro_test.go` retains the five earlier reproductions and adds baseline-compatible
+reflection checks plus `TestReproDroppedUp`, `TestReproDroppedDown`, and
+`TestReproDroppedStatsOutput`. The tests use the real dispatcher and session paths, a
+controlled loopback TURN/DTLS stand, a prefilled return queue without a draining writer,
+and the normal statistics loop. They verify exact directional counts, opposite-direction
+isolation, successful queue delivery and fallback, the no-worker path, keepalive filtering,
+and statistics output without adding a runtime hook or dependency.
+
+The runner now associates an explicit patch list with every input. Its counter-only input
+selects only the three counter tests and applies only `4-dropped-packets.patch`; fixtures
+also verify full test-file copying, exact selection and patch isolation while retaining the
+existing matrix and rejection checks.
+
+Focused real runs on disposable exports of the pinned commit produced these results:
+
+- The baseline compiled the complete tagged file and failed with the named assertions
+  `missing drop counter: Stats.DroppedUp`, `missing drop counter: Stats.DroppedDown`, and
+  `statistics output omits drop counters: want DroppedUp=7 and DroppedDown=11`.
+- The counter-only patched input passed all three tests. The observed upstream statistics
+  line retained the existing traffic and active-worker information and included
+  `Dropped: ↑7 / ↓11`.
+- The focused runs reused the runner's export, module preparation, anchored selection and
+  exact JSON validation. No build, setup, skip, panic, timeout or patch-selection error was
+  accepted as baseline evidence. Runner fixtures confirmed the extended matrix, source
+  preservation and cleanup, including the separately accepted Windows fixture repair.
+
+With the installed Go 1.26.2 toolchain and offline settings, the final result passed
+`go test -count=1 ./scripts/upstreamrepro`, its race variant, runner vet, `go build ./...`,
+formatting and whitespace checks, with independent verification. Bash syntax validation
+also passed. The Windows runner test binary cross-compiles with cgo disabled; native
+Windows execution and a subsequent green CI run remain unverified.
+
+The ordinary full project test suite with outbound tests, the complete real retained
+reproduction matrix, the later individual/combined patch inventory, and live or browser
+checks were not run. Those artifact-composition checks remain with the final validation
+child; this outcome accepts the counter-only patch and evidence. No review findings needed
+correction or were rejected, no separate incidental old-code issue was reported, and no
+confirmed problem remains partially fixed because of implementation cost. The upstream
+statistics log is the evidence surface here; CLI-only `EventStats` remains outside this
+upstream patch. Proposal prose and the reproduction README remain for the documentation
+sibling.
