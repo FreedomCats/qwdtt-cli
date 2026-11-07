@@ -43,6 +43,13 @@ Sending the proposals upstream is the user's business and is not part of the roa
 4. [Automatic transformation accounting](04-transformation-coverage/plan.md) — classify
    the actual transformation inventory and check its proposal and artifact references
    without equating the number of transformations with the number of proposals.
+5. [Windows runner CI regression](05-windows-runner-ci/plan.md) — restore portable fixture
+   ownership checks for the accepted runner, independently of the pending counter changes.
+
+The user explicitly prioritized the failed Windows CI job. Execute child 05 next, before
+resuming child 02, despite its appended number; existing node numbers stay stable. This
+repairs the existing runner portability contract without changing this stage's goal or
+completion criteria.
 
 ## Scope decision
 
@@ -54,8 +61,8 @@ may therefore link several transformations to one proposal and identify mixed-pu
 
 ## Execution boundaries
 
-The coordinator implements code, tests, scripts and patch artifacts in children 01, 02 and
-04. The lead handles the Markdown-only child 03 directly, without a coordinator cycle.
+The coordinator implements code, tests, scripts and patch artifacts in children 01, 02, 04
+and 05. The lead handles the Markdown-only child 03 directly, without a coordinator cycle.
 Child 02 remains a stage because counters and captcha evidence are independently
 acceptable results; its children will be planned after the runner is accepted.
 
