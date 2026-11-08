@@ -17,14 +17,14 @@ func convertFile(name, text string) (string, error) {
 	}
 
 	// Шаблоны замен написаны под LF: с CRLF не совпал бы ни один якорь строки.
-	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = accountedText("normalize-input-crlf", strings.ReplaceAll(text, "\r\n", "\n"))
 
 	// package main -> package core.
 	//
 	// Пробельные классы здесь строго горизонтальные: \s захватывает и перевод
 	// строки, поэтому вариант со \s*$ съедал пустую строку после объявления
 	// пакета, и gofmt считал неотформатированным всё ядро разом.
-	text = packageMain.ReplaceAllString(text, "package core")
+	text = accountedText("rewrite-package-main", packageMain.ReplaceAllString(text, "package core"))
 
 	for _, r := range replacements {
 		if !strings.EqualFold(r.File, name) {
@@ -68,18 +68,18 @@ func convertFile(name, text string) (string, error) {
 	}
 
 	for _, pair := range logReplacements {
-		text = replaceWord(text, pair[0], pair[1])
+		text = replaceWord(text, pair.from, pair.to)
 	}
 
 	// Осиротевшие импорты — см. prunableImports. Имя пакета берётся последним
 	// сегментом пути: "os/signal" даёт signal. Импорты с псевдонимом и пустые
 	// (_ "…") под шаблон не попадают намеренно — в ядре их нет.
 	for _, imp := range prunableImports {
-		alias := imp[strings.LastIndex(imp, "/")+1:]
+		alias := imp.path[strings.LastIndex(imp.path, "/")+1:]
 		if containsWord(text, alias+".") {
 			continue
 		}
-		line := regexp.MustCompile(`(?m)^\t"` + regexp.QuoteMeta(imp) + `"\n`)
+		line := regexp.MustCompile(`(?m)^\t"` + regexp.QuoteMeta(imp.path) + `"\n`)
 		text = line.ReplaceAllString(text, "")
 	}
 
@@ -88,10 +88,10 @@ func convertFile(name, text string) (string, error) {
 
 // lookup — значение по имени файла без учёта регистра: так искали в
 // хеш-таблицах PowerShell, и так же сравнивает имена файловая система Windows.
-func lookup(m map[string]string, name string) (string, bool) {
+func lookup(m map[string]accountedFile, name string) (string, bool) {
 	for k, v := range m {
 		if strings.EqualFold(k, name) {
-			return v, true
+			return v.text, true
 		}
 	}
 	return "", false

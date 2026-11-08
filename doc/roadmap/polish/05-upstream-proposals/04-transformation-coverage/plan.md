@@ -1,6 +1,6 @@
 ---
 kind: task
-status: in-progress
+status: done
 detailed: true
 depends: [03-proposal-documentation]
 base: c1de672
@@ -246,3 +246,68 @@ live/browser/VK/platform checks unverified. The accepted 12-input/38-cell upstre
 is historical evidence, not a check to repeat for metadata. Use sanitized assertions and
 examples only; do not publish work dates, environment identifiers or actual home/source/
 cache paths. The pin remains `fae121e` on the stable `master` policy.
+
+## Integration decision
+
+The independent review found a concrete bypass of the bounded pipeline guard: assigning
+`output = plan.text` and then mutating `output[name]` changes the real planned output while
+avoiding the currently recognized direct-alias forms. The user authorized one final narrow
+correction cycle. Reject direct assignments whose right-hand side is structurally `plan.text`
+when the alias is not one of the known supported forms, and add a regression fixture for the
+split alias form. Keep production payloads, runtime behaviour and the bounded AST scope
+unchanged; do not introduce general dataflow analysis. The follow-up-task and criterion-
+relaxation options were rejected.
+
+## Outcome
+
+Private metadata is attached directly to every entry in `excludedFiles`, `fileOverrides`,
+`generatedFiles`, `replacements`, `logReplacements` and `prunableImports`. Stable identities,
+local/upstream/mixed intent, explanatory rationales and coherent proposal references are
+checked by ordinary `go test ./scripts/vendorcore`, without a separate per-entry inventory
+or a fixed transformation/proposal count. The credentials-failure handoff explicitly retains
+both the local `emitHashFailed` integration and proposal 2's upstream baton operation.
+
+Six identity markers bind metadata to BOM removal, input CRLF normalization, package
+rewriting, `CORE_VERSION` emission, planned-output CRLF normalization and conditional final
+LF insertion. A bounded AST contract checks the known payload assignments, returns and
+output sinks in both directions. Detached, bypassed, missing, duplicate and unknown markers,
+orphan metadata and unsupported payload rewrites are rejected. Pure validation guards stay
+separate. New source shapes require explicit review; the check is not general Go dataflow
+analysis, and intent classification still requires human judgment.
+
+The offline reference check reads explicit proposal anchors and continued Patch/Reproduction
+records, resolves actual artifact files, parses the tagged reproduction test declarations
+and signatures, and checks README artifact backlinks and isolated-input test associations.
+These independent inputs are read through `io/fs` with portable package-relative paths;
+neither upstream dependencies nor the runner's executable matrix are needed. Cloned-table
+and in-memory source/document mutations exercise missing accounting in every family/site,
+invalid metadata, mixed-purpose downgrades and broken references, alongside valid controls
+and many-to-one proposal references.
+
+Independent byte expectations were established and passed before the table refactor. The
+synthetic conversion fixture covers BOM/CRLF, case-insensitive early overrides, both generated
+platform files, complete `CORE_VERSION` bytes with an unknown source version, absent and
+existing final LF, retained additional trailing LF, excluded-file deletion, an untouched
+owned sentinel, repeat conversion and a read-only successful fixture `-check`. Existing
+exact conversion tests and failure guards remain intact. The transformation payloads and
+their order are unchanged, including the local WV diagnostic whose wording differs from
+the upstream proposal while sharing its intent.
+
+Implementation and independent review passed with the directly selected toolchain and
+offline settings: the complete vendorcore/upstreamrepro package tests and race tests,
+focused vet, project build, Go formatting and whitespace checks. Windows/amd64 cgo-disabled
+vet, project build and both test-binary compilations also passed in the earlier review.
+The final narrow correction rejects split and tuple aliases whose right-hand side is the
+planned output map, and its mutation fixture passes through the real AST validator. The
+reviewer found no remaining concrete bypass within the bounded contract, no regression and
+no incidental old-code issue.
+
+Native Windows execution, a current green CI result, real upstream matrix/checkouts,
+ordinary outbound test suites and live/browser/VK/platform checks are unverified. No
+proposal document, reproduction asset, runner, runtime code, workflow, dependency, pin or
+branch policy changed. The accepted complete upstream matrix remains historical evidence.
+
+No findings were rejected. The accepted correction cycles addressed only concrete bounded
+AST-guard bypasses; no problem remains incomplete because of implementation cost. Native
+Windows, current CI, real upstream matrix/checkouts, ordinary outbound test suites and
+live/browser/VK/platform checks remain unperformed as scoped validation gaps.

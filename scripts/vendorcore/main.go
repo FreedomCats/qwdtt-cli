@@ -174,7 +174,7 @@ func readText(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return string(bytes.TrimPrefix(raw, []byte("\xef\xbb\xbf"))), nil
+	return accountedText("strip-utf8-bom", string(bytes.TrimPrefix(raw, []byte("\xef\xbb\xbf")))), nil
 }
 
 // goFiles — имена файлов *.go в dir (без учёта регистра расширения, как
@@ -326,9 +326,9 @@ func run(root, upstream string, check bool) (int, error) {
 	}
 	script.SortNames(generated)
 	for _, name := range generated {
-		plan.set(name, generatedFiles[name])
+		plan.set(name, generatedFiles[name].text)
 	}
-	plan.set("CORE_VERSION", strings.Join(header, "\n")+"\n")
+	plan.set("CORE_VERSION", accountedText("generate-core-version", strings.Join(header, "\n")+"\n"))
 
 	// Единый вид записи: LF и ровно один перевод строки в конце.
 	//
@@ -336,9 +336,9 @@ func run(root, upstream string, check bool) (int, error) {
 	// неотформатированным — и тогда `gofmt -l` показывает всё ядро разом и
 	// перестаёт что-либо значить.
 	for _, name := range plan.names {
-		text := strings.ReplaceAll(plan.text[name], "\r\n", "\n")
+		text := accountedText("normalize-output-crlf", strings.ReplaceAll(plan.text[name], "\r\n", "\n"))
 		if !strings.HasSuffix(text, "\n") {
-			text += "\n"
+			text = accountedText("ensure-output-newline", text+"\n")
 		}
 		plan.text[name] = text
 	}
