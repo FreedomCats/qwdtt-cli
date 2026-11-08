@@ -29,7 +29,7 @@ diff --git a/go_client/creds.go b/go_client/creds.go
 -	}
 +	switch getCaptchaMode() {
 +	case "wv":
-+		log.Printf("[STREAM %d] [КАПЧА] wv mode: requesting captcha window (attempt %d)", streamID, attempt)
++		log.Printf("[STREAM %d] [КАПЧА] WBV: wv mode: requesting captcha window (attempt %d)", streamID, attempt)
 +		return requestWebViewCaptcha(streamID, captchaErr, "selected", captchaSelectedWebViewTimeout)
 +	case "rjs":
 +		log.Printf("[STREAM %d] [КАПЧА] RJS: Go v2 выбран в настройках (attempt %d)", streamID, attempt)

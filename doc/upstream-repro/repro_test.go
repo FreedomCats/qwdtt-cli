@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -104,11 +105,72 @@ func TestReproGroupPassesBatonOnCredsFailure(t *testing.T) {
 // группы — к VK тест не обращается.
 
 const (
-	standUser   = "stand"
-	standPass   = "stand-pass"
-	standRealm  = "stand"
-	standConfig = "[Interface]\nPrivateKey = stand\n"
+	standUser      = "stand"
+	standPass      = "stand-pass"
+	standRealm     = "stand"
+	standConfig    = "[Interface]\nPrivateKey = stand\n"
+	standStopLimit = 5 * time.Second
 )
+
+type reproTURNPacketConn struct {
+	net.PacketConn
+	readDone  chan struct{}
+	readOnce  sync.Once
+	closeOnce sync.Once
+	closeErr  error
+}
+
+type reproRelayGenerator struct {
+	turn.RelayAddressGenerator
+	mu    sync.Mutex
+	conns []*reproTURNPacketConn
+}
+
+func (g *reproRelayGenerator) AllocatePacketConn(config turn.AllocateListenerConfig) (net.PacketConn, net.Addr, error) {
+	conn, addr, err := g.RelayAddressGenerator.AllocatePacketConn(config)
+	if err != nil {
+		return nil, nil, err
+	}
+	tracked := &reproTURNPacketConn{PacketConn: conn, readDone: make(chan struct{})}
+	g.mu.Lock()
+	g.conns = append(g.conns, tracked)
+	g.mu.Unlock()
+	return tracked, addr, nil
+}
+
+func (g *reproRelayGenerator) waitReadLoops() error {
+	g.mu.Lock()
+	conns := append([]*reproTURNPacketConn(nil), g.conns...)
+	g.mu.Unlock()
+	deadline := time.Now().Add(standStopLimit)
+	var closeErr error
+	for _, conn := range conns {
+		closeErr = errors.Join(closeErr, conn.closePacketConn())
+	}
+	for _, conn := range conns {
+		if err := waitStandDone(conn.readDone, deadline, "TURN relay packet read loop"); err != nil {
+			closeErr = errors.Join(closeErr, err)
+		}
+	}
+	return closeErr
+}
+
+func (c *reproTURNPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
+	n, addr, err := c.PacketConn.ReadFrom(p)
+	if err != nil {
+		c.readOnce.Do(func() { close(c.readDone) })
+	}
+	return n, addr, err
+}
+
+func (c *reproTURNPacketConn) Close() error {
+	return c.closePacketConn()
+}
+
+func (c *reproTURNPacketConn) closePacketConn() error {
+	c.closeOnce.Do(func() { c.closeErr = c.PacketConn.Close() })
+	return c.closeErr
+}
 
 // turnStand — TURN-сервер стенда. С rejectFirst отвечает 486 (Allocation
 // Quota Reached) тому клиенту, чей Allocate пришёл первым, и только ему —
@@ -133,6 +195,11 @@ func startTURNStand(t *testing.T, rejectFirst bool, quotaDelay time.Duration) *t
 		t.Fatal(err)
 	}
 	s := &turnStand{addr: conn.LocalAddr().String(), rejectFirst: rejectFirst, quotaDelay: quotaDelay}
+	trackedConn := &reproTURNPacketConn{PacketConn: conn, readDone: make(chan struct{})}
+	relayGenerator := &reproRelayGenerator{RelayAddressGenerator: &turn.RelayAddressGeneratorStatic{
+		RelayAddress: net.IPv4(127, 0, 0, 1),
+		Address:      "127.0.0.1",
+	}}
 	key := turn.GenerateAuthKey(standUser, standRealm, standPass)
 	srv, err := turn.NewServer(turn.ServerConfig{
 		Realm: standRealm,
@@ -141,18 +208,20 @@ func startTURNStand(t *testing.T, rejectFirst bool, quotaDelay time.Duration) *t
 		},
 		QuotaHandler: s.quota,
 		PacketConnConfigs: []turn.PacketConnConfig{{
-			PacketConn: conn,
-			RelayAddressGenerator: &turn.RelayAddressGeneratorStatic{
-				RelayAddress: net.IPv4(127, 0, 0, 1),
-				Address:      "127.0.0.1",
-			},
+			PacketConn:            trackedConn,
+			RelayAddressGenerator: relayGenerator,
 		}},
 	})
 	if err != nil {
 		conn.Close()
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { srv.Close() })
+	t.Cleanup(func() {
+		closeErr := srv.Close()
+		if err := errors.Join(closeErr, relayGenerator.waitReadLoops()); err != nil {
+			t.Errorf("TURN stand teardown: %v", err)
+		}
+	})
 	return s
 }
 
@@ -177,7 +246,7 @@ func (s *turnStand) quota(_, _ string, src net.Addr) bool {
 
 // startServerStand runs a DTLS server stand that answers GETCONF with standConfig
 // (or remains silent when answer is false). It returns the address, GETCONF counter and stop.
-func startServerStand(t *testing.T, answer bool) (*net.UDPAddr, *atomic.Int32, func()) {
+func startServerStand(t *testing.T, answer bool) (*net.UDPAddr, *atomic.Int32, func() error) {
 	t.Helper()
 	cert, err := selfsign.GenerateSelfSigned()
 	if err != nil {
@@ -193,25 +262,53 @@ func startServerStand(t *testing.T, answer bool) (*net.UDPAddr, *atomic.Int32, f
 		t.Fatal(err)
 	}
 	var getconf atomic.Int32
-	var handlers sync.WaitGroup
 	var mu sync.Mutex
 	var conns []net.Conn
+	var handlerDone []chan struct{}
+	var stopping atomic.Bool
 	acceptDone := make(chan struct{})
-	// Listener pion не закрывает принятые соединения — закрываем сами.
 	var stopOnce sync.Once
-	stop := func() {
+	var stopErr error
+	stop := func() error {
 		stopOnce.Do(func() {
-			ln.Close()
-			<-acceptDone
-			mu.Lock()
-			for _, c := range conns {
-				c.Close()
+			stopping.Store(true)
+			deadline := time.Now().Add(standStopLimit)
+			if err := ln.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				stopErr = errors.Join(stopErr, fmt.Errorf("close DTLS listener: %w", err))
 			}
+			if err := waitStandDone(acceptDone, deadline, "DTLS accept loop"); err != nil {
+				stopErr = errors.Join(stopErr, err)
+			}
+
+			mu.Lock()
+			accepted := append([]net.Conn(nil), conns...)
 			mu.Unlock()
-			handlers.Wait()
+			for _, c := range accepted {
+				if err := c.SetDeadline(deadline); err != nil {
+					stopErr = errors.Join(stopErr, fmt.Errorf("set DTLS connection shutdown deadline: %w", err))
+				}
+				if err := c.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+					stopErr = errors.Join(stopErr, fmt.Errorf("close DTLS connection: %w", err))
+				}
+			}
+
+			mu.Lock()
+			handlers := append([]chan struct{}(nil), handlerDone...)
+			mu.Unlock()
+			for _, done := range handlers {
+				if err := waitStandDone(done, deadline, "DTLS connection handler"); err != nil {
+					stopErr = errors.Join(stopErr, err)
+					break
+				}
+			}
 		})
+		return stopErr
 	}
-	t.Cleanup(stop)
+	t.Cleanup(func() {
+		if err := stop(); err != nil {
+			t.Errorf("DTLS stand teardown: %v", err)
+		}
+	})
 
 	go func() {
 		defer close(acceptDone)
@@ -220,17 +317,37 @@ func startServerStand(t *testing.T, answer bool) (*net.UDPAddr, *atomic.Int32, f
 			if err != nil {
 				return
 			}
+			done := make(chan struct{})
 			mu.Lock()
+			if stopping.Load() {
+				conns = append(conns, c)
+				mu.Unlock()
+				return
+			}
 			conns = append(conns, c)
+			handlerDone = append(handlerDone, done)
 			mu.Unlock()
-			handlers.Add(1)
 			go func() {
-				defer handlers.Done()
+				defer close(done)
 				defer c.Close()
+				hctx, cancel := context.WithTimeout(context.Background(), standStopLimit)
+				defer cancel()
+				if err := c.(*dtls.Conn).HandshakeContext(hctx); err != nil {
+					return
+				}
 				buf := make([]byte, 4096)
 				for {
+					if err := c.SetDeadline(time.Now().Add(standStopLimit)); err != nil {
+						return
+					}
 					n, err := c.Read(buf)
 					if err != nil {
+						if stopping.Load() {
+							return
+						}
+						if ne, ok := err.(net.Error); ok && ne.Timeout() {
+							continue
+						}
 						return
 					}
 					if !strings.HasPrefix(string(buf[:n]), "GETCONF:") {
@@ -239,6 +356,9 @@ func startServerStand(t *testing.T, answer bool) (*net.UDPAddr, *atomic.Int32, f
 					getconf.Add(1)
 					if !answer {
 						continue
+					}
+					if err := c.SetDeadline(time.Now().Add(standStopLimit)); err != nil {
+						return
 					}
 					if _, err := c.Write([]byte(standConfig)); err != nil {
 						return
@@ -250,12 +370,30 @@ func startServerStand(t *testing.T, answer bool) (*net.UDPAddr, *atomic.Int32, f
 	return ln.Addr().(*net.UDPAddr), &getconf, stop
 }
 
+func waitStandDone(done <-chan struct{}, deadline time.Time, description string) error {
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return fmt.Errorf("%s did not stop within %s", description, standStopLimit)
+	}
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("%s did not stop within %s", description, standStopLimit)
+	}
+}
+
 // standGroup — группа воркеров, запущенная на стенде.
 type standGroup struct {
-	configCh chan string
-	stats    *Stats
-	cancel   context.CancelFunc
-	done     chan struct{}
+	configCh                 chan string
+	stats                    *Stats
+	cancel                   context.CancelFunc
+	done                     chan struct{}
+	stopTransport            func() error
+	stopBeforeCancel         bool
+	waitInactiveBeforeCancel bool
 }
 
 func runStandGroup(t *testing.T, stand *turnStand, peer *net.UDPAddr, workers int) *standGroup {
@@ -281,17 +419,48 @@ func runStandGroup(t *testing.T, stand *turnStand, peer *net.UDPAddr, workers in
 	g := &standGroup{configCh: make(chan string, 1), stats: NewStats(), cancel: cancel, done: make(chan struct{})}
 	d := NewDispatcher(ctx, local, g.stats)
 	t.Cleanup(func() {
+		if g.stopBeforeCancel && g.stopTransport != nil {
+			if err := g.stopTransport(); err != nil {
+				t.Errorf("stand transport teardown: %v", err)
+			}
+		}
+		if g.waitInactiveBeforeCancel {
+			if err := g.waitInactive(standStopLimit); err != nil {
+				t.Errorf("stand transport did not release sessions before cancellation: %v", err)
+			}
+		}
 		cancel()
+		joined := false
 		select {
 		case <-g.done:
+			joined = true
 		case <-time.After(5 * time.Second):
-			// Застрявший воркер (5б без правки) ждал бы 30 минут — не ждём,
-			// его горутины доживут до конца прогона.
 			t.Log("WorkerGroup так и не вернулась")
+			if !g.stopBeforeCancel && g.stopTransport != nil {
+				if err := g.stopTransport(); err != nil {
+					t.Errorf("stand transport teardown: %v", err)
+				}
+			}
 		}
-		local.Close() // readLoop диспетчера стоит в чтении local
-		d.Shutdown()
-		cache.invalidate(groupID * 100)
+		if err := local.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("stand dispatcher socket teardown: %v", err)
+		}
+		shutdownDone := make(chan struct{})
+		go func() {
+			d.Shutdown()
+			close(shutdownDone)
+		}()
+		dispatcherJoined := waitStandDone(shutdownDone, time.Now().Add(standStopLimit), "dispatcher shutdown") == nil
+		if !dispatcherJoined {
+			t.Errorf("stand dispatcher teardown: dispatcher did not stop within %s", standStopLimit)
+		}
+		if joined && dispatcherJoined {
+			if err := g.waitInactive(standStopLimit); err != nil {
+				t.Errorf("stand session teardown: %v", err)
+			} else {
+				cache.invalidate(groupID * 100)
+			}
+		}
 	})
 
 	ids := make([]int, workers)
@@ -305,6 +474,21 @@ func runStandGroup(t *testing.T, stand *turnStand, peer *net.UDPAddr, workers in
 			true, g.configCh, ids, &paused, "device", "password", g.stats, nil, nil)
 	}()
 	return g
+}
+
+func (g *standGroup) waitInactive(limit time.Duration) error {
+	deadline := time.NewTimer(limit)
+	defer deadline.Stop()
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for g.stats.ActiveConnections.Load() != 0 {
+		select {
+		case <-deadline.C:
+			return fmt.Errorf("active DTLS sessions did not stop within %s", limit)
+		case <-tick.C:
+		}
+	}
+	return nil
 }
 
 // stop отменяет группу и ждёт её не дольше limit.
@@ -334,8 +518,10 @@ func (g *standGroup) stop(t *testing.T, limit time.Duration) {
 func TestReproConfigDespiteQuota(t *testing.T) {
 	stand := startTURNStand(t, true, 1500*time.Millisecond)
 	peer, getconf, stopServer := startServerStand(t, true)
-	defer stopServer()
 	g := runStandGroup(t, stand, peer, 2)
+	g.stopTransport = stopServer
+	g.stopBeforeCancel = true
+	g.waitInactiveBeforeCancel = true
 
 	select {
 	case conf := <-g.configCh:
@@ -352,8 +538,17 @@ func TestReproConfigDespiteQuota(t *testing.T) {
 	if getconf.Load() == 0 {
 		t.Fatal("config stand received no GETCONF request")
 	}
+	if g.stats.ActiveConnections.Load() == 0 {
+		t.Fatal("quota config arrived without an active DTLS session")
+	}
+	g.waitInactiveBeforeCancel = true
+	if err := g.stopTransport(); err != nil {
+		t.Fatalf("quota stand transport teardown: %v", err)
+	}
+	if err := g.waitInactive(standStopLimit); err != nil {
+		t.Fatal(err)
+	}
 	g.stop(t, 10*time.Second)
-	stopServer()
 }
 
 // ─── 5а. Остановка во время запроса конфига ───
@@ -362,8 +557,9 @@ func TestReproConfigDespiteQuota(t *testing.T) {
 // ответа. Без правки воркер ждёт до 45 с (дедлайн RequestConfig).
 func TestReproStopDuringConfigRequest(t *testing.T) {
 	stand := startTURNStand(t, false, 0)
-	peer, getconf, _ := startServerStand(t, false)
+	peer, getconf, stopServer := startServerStand(t, false)
 	g := runStandGroup(t, stand, peer, 1)
+	g.stopTransport = stopServer
 
 	deadline := time.Now().Add(15 * time.Second)
 	for getconf.Load() == 0 {
@@ -387,8 +583,9 @@ func TestReproStopRightAfterSessionStart(t *testing.T) {
 		t.Skip("нужна вставленная задержка: см. run.sh")
 	}
 	stand := startTURNStand(t, false, 0)
-	peer, _, _ := startServerStand(t, true)
+	peer, _, stopServer := startServerStand(t, true)
 	g := runStandGroup(t, stand, peer, 1)
+	g.stopTransport = stopServer
 
 	select {
 	case <-g.configCh:
@@ -1045,7 +1242,7 @@ func (c *reproCaptchaLog) String() string {
 }
 
 const reproCaptchaOldWVLog = "[STREAM 7] [КАПЧА] WBV: режим из настроек Android (attempt 3)"
-const reproCaptchaWVLog = "[STREAM 7] [КАПЧА] wv mode: requesting captcha window (attempt 3)"
+const reproCaptchaWVLog = "[STREAM 7] [КАПЧА] WBV: wv mode: requesting captcha window (attempt 3)"
 
 // Only the selected branch runs the mode solver. Manual/auto exercise the real
 // request helper, without entering the native solver chain or waiting out expiry.
