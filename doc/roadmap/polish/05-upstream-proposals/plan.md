@@ -45,11 +45,14 @@ Sending the proposals upstream is the user's business and is not part of the roa
    without equating the number of transformations with the number of proposals.
 5. [Windows runner CI regression](05-windows-runner-ci/plan.md) — restore portable fixture
    ownership checks for the accepted runner, independently of the pending counter changes.
+6. [Portable patch-link fixture](06-patch-link-fixture/plan.md) — make the unsafe-link
+   fixture exercise rejection explicitly, with offline coverage of Git's plain-file fallback.
 
-The user explicitly prioritized the failed Windows CI job. Execute child 05 next, before
-resuming child 02, despite its appended number; existing node numbers stay stable. This
-repairs the existing runner portability contract without changing this stage's goal or
-completion criteria.
+Child 05's prioritized ownership repair is complete. Execute child 06 next, before resuming
+the unfinished integration acceptance of child 02, despite its appended number; existing
+node numbers stay stable. Child 02 remains in progress with all three children complete.
+This priority repairs the existing runner fixture contract without changing this stage's
+goal or completion criteria.
 
 ## Scope decision
 
@@ -61,10 +64,10 @@ may therefore link several transformations to one proposal and identify mixed-pu
 
 ## Execution boundaries
 
-The coordinator implements code, tests, scripts and patch artifacts in children 01, 02, 04
-and 05. The lead handles the Markdown-only child 03 directly, without a coordinator cycle.
+The coordinator implements code, tests, scripts and patch artifacts in children 01, 02, 04,
+05 and 06. The lead handles the Markdown-only child 03 directly, without a coordinator cycle.
 Child 02 remains a stage because counters and captcha evidence are independently
-acceptable results; its children will be planned after the runner is accepted.
+acceptable results; its children are complete and await integration acceptance.
 
 Keep the pinned `fae121e` source and the stable `master` policy. Do not investigate or
 upgrade to `develop`, modify the runtime behaviour of the CLI, add dependencies, or create
