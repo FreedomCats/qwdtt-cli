@@ -48,11 +48,11 @@ Sending the proposals upstream is the user's business and is not part of the roa
 6. [Portable patch-link fixture](06-patch-link-fixture/plan.md) — make the unsafe-link
    fixture exercise rejection explicitly, with offline coverage of Git's plain-file fallback.
 
-Child 05's prioritized ownership repair is complete. Execute child 06 next, before resuming
-the unfinished integration acceptance of child 02, despite its appended number; existing
-node numbers stay stable. Child 02 remains in progress with all three children complete.
-This priority repairs the existing runner fixture contract without changing this stage's
-goal or completion criteria.
+The prioritized ownership and patch-link repairs in children 05 and 06 are complete.
+Child 02 has passed integration acceptance, including the retained Android diagnostic
+marker and isolated quota-test cleanup. Child 03's documentation reconciliation is complete;
+continue with child 04. The priority repairs and integration corrections preserve this
+stage's goal and completion criteria.
 
 ## Scope decision
 
@@ -67,7 +67,7 @@ may therefore link several transformations to one proposal and identify mixed-pu
 The coordinator implements code, tests, scripts and patch artifacts in children 01, 02, 04,
 05 and 06. The lead handles the Markdown-only child 03 directly, without a coordinator cycle.
 Child 02 remains a stage because counters and captcha evidence are independently
-acceptable results; its children are complete and await integration acceptance.
+acceptable results; its children and integration acceptance are complete.
 
 Keep the pinned `fae121e` source and the stable `master` policy. Do not investigate or
 upgrade to `develop`, modify the runtime behaviour of the CLI, add dependencies, or create
