@@ -989,16 +989,7 @@ func (f fixture) executor(t *testing.T, intercept func(context.Context, command)
 			}
 		}
 		if c.name == "git" {
-			if !slices.Contains(c.args, "archive") && !slices.Contains(c.args, "apply") && !slices.Contains(c.args, "rev-parse") {
-				t.Fatalf("unexpected git operation: %v", c.args)
-			}
-			values := envMap(c.env)
-			if values["GIT_NO_LAZY_FETCH"] != "1" || values["GIT_ALLOW_PROTOCOL"] != "" {
-				t.Fatal("implicit Git fetching enabled")
-			}
-			if slices.Contains(c.args, "archive") && (!slices.Contains(c.args, f.pin) || slices.Contains(c.args, "HEAD")) {
-				t.Fatalf("archive is not pinned: %v", c.args)
-			}
+			f.checkGitDelegation(t, c)
 			return execute(ctx, c)
 		}
 		if c.name != "go" {
@@ -1052,6 +1043,20 @@ func (f fixture) executor(t *testing.T, intercept func(context.Context, command)
 		}
 		t.Fatalf("unknown test input: %s", c.dir)
 		return processResult{}
+	}
+}
+
+func (f fixture) checkGitDelegation(t *testing.T, c command) {
+	t.Helper()
+	if !slices.Contains(c.args, "archive") && !slices.Contains(c.args, "apply") && !slices.Contains(c.args, "rev-parse") {
+		t.Fatalf("unexpected git operation: %v", c.args)
+	}
+	values := envMap(c.env)
+	if values["GIT_NO_LAZY_FETCH"] != "1" || values["GIT_ALLOW_PROTOCOL"] != "" {
+		t.Fatal("implicit Git fetching enabled")
+	}
+	if slices.Contains(c.args, "archive") && (!slices.Contains(c.args, f.pin) || slices.Contains(c.args, "HEAD")) {
+		t.Fatalf("archive is not pinned: %v", c.args)
 	}
 }
 
@@ -1163,8 +1168,10 @@ func TestDirtySourceAndCleanup(t *testing.T) {
 	for _, mode := range []string{"success", "missing pin", "toolchain failure", "setup failure", "archive failure", "missing module", "patch failure", "patch link", "injection failure", "result failure", "interruption"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newFixture(t)
+			t.Cleanup(func() { f.checkPreserved(t) })
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
+			var patchLink patchLinkObservation
 			if mode == "missing pin" {
 				f.pin = strings.Repeat("0", 40)
 			}
@@ -1172,12 +1179,16 @@ func TestDirtySourceAndCleanup(t *testing.T) {
 				writeFixture(t, filepath.Join(f.root, "doc", "upstream-repro", patches[0]), "not a patch\n")
 			}
 			if mode == "patch link" {
-				writeFixture(t, filepath.Join(f.root, "doc", "upstream-repro", patches[0]),
+				target := filepath.Join(f.source, "untracked sentinel.txt")
+				writeFixture(t, filepath.Join(f.root, "doc", "upstream-repro", string(closedCallPatch)),
 					"diff --git a/go_client/escape b/go_client/escape\nnew file mode 120000\n--- /dev/null\n+++ b/go_client/escape\n@@ -0,0 +1 @@\n+"+
-						filepath.Join(f.source, "untracked sentinel.txt")+"\n\\ No newline at end of file\n")
+						target+"\n\\ No newline at end of file\n")
+				assets := snapshotFixtureAssets(t, f)
+				t.Cleanup(func() { assertFixtureAssets(t, f, assets) })
+				patchLink.target = target
 			}
 			testCount := 0
-			f.exec = f.executor(t, func(ctx context.Context, c command) (processResult, bool) {
+			intercept := func(ctx context.Context, c command) (processResult, bool) {
 				if mode == "toolchain failure" && c.name == "go" {
 					return processResult{err: exec.ErrNotFound, exitCode: -1}, true
 				}
@@ -1211,8 +1222,20 @@ func TestDirtySourceAndCleanup(t *testing.T) {
 					}
 				}
 				return processResult{}, false
-			})
-			err := f.run(ctx)
+			}
+			if mode == "patch link" {
+				f.exec = f.executor(t, patchLinkStrictExecutor(t, f, &patchLink))
+			} else {
+				f.exec = f.executor(t, intercept)
+			}
+			var err error
+			if mode == "patch link" {
+				run := fixtureRun(t, "patched-closed-call")
+				err = f.runInputs(ctx, []testRun{run})
+				assertStrictPatchLinkOutcome(t, patchLink, err)
+			} else {
+				err = f.run(ctx)
+			}
 			if (err == nil) != (mode == "success") {
 				t.Fatalf("%s: %v\n%s", mode, err, f.log)
 			}
@@ -1225,7 +1248,6 @@ func TestDirtySourceAndCleanup(t *testing.T) {
 			if mode == "result failure" && (!strings.Contains(f.log.String(), "unfiltered diagnostic") || !strings.Contains(f.log.String(), "fixture failure")) {
 				t.Fatalf("diagnostics lost: %s", f.log)
 			}
-			f.checkPreserved(t)
 		})
 	}
 }

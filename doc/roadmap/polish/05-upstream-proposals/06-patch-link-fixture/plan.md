@@ -1,6 +1,6 @@
 ---
 kind: task
-status: in-progress
+status: done
 detailed: true
 depends: [05-windows-runner-ci]
 base: 9b64b7c
@@ -161,3 +161,62 @@ implicit downloads, push, manual CI reruns, tags, releases and upstream submissi
 of scope. Keep run identifiers, execution details and private evidence in the ignored
 journal, which lead maintains. Resume the reproduction-stage integration acceptance only
 after this separate priority repair is accepted.
+
+## Outcome
+
+Implemented the bounded test-only repair in `scripts/upstreamrepro/run_test.go` and
+`scripts/upstreamrepro/patch_link_test.go`, accepted after independent review without
+correction requests.
+
+- The explicit `core.symlinks=false` control uses `newFixture`, the existing
+  `patched-closed-call` input and `runInputs`. Real Git check and application succeed,
+  and `os.Lstat` identifies an ordinary file containing the exact target text. The
+  synthetic source sentinel and unchanged `fix0.go` are checked at the apply/filesystem
+  boundary. The control stops its dedicated goroutine with `runtime.Goexit` only after
+  these observations, unwinding runner cleanup before any fake Go module/test command
+  or ordinary patch-state assertion. It does not manufacture a subprocess failure or
+  count the plain file as rejection evidence.
+- The strict interceptor requests `core.symlinks=true` before both Git apply commands,
+  after an explicit conflicting false setting. It delegates to the real executor and
+  retains the complete process results. Both the focused strict regression and the
+  cleanup scenario created an actual symlink, which the unchanged `checkInput` rejected
+  with `unsafe patched input entry` before any Go module preparation or selected test.
+- The strict outcome assertions distinguish successful native-link creation from a
+  diagnosed Git refusal after a successful applicability check. They reject ordinary
+  files, missing Git, process errors and unrelated application failures. Diagnostic
+  classification has positive permission/privilege controls and negative unrelated-error
+  controls; actual native-link refusal was not observed in the fixture runs.
+- The `patch link` cleanup scenario selects only `patched-closed-call`. All eleven cleanup
+  modes, the exact ordinary patch-state assertions, archive link/special-entry rejection,
+  canonical command-directory ownership and offline/no-fetch checks remain enabled.
+  Git commands delegated by the new interceptor retain the original Git assertions.
+- Cleanup assertions run after fatal assertions as well as normal completion. They retain
+  the source HEAD, raw index, staged and unstaged contents, metadata and untracked sentinel,
+  require empty runner-owned temporary inputs, and compare reproduction/patch asset bytes
+  and modes with snapshots taken after the deliberate fixture patch replacement.
+
+Removing the effective true override while retaining explicit false mode made the focused
+strict regression fail on the behavioral path: real Git created an ordinary target-text
+file and the original `fix0.go` patch-state assertion failed. Restoring the helper recovered
+its exact pre-mutation bytes and passing checks.
+
+The requested focused tests, complete runner package, race tests, runner vet, project build,
+formatting and whitespace checks passed offline with the installed Go 1.26.2 executable
+selected directly and first on PATH. Windows/amd64 runner vet, project cross-build and
+runner test-binary compilation also passed with cgo disabled. Independent review repeated
+the bounded validation set and confirmed the mutation evidence and restoration without
+findings. The Windows-only alias regression skipped outside Windows. Native Windows
+runtime, actual Git link-creation refusal there and a subsequent green CI result remain
+unverified; cross-compilation is not runtime evidence. The original failing worker's exact
+Git configuration and native-link capability remain unknown.
+
+Production runner/application code, artifacts, matrices, dependencies, supported platforms,
+workflows and completed tasks are unchanged. The reproduction-assets stage remains in
+progress pending its separate integration acceptance; its historical Outcomes are not
+claimed as fresh reproduction or matrix runs. No ordinary whole-project/outbound test
+suite, real upstream reproduction/matrix, live or browser check, download, manual CI rerun,
+push, tag, release or upstream submission was included in this repair's acceptance.
+
+No independent review finding required correction or was rejected. No separate incidental
+old-code problem was reported, and no confirmed problem was left partially fixed because
+of implementation cost.
