@@ -695,6 +695,12 @@ VK и без них, в теневом корне, во фрейме, тольк
 4 секунд, окно на экран не выходило, туннель поднимался следом. Не проверено: сеанс Wayland,
 GNOME и KDE, несколько мониторов.
 
+The Wayland behavior described above is the expected design: the client has no usable window
+coordinates there, so the captcha window remains visible and the autoclick runs in that
+window. No native Wayland session has been validated. Compositor/browser interaction and the
+absence of an X11-only fallback remain unknown; X11, Xvfb and native-X11 evidence does not
+cover them.
+
 **Автоклик (Windows).** Ход и исходы — те же (`autoclick.go`, `page.go`), встроены в
 решатель `captcha.WebView2`; от платформы — только вызов методов DevTools на странице и
 показ окна человеку. Перенесено из csqtt-cli, где с настоящей капчей VK проверено 4 раза из
@@ -741,6 +747,12 @@ csqtt-cli). Нить окна до его создания становится 
 `tun` под администратором (окно — через прокси капчи при kill-switch): галочка находится
 примерно за секунду, от просьбы капчи до токена — 2–4 секунды, окно на экран не выходило,
 туннель поднимался следом. Не проверено: несколько мониторов с разным масштабом.
+
+The Windows implementation places the hidden WebView2 window beyond the virtual screen and
+selects its size and DPI for the relevant monitor. The heterogeneous-DPI multi-monitor case
+is untested: actual placement, rendering size/sharpness and DPI behavior after showing or
+moving the window between monitors remain unknown. The single-monitor WebView2 staging and
+the separate hidden-process limitation do not establish this behavior.
 
 Известное ограничение: если сам `qwdtt-cli.exe` запущен скрытым процессом
 (`Start-Process -WindowStyle Hidden`), страница в окне за краем рисует около кадра в секунду.
@@ -1055,6 +1067,11 @@ netlink (`FlushTable` + правила + `Flush`). Метка `SO_MARK` у со�
 `tar` системы, в формате ustar с фиксированным временем записей — права на исполнение не
 зависят от системы сборки, время файлов машины сборки в архив не попадает, и одинаковые
 файлы дают одинаковый архив (решение R3).
+
+The `linux/arm64` release artifact has build evidence, and unit tests have been exercised
+under `qemu-aarch64`. These are non-native checks: no real ARM64 hardware execution has been
+performed. Native startup, host-kernel integration and Linux datapath interaction with
+system networking remain unverified.
 
 ---
 

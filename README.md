@@ -169,6 +169,10 @@ macOS. `wintun.dll` в zip для Windows он кладёт так же, как 
 и macOS собираются и запускаются. На Linux вживую проверены режимы `socks` и `tun`;
 на macOS работает только `socks`, и вживую он там ещё не проверялся.
 
+The `linux/arm64` archive has release-build evidence and unit-test evidence under
+`qemu-aarch64`, but neither establishes native ARM64 support. Real hardware startup,
+kernel integration and Linux datapath behavior on ARM64 remain untested.
+
 Ту же команду запускает GitHub Actions (`.github/workflows/release.yml`) на
 Windows: на тег `v*` после тестов собирается релиз, проверяется, что в каждом
 архиве есть всё нужное для запуска и что `qwdtt-cli.exe` из zip запускается, и архивы вместе с
@@ -279,6 +283,25 @@ root.
 
 Токен приходится переносить руками: VK отдаёт его только в ответе страницы, в адресной
 строке его нет. На всё даётся три минуты.
+
+### Platform verification boundaries
+
+On Wayland, the browser client has no usable window coordinates, so `--window-position`
+cannot hide the captcha window. The expected design is therefore a visible window; leave it
+alone for the first few seconds while the autoclick logic runs. This is design behavior, not
+a native Wayland observation: compositor and browser interaction, and the absence of an
+X11-only fallback, remain unverified. Existing X11 and Xvfb checks do not close this gap.
+
+On Windows, the implementation places the hidden WebView2 window beyond the virtual screen
+and selects and resizes it for the relevant monitor DPI. A setup with multiple monitors at
+different scaling is untested. Actual placement, rendering size and sharpness, and DPI
+behavior when the window is shown or moved between monitors remain unknown; single-monitor
+WebView2 checks do not cover them. This does not change the separate blocked hidden-process
+case.
+
+The `linux/arm64` release artifact and `qemu-aarch64` unit-test evidence are non-native
+checks. No real ARM64 hardware execution has been performed, so startup and datapath
+interactions with the host kernel and system networking remain unverified.
 
 ## Файл настроек
 

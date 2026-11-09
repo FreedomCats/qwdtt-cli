@@ -1,6 +1,7 @@
 ---
 kind: stage
-status: todo
+status: done
+base: f810642
 ---
 
 # Platforms
@@ -24,8 +25,27 @@ checked or recorded as untested, with the reason.
 
 ## Outline
 
-1. Wayland: an X11-only fallback is not an option; decide whether to check it live or to
-   document the current behaviour.
-2. Windows monitors: needs the user's machine with two monitors of different scaling, if
-   there is one.
-3. `linux/arm64`: needs hardware; CI already covers the build.
+1. [Record platform verification boundaries](01-platform-documentation/plan.md) — update the
+   user-facing and internal documentation with the current design, the evidence already
+   available, and the exact unknowns for Wayland, Windows multi-monitor DPI, and native
+   `linux/arm64` execution. This is a documentation-only closure; no live platform run is
+   authorized or required for this child.
+
+The stage is intentionally not split into live-run children. The existing criteria accept a
+sanitized record of untested behavior, and the current user decision authorizes no Wayland,
+Windows monitor, or ARM hardware session. A future live check, if authorized separately, must
+replace the corresponding untested record rather than be implied by this stage.
+
+## Outcome
+
+The platform stage is complete through its documentation-only child. `README.md` and
+`doc/architecture.md` now state the expected visible Wayland captcha behavior and label native
+Wayland, heterogeneous-DPI multi-monitor Windows, and native ARM64 execution as untested with
+their exact unknowns. Existing X11, WebView2, release-build and `qemu-aarch64` evidence stays
+separate from native platform validation. The blocked hidden-process Windows investigation is
+unchanged.
+
+Only the two intended documentation files and this roadmap bookkeeping changed. Relative
+links, publication/privacy review and whitespace checks passed. No live platform, browser,
+privileged, hardware or CI check was run, and no confirmed problem was left incomplete because
+of cost.
