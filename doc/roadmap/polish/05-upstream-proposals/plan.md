@@ -1,6 +1,6 @@
 ---
 kind: stage
-status: in-progress
+status: done
 base: 07cf28f
 ---
 
@@ -48,11 +48,11 @@ Sending the proposals upstream is the user's business and is not part of the roa
 6. [Portable patch-link fixture](06-patch-link-fixture/plan.md) — make the unsafe-link
    fixture exercise rejection explicitly, with offline coverage of Git's plain-file fallback.
 
-The prioritized ownership and patch-link repairs in children 05 and 06 are complete.
-Child 02 has passed integration acceptance, including the retained Android diagnostic
-marker and isolated quota-test cleanup. Child 03's documentation reconciliation is complete;
-continue with child 04. The priority repairs and integration corrections preserve this
-stage's goal and completion criteria.
+All six planned children are complete. The ownership and patch-link repairs in children 05 and
+06 are included in the accepted runner coverage. Child 02's final assets retain the Android
+diagnostic marker and isolate quota-test cleanup; child 03 reconciles the public documentation;
+and child 04 accounts for the complete transformation and pipeline inventory. The integrated
+stage review confirmed that these results preserve the stage goal and completion criteria.
 
 ## Scope decision
 
@@ -74,3 +74,45 @@ upgrade to `develop`, modify the runtime behaviour of the CLI, add dependencies,
 proposals and patches for local extraction/scaffolding. No upstream submission, live
 captcha/quota/platform run, browser, external service or implicit download is part of these
 children. Run focused offline tests, not the ordinary full test suite with outbound tests.
+
+## Outcome
+
+The stage is complete. The full range `07cf28f..09e580a` was reviewed as one result, including
+the runner, seven upstream patches, tagged reproductions, proposal documents, transformation
+accounting and all six child Outcomes. Seven explicit proposal anchors agree with their patch
+artifacts, reproduction declarations and isolated runner inputs. The documentation and README
+describe coherent upstream changes while keeping extraction, CLI scaffolding, event delivery
+and socket hooks as local adaptation. The mixed credentials-failure rule retains both its local
+event operation and proposal 2's upstream baton handoff.
+
+The runner uses pinned `fae121e` source objects and disposable inputs, preserves a dirty caller
+tree, rejects unsafe archive and patch entries, applies offline/no-fetch settings before
+bootstrap, and validates exact process, package and test results. The explicit patch-link
+fixture distinguishes ordinary target-text fallback from an actual link rejected by the existing
+filesystem guard. The asset set preserves `[КАПЧА] WBV:` in patch 7, keeps patch 3's per-worker
+config behavior independent of patch 5, and uses bounded transport, stand and dispatcher
+teardown checks. The task 04 source contract includes the accepted split/tuple `plan.text`
+alias correction without introducing general dataflow analysis.
+
+Fresh final checks passed with the directly selected Go 1.26.2 toolchain and offline settings:
+the vendorcore and upstreamrepro package tests, race tests, vet, project build, formatting,
+runner wrapper syntax and repository whitespace checks. Focused accounting, reference,
+matrix, ownership, cleanup and patch-link fixtures passed, and local Markdown links and anchors
+were checked. The accepted historical pinned matrix remains 12 inputs and 38 cells, with 25
+passes, 11 exact baseline failures and two ordinary deadline skips; it was not replayed during
+this integration acceptance and is not presented as a fresh run.
+
+The accepted decisions are the stable `master` policy at pinned `fae121e`, coherent proposals
+with automatic complete classification, and preservation of the WBV marker with only its
+Android-settings wording corrected. The rejected alternatives remain a per-transformation
+proposal catalog, reduced Android log visibility or a wider consumer change, general dataflow
+analysis, and an unconditional dependency overhaul for an undemonstrated private Pion-loop
+leak. The final integration review found no additional concrete findings, so no code or test
+correction was required. Native Windows execution and current green CI, ordinary outbound or
+fresh complete upstream replay, live/browser/VK/quota/platform checks, and external actions
+remain intentionally unperformed.
+
+### Real problems not fully fixed because of cost
+
+None. No confirmed problem was accepted and left partially corrected because of implementation
+cost.
